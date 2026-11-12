@@ -1,0 +1,10 @@
+{
+  "name": "jugyo-log",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "授業ログ 授業の資料と生徒の記録を残すアプリ（段階 0）",
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\""
+  }
+}
