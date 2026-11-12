@@ -1,0 +1,632 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>授業ログ 接続確認</title>
+<style>
+  :root {
+    --main: #1F4E79;
+    --main-dark: #163A5A;
+    --text: #1A2B3C;
+    --bg: #F4F7FB;
+    --card: #FFFFFF;
+    --line: #D5E0EC;
+    --ok: #1E7A45;
+    --ng: #B3243A;
+    --r1: 12px; --r2: 16px;
+    --s1: 8px; --s2: 16px; --s3: 24px; --s4: 32px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "BIZ UDPGothic", "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
+    font-size: 16px;
+    line-height: 1.7;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: var(--s3) var(--s2) var(--s4); }
+  h1 { font-size: 36px; margin: 0 0 var(--s1); line-height: 1.3; color: var(--main); }
+  h2 { font-size: 24px; margin: var(--s3) 0 var(--s1); color: var(--main); }
+  p { margin: 0 0 var(--s2); }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--r2);
+    padding: var(--s2) var(--s3);
+    margin-bottom: var(--s2);
+  }
+  button {
+    min-width: 44px; min-height: 44px;
+    padding: var(--s1) var(--s3);
+    font: inherit; font-weight: 700;
+    color: #FFFFFF; background: var(--main);
+    border: 0; border-radius: var(--r1);
+    cursor: pointer;
+  }
+  button:disabled { background: var(--main-dark); opacity: .5; cursor: default; }
+  label.place { display: inline-block; margin-right: var(--s2); }
+  select {
+    min-height: 44px; min-width: 160px;
+    font: inherit;
+    padding: 0 var(--s1);
+    border: 1px solid var(--line); border-radius: var(--r1);
+    background: #FFFFFF; color: var(--text);
+  }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+  ol { list-style: none; margin: 0; padding: 0; }
+  li {
+    min-height: 44px;
+    padding: var(--s1) 0;
+    border-bottom: 1px solid var(--line);
+  }
+  li:last-child { border-bottom: 0; }
+  .name { font-weight: 700; display: block; }
+  .result { display: block; word-break: break-word; }
+  .ok { color: var(--ok); font-weight: 700; }
+  .ng { color: var(--ng); font-weight: 700; }
+  .wait { color: var(--text); }
+  .photo { display: block; width: 240px; max-width: 100%; height: auto; margin-top: var(--s1); border: 1px solid var(--line); }
+  /* display を指定した要素でも hidden で隠れるようにする */
+  .photo[hidden] { display: none; }
+  [hidden] { display: none !important; }
+  #summary { font-weight: 700; }
+  .info { font-size: 14px; word-break: break-all; }
+  .warn { border-left: 8px solid var(--ng); }
+  textarea {
+    width: 100%; min-height: 200px;
+    font: inherit; font-size: 14px;
+    border: 1px solid var(--line); border-radius: var(--r1);
+    padding: var(--s1);
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>授業ログ 接続確認</h1>
+  <p>この端末とネットワークで、授業ログに必要な通信と保存ができるかを確かめます。</p>
+
+  <div class="card warn" id="config-error" hidden>
+    <p id="config-error-text"></p>
+  </div>
+
+  <div class="card" id="panel">
+    <div class="controls">
+      <label class="place" for="place">確認している場所
+        <select id="place">
+          <option value="学校">学校</option>
+          <option value="家">家</option>
+          <option value="そのほか">そのほか</option>
+        </select>
+      </label>
+      <button type="button" id="start">確認を始める</button>
+    </div>
+    <h2>確認の結果</h2>
+    <ol id="list"></ol>
+    <p id="summary"></p>
+    <div id="report-area" hidden>
+      <button type="button" id="copy">結果をコピー</button>
+      <p id="copy-note"></p>
+      <textarea id="report-text" readonly hidden></textarea>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>端末の情報</h2>
+    <p class="info" id="device-ua"></p>
+    <p class="info" id="device-screen"></p>
+  </div>
+</main>
+
+<script type="module">
+import { createCheckSteps } from './js/check-steps.js';
+import { reportText, PARALLEL_COUNT } from './js/check-logic.js';
+import { FIREBASE } from './js/firebase-config.js';
+import { GAS } from './js/gas-config.js';
+
+const $ = (id) => document.getElementById(id);
+
+// 確認用の差しかえ: 自分の端末（localhost など）で開いたときだけ、window.__CHECK_TEST__ の
+// { fetch, firebase, gasUrl } を使う。ほかの場所では使わない。
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]', '::1'];
+const TEST = LOCAL_HOSTS.includes(location.hostname)
+  && window.__CHECK_TEST__ && typeof window.__CHECK_TEST__ === 'object'
+  ? window.__CHECK_TEST__
+  : null;
+const fetchFn = TEST && typeof TEST.fetch === 'function' ? TEST.fetch : (...a) => fetch(...a);
+const firebaseConfig = TEST && TEST.firebase ? TEST.firebase : FIREBASE;
+const gasUrl = TEST && typeof TEST.gasUrl === 'string' ? TEST.gasUrl : GAS.url;
+
+// 項目（1〜11 と後片付け）
+const ITEMS = [
+  'データベースを読む',
+  '生徒用のアカウントを作る',
+  '作ったアカウントでログインする',
+  'データベースに書いて読む',
+  'ログインを更新する',
+  '保存の仕組みに届く',
+  '写真を 1 枚保存する',
+  '保存した写真を取り出して表示する',
+  '同時に 40 回取り出す'.replace('40', String(PARALLEL_COUNT)), // 回数は check-logic.js に合わせる
+  'Drive の容量を見る',
+  '端末の中に保存できる',
+  '後片付け',
+];
+// 画面と報告に出す名前（1〜11 は番号付き）
+const NAMES = ITEMS.map((label, i) => (i < 11 ? `${i + 1}. ${label}` : label));
+const PHOTO_ROW = 7; // 項目 8 の下に写真を出す
+const CLEANUP_ROW = 11;
+
+const PHOTO_W = 1600;
+const PHOTO_H = 1200;
+const PHOTO_MIN = 200 * 1024;
+const PHOTO_MAX = 400 * 1024;
+const STORE_TIMEOUT_MS = 3000;
+
+// 各項目の行を作る（文字は textContent で入れる）
+const rows = NAMES.map((label, i) => {
+  const li = document.createElement('li');
+  const name = document.createElement('span');
+  name.className = 'name';
+  name.textContent = label;
+  const result = document.createElement('span');
+  li.append(name, result);
+  let img = null;
+  if (i === PHOTO_ROW) {
+    img = document.createElement('img');
+    img.className = 'photo';
+    img.alt = '取り出した確認用の写真';
+    img.hidden = true;
+    li.append(img);
+  }
+  $('list').append(li);
+  return { result, img };
+});
+
+// 結果（1〜11 と後片付け）。ok は true / false / null（未実施）
+let results = [];
+
+function resetRows() {
+  results = NAMES.map((label) => ({ label, ok: null, detail: '' }));
+  for (const row of rows) {
+    row.result.className = 'result wait';
+    row.result.textContent = '－ まだ確認していません';
+    if (row.img) {
+      row.img.hidden = true;
+      row.img.removeAttribute('src');
+    }
+  }
+}
+
+function setWaiting(i) {
+  rows[i].result.className = 'result wait';
+  rows[i].result.textContent = '… 確認しています';
+}
+
+function setResult(i, ok, detail) {
+  results[i] = { label: NAMES[i], ok, detail };
+  rows[i].result.className = 'result ' + (ok ? 'ok' : 'ng');
+  if (ok) {
+    rows[i].result.textContent = detail ? `○ できました（${detail}）` : '○ できました';
+  } else {
+    rows[i].result.textContent = `× できませんでした（${detail}）`;
+  }
+}
+
+// 理由を短い文にする
+function reason(e) {
+  if (e && typeof e.message === 'string' && e.message) return e.message;
+  return '原因がわかりません';
+}
+
+// 1 項目を行う。失敗しても投げない（次の項目へ進むため）
+async function step(i, fn) {
+  setWaiting(i);
+  try {
+    const detail = await fn();
+    setResult(i, true, typeof detail === 'string' ? detail : '');
+  } catch (e) {
+    setResult(i, false, reason(e));
+  }
+}
+
+// ms たっても終わらなければ fallback で終える（Promise は決して reject しない）
+function settleWithin(promise, ms, fallback) {
+  return new Promise((resolve) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (!done) { done = true; resolve(fallback); }
+    }, ms);
+    Promise.resolve(promise).then(
+      (v) => { if (!done) { done = true; clearTimeout(timer); resolve(v); } },
+      () => { if (!done) { done = true; clearTimeout(timer); resolve(fallback); } },
+    );
+  });
+}
+
+// ---- 項目 7: 確認用の写真をページの中で作る ----
+
+// base64 の文字数から、もとのバイト数を出す
+function b64Bytes(b64) {
+  const pad = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
+  return Math.floor(b64.length * 3 / 4) - pad;
+}
+
+// 色の帯・細かい模様・日時の文字を描き、JPEG（品質 0.8）の base64 を返す。
+// noiseRows: 上から何行に、写真らしいざらつきを足すか（大きさの調整に使う）
+function drawPhoto(noiseRows, when) {
+  const canvas = document.createElement('canvas');
+  canvas.width = PHOTO_W;
+  canvas.height = PHOTO_H;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('写真を作れませんでした（canvas が使えません）');
+  // 色の帯
+  const colors = ['#1F4E79', '#2E75B6', '#9DC3E6', '#F4B183', '#C55A11', '#70AD47', '#FFD966', '#7030A0'];
+  const bandW = PHOTO_W / colors.length;
+  colors.forEach((c, i) => {
+    ctx.fillStyle = c;
+    ctx.fillRect(i * bandW, 0, bandW, PHOTO_H);
+  });
+  // 細かい模様（斜めの細い線）
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = -PHOTO_H; x < PHOTO_W; x += 12) {
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x + PHOTO_H, PHOTO_H);
+  }
+  ctx.stroke();
+  // ざらつき（明るさを少しずつ変える）
+  if (noiseRows > 0) {
+    const image = ctx.getImageData(0, 0, PHOTO_W, noiseRows);
+    const d = image.data;
+    for (let p = 0; p < d.length; p += 4) {
+      const n = (Math.random() - 0.5) * 48;
+      d[p] += n;
+      d[p + 1] += n;
+      d[p + 2] += n;
+    }
+    ctx.putImageData(image, 0, 0);
+  }
+  // 日時の文字
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+  ctx.fillRect(60, 760, 1480, 360);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.font = 'bold 96px sans-serif';
+  ctx.fillText('授業ログ 接続確認', 100, 900);
+  ctx.fillText(when, 100, 1060);
+  const url = canvas.toDataURL('image/jpeg', 0.8);
+  if (!url.startsWith('data:image/jpeg')) throw new Error('写真を作れませんでした（JPEG にできません）');
+  return url.slice(url.indexOf(',') + 1);
+}
+
+// およそ 0.2〜0.4MB になるように、ざらつきの量を変えて何回か作る
+function makePhoto() {
+  const when = new Date().toLocaleString('ja-JP');
+  let noiseRows = 400;
+  let b64 = '';
+  for (let tries = 0; tries < 4; tries++) {
+    b64 = drawPhoto(noiseRows, when);
+    const size = b64Bytes(b64);
+    if (size < PHOTO_MIN && noiseRows < PHOTO_H) {
+      noiseRows = Math.min(PHOTO_H, noiseRows * 2);
+      continue;
+    }
+    if (size > PHOTO_MAX && noiseRows > 0) {
+      noiseRows = Math.floor(noiseRows / 2);
+      continue;
+    }
+    break;
+  }
+  return b64;
+}
+
+function formatMB(bytes) {
+  return (bytes / (1024 * 1024)).toFixed(2) + 'MB';
+}
+
+// ---- 項目 8: 取り出した写真を表示する ----
+function showPhoto(dataB64) {
+  const img = rows[PHOTO_ROW].img;
+  const shown = new Promise((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error('取り出した写真を表示できませんでした'));
+  });
+  img.src = 'data:image/jpeg;base64,' + dataB64;
+  img.hidden = false;
+  return settleWithin(shown.then(() => true), 10000, false).then((ok) => {
+    img.onload = null;
+    img.onerror = null;
+    if (!ok) {
+      img.hidden = true;
+      throw new Error('取り出した写真を表示できませんでした');
+    }
+  });
+}
+
+// ---- 項目 11: 端末の中に保存できるか（localStorage・IndexedDB・Cache） ----
+function storeValue() {
+  return 'jugyolog-' + Date.now() + '-' + Math.floor(Math.random() * 1000000);
+}
+
+// 書いたあとに途中で失敗しても、finally で消す（消せなければ ×）
+function probeLocalStorage() {
+  const key = 'jugyolog-check';
+  let ok = false;
+  try {
+    const value = storeValue();
+    window.localStorage.setItem(key, value);
+    ok = window.localStorage.getItem(key) === value;
+  } catch {
+    ok = false;
+  } finally {
+    try {
+      window.localStorage.removeItem(key);
+    } catch {
+      ok = false; // 消せなかったときは ×
+    }
+  }
+  return Promise.resolve(ok);
+}
+
+// 開けないまま何も起きないことがある（プライベートブラウズなど）ので、3 秒で打ち切る。
+// 成功・失敗・時間切れのどれも finish() に通し、トランザクションの中止・接続を閉じる・データベースの削除を行う。
+// finish() のあとに遅れて届いたイベントでは何もしない（遅れて開いた接続だけは閉じる）。
+function probeIndexedDB() {
+  return new Promise((resolve) => {
+    const name = 'jugyolog-check';
+    let db = null;
+    let tx = null; // いま動いているトランザクション
+    let finished = false;
+    let timer = null;
+    const finish = (ok) => {
+      if (finished) return;
+      finished = true;
+      if (timer !== null) clearTimeout(timer);
+      try { if (tx) tx.abort(); } catch { /* 終わったトランザクションは中止できなくてよい */ }
+      try { if (db) db.close(); } catch { /* 閉じられなくてもよい */ }
+      try { if (window.indexedDB) window.indexedDB.deleteDatabase(name); } catch { /* 消せなくてもよい */ }
+      resolve(ok);
+    };
+    timer = setTimeout(() => finish(false), STORE_TIMEOUT_MS);
+    try {
+      if (!window.indexedDB) { finish(false); return; }
+      const value = storeValue();
+      const req = window.indexedDB.open(name, 1);
+      req.onupgradeneeded = () => {
+        if (finished) return;
+        try { req.result.createObjectStore('kv'); } catch { finish(false); }
+      };
+      req.onerror = () => finish(false);
+      req.onblocked = () => finish(false);
+      req.onsuccess = () => {
+        if (finished) {
+          // 時間切れのあとに開いた接続は、閉じるだけにする
+          try { req.result.close(); } catch { /* 閉じられなくてもよい */ }
+          return;
+        }
+        try {
+          db = req.result;
+          const tx1 = db.transaction('kv', 'readwrite');
+          tx = tx1;
+          tx1.objectStore('kv').put(value, 'v');
+          tx1.onerror = () => finish(false);
+          tx1.onabort = () => finish(false);
+          tx1.oncomplete = () => {
+            if (finished) return;
+            try {
+              const tx2 = db.transaction('kv', 'readwrite');
+              tx = tx2;
+              const store = tx2.objectStore('kv');
+              let same = false;
+              const get = store.get('v');
+              get.onsuccess = () => {
+                if (finished) return;
+                same = get.result === value;
+                store.delete('v');
+              };
+              tx2.onerror = () => finish(false);
+              tx2.onabort = () => finish(false);
+              tx2.oncomplete = () => {
+                tx = null;
+                finish(same);
+              };
+            } catch {
+              finish(false);
+            }
+          };
+        } catch {
+          finish(false);
+        }
+      };
+    } catch {
+      finish(false);
+    }
+  });
+}
+
+// 開いたあとに途中で失敗しても、finally で確認用のキャッシュを消す（消せなければ ×）。
+// 時間切れで先に × を返したあとも、この流れは最後まで進み、遅れて開いたキャッシュも消す。
+function probeCache() {
+  const work = (async () => {
+    if (typeof caches === 'undefined' || !caches) return false;
+    const name = 'jugyolog-check';
+    let ok = false;
+    try {
+      const value = storeValue();
+      const req = new Request('./__jugyolog-check__');
+      const cache = await caches.open(name);
+      await cache.put(req, new Response(value));
+      const res = await cache.match(req);
+      const got = res ? await res.text() : null;
+      ok = got === value;
+    } catch {
+      ok = false;
+    } finally {
+      try {
+        await caches.delete(name);
+      } catch {
+        ok = false; // 消せなかったときは ×
+      }
+    }
+    return ok;
+  })();
+  return settleWithin(work, STORE_TIMEOUT_MS, false);
+}
+
+async function checkStorage() {
+  const [ls, idb, cache] = await Promise.all([
+    settleWithin(probeLocalStorage(), STORE_TIMEOUT_MS, false),
+    probeIndexedDB(),
+    probeCache(),
+  ]);
+  const mark = (ok) => (ok ? '○' : '×');
+  const detail = `localStorage ${mark(ls)}、IndexedDB ${mark(idb)}、Cache ${mark(cache)}`;
+  if (!ls && !idb && !cache) throw new Error(detail);
+  return detail;
+}
+
+// ---- 全体の流れ ----
+// 確認を始めたときの日時と場所（報告にはこの値を使う。コピーするときの選択は使わない）
+let lastWhen = '';
+let lastPlace = '';
+
+async function run() {
+  resetRows();
+  $('summary').textContent = '';
+  $('summary').className = '';
+  $('report-area').hidden = true;
+  $('report-text').hidden = true;
+  $('report-text').value = '';
+  $('copy-note').textContent = '';
+  lastWhen = new Date().toLocaleString('ja-JP');
+  lastPlace = $('place').value;
+
+  const steps = createCheckSteps({
+    fetch: fetchFn,
+    firebase: firebaseConfig,
+    gasUrl,
+    now: () => performance.now(),
+    random: Math.random,
+    setTimeout: (...a) => window.setTimeout(...a),
+    clearTimeout: (...a) => window.clearTimeout(...a),
+    AbortController: window.AbortController,
+  });
+
+  try {
+    await step(0, () => steps.readPing());
+    await step(1, () => steps.signUp());
+    await step(2, () => steps.signIn());
+    await step(3, () => steps.writeAndRead());
+    await step(4, () => steps.refresh());
+    await step(5, () => steps.gasPing());
+    await step(6, async () => {
+      const photo = makePhoto();
+      const detail = await steps.gasPut(photo);
+      return `${detail}、${formatMB(b64Bytes(photo))}`;
+    });
+    await step(7, async () => {
+      const got = await steps.gasGet();
+      await showPhoto(got.dataB64);
+      return got.detail;
+    });
+    await step(8, () => steps.gasParallel());
+    await step(9, () => steps.gasQuota());
+    await step(10, () => checkStorage());
+  } finally {
+    // 後片付けは必ず行う（cleanup は投げない作りだが、念のため受け止める）
+    setWaiting(CLEANUP_ROW);
+    try {
+      const detail = await steps.cleanup();
+      const failed = steps.state().hasToken || detail.includes('できませんでした');
+      if (failed) setResult(CLEANUP_ROW, false, detail);
+      else setResult(CLEANUP_ROW, true, detail || '片付けるものはありませんでした');
+    } catch (e) {
+      setResult(CLEANUP_ROW, false, reason(e));
+    }
+  }
+
+  const allOk = results.slice(0, 11).every((r) => r.ok === true);
+  const summary = $('summary');
+  summary.className = allOk ? 'ok' : 'ng';
+  summary.textContent = allOk
+    ? 'すべて ○ でした。'
+    : '× がありました。下の『結果をコピー』を押して、Claude Code に伝えてください。';
+  $('report-area').hidden = false;
+}
+
+// ---- 端末の情報 ----
+function screenText() {
+  return `${screen.width}×${screen.height}、devicePixelRatio ${window.devicePixelRatio}、タッチ ${navigator.maxTouchPoints}`;
+}
+$('device-ua').textContent = '端末の種類：' + navigator.userAgent;
+$('device-screen').textContent = '画面の大きさ：' + screenText();
+
+// ---- 結果をコピー ----
+function buildReport() {
+  return reportText(results, {
+    when: lastWhen,
+    userAgent: navigator.userAgent,
+    screen: screenText(),
+    place: lastPlace,
+  });
+}
+
+function showReportText(text) {
+  const area = $('report-text');
+  area.value = text;
+  area.hidden = false;
+  area.focus();
+  area.select();
+}
+
+$('copy').addEventListener('click', async () => {
+  const text = buildReport();
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('clipboard なし');
+    await navigator.clipboard.writeText(text);
+    $('copy-note').textContent = '○ コピーしました。Claude Code に貼り付けてください。';
+    $('report-text').hidden = true;
+  } catch {
+    $('copy-note').textContent = '× 自動ではコピーできませんでした。下の欄の文章をすべて選んでコピーしてください。';
+    showReportText(text);
+  }
+});
+
+// ---- 始め方 ----
+const missing = [];
+if (!firebaseConfig || !firebaseConfig.databaseURL) missing.push('データベースの URL（js/firebase-config.js の databaseURL）');
+if (!firebaseConfig || !firebaseConfig.apiKey) missing.push('Web API キー（js/firebase-config.js の apiKey）');
+if (!gasUrl) missing.push('保存の仕組みの URL（js/gas-config.js の url）');
+
+resetRows();
+
+if (missing.length > 0) {
+  $('config-error').hidden = false;
+  $('config-error-text').textContent = '× 設定がまだありません。空の設定: ' + missing.join('、');
+  $('start').disabled = true;
+} else {
+  let running = false;
+  $('start').addEventListener('click', async () => {
+    if (running) return;
+    running = true;
+    $('start').disabled = true;
+    $('place').disabled = true;
+    try {
+      await run();
+    } catch (e) {
+      $('summary').className = 'ng';
+      $('summary').textContent = '× 確認の途中で止まりました（' + reason(e) + '）';
+      $('report-area').hidden = false;
+    } finally {
+      running = false;
+      $('start').disabled = false;
+      $('place').disabled = false;
+      $('start').textContent = 'もう一度確認する';
+    }
+  });
+}
+</script>
+</body>
+</html>
