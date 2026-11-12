@@ -21,6 +21,7 @@
 9. コピーした文章には入らないものを、次の 2 つ、Claude Code に伝えます。
    - Google Drive の空き容量: パソコンで https://drive.google.com/ を開き、学校用のアカウントでログインします。左のメニューの下のほうにある「保存容量」の「○○ GB / ○○ GB を使用中」という文字を見て、そのまま伝えます。確認ページの項目 10 の数字と見比べます。
    - iPad の機種名と iPadOS のバージョン: iPad の「設定」→「一般」→「情報」を開き、「機種名」と「システムバージョン」に出ている文字を、そのまま伝えます。
+10. 結果を伝え終わったら、`docs/setup/gas.md` と `docs/setup/firebase.md` の「確認が終わったら」を行います。
 
 結果は `docs/reports/stage0-check.md` に書き残します。
 
@@ -30,20 +31,23 @@
 
 確認ページは、GitHub Pages で公開します。公開の手順は次のとおりです。
 
-1. 変更をコミットしてから、次のコマンドで、公開用の `pages` ブランチを作ります（コミット済みのアプリのファイルだけが入ります）。
+1. 最初の 1 回だけ、GitHub に新しいリポジトリを作ります（先生の作業）。Pages を無料で使うには、リポジトリを公開にする必要があります。その場合、`master` に入れたファイル（`docs`、`gas`、`tests`、`.ai-tasks`、`.ai-review` を含む）はすべて見えます。
+2. 変更をコミットしてから、次のコマンドで、公開用の `pages` ブランチを作ります（コミット済みのアプリのファイルだけが入ります）。
 
    ```
    powershell -NoProfile -ExecutionPolicy Bypass -File tools/pages-branch.ps1
    ```
 
-2. 2 つのブランチを送ります。
+3. 2 つのブランチを送ります。
 
    ```
    git push origin master
    git push origin pages
    ```
 
-3. 最初の 1 回だけ、GitHub のリポジトリで Settings → Pages を開き、Branch を `pages` / (root) にして保存します。
+4. 最初の 1 回だけ、GitHub のリポジトリで Settings → Pages を開き、Branch を `pages` / (root) にして保存します。
+
+公開したあと、設定の変更が届くまで 10 分ほどかかることがあります。古い表示のままなら、待ってから読み直してください。
 
 ### テスト
 

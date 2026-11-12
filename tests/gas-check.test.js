@@ -350,11 +350,20 @@ test('中で例外が起きても JSON を返す', () => {
   assert.deepEqual(call({ op: 'quota', token: tokA }), { ok: false, error: 'server' });
 });
 
-test('DATABASE_URL が無いときは server', () => {
-  const fakes = makeFakes({ databaseURL: undefined, validTokens: { [tokA]: 'uidA' } });
-  const gas = loadGas(CODE, fakes);
-  const out = gas.doPost({ postData: { contents: JSON.stringify({ op: 'quota', token: tokA }) } });
-  assert.deepEqual(JSON.parse(out.getContent()), { ok: false, error: 'server' });
+test('DATABASE_URL が無いときは、トークンの要る操作が config（ping は今のまま）', () => {
+  for (const databaseURL of [undefined, '']) {
+    const fakes = makeFakes({ databaseURL, validTokens: { [tokA]: 'uidA' } });
+    const gas = loadGas(CODE, fakes);
+    const call = (body) => JSON.parse(gas.doPost({ postData: { contents: JSON.stringify(body) } }).getContent());
+    const config = { ok: false, error: 'config' };
+    assert.deepEqual(call({ op: 'put', token: tokA, key: 'photo-0001', mime: 'image/jpeg', dataB64: PHOTO }), config);
+    assert.deepEqual(call({ op: 'get', token: tokA, id: 'file-1' }), config);
+    assert.deepEqual(call({ op: 'quota', token: tokA }), config);
+    assert.deepEqual(call({ op: 'cleanup', token: tokA }), config);
+    assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'check-1' });
+    assert.equal(fakes.files.length, 0);
+    assert.equal(fakes.fetched.length, 0);
+  }
 });
 
 test('Code.gs は import・export・require を使わない', async () => {

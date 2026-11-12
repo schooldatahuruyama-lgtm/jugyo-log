@@ -27,16 +27,32 @@ function seconds(ms) {
 }
 
 // GAS の error のうち、そのまま画面に出してよいもの（ほかは 'unknown' にする。想定外の値に秘密が入っていても出さないため）
-const GAS_ERROR_CODES = ['bad', 'auth', 'server', 'toobig', 'notfound'];
+const GAS_ERROR_CODES = ['bad', 'auth', 'server', 'toobig', 'notfound', 'config'];
 
 function gasErrorCode(error) {
   return typeof error === 'string' && GAS_ERROR_CODES.includes(error) ? error : 'unknown';
 }
 
-// Firebase のエラーの返事から、エラーの名前（先頭の英大文字と _ だけの並び）を取り出す。読めなければ 'UNKNOWN'
+// Realtime Database の REST は error を文字列で返す。決まった一覧に当たるものだけ名前にする
+// （大文字小文字と末尾の句点は無視する。一覧にない文は、秘密が入っていても出さないよう UNKNOWN にする）
+const DATABASE_ERROR_NAMES = {
+  'permission denied': 'PERMISSION_DENIED',
+  'auth token is expired': 'TOKEN_EXPIRED',
+  'could not parse auth token': 'BAD_TOKEN',
+};
+
+function databaseErrorName(text) {
+  const key = text.trim().toLowerCase().replace(/[.。]+$/, '');
+  return Object.prototype.hasOwnProperty.call(DATABASE_ERROR_NAMES, key) ? DATABASE_ERROR_NAMES[key] : 'UNKNOWN';
+}
+
+// Firebase のエラーの返事から、エラーの名前を取り出す。読めなければ 'UNKNOWN'
+// - ログイン（error.message）: 先頭の英大文字と _ だけの並び
+// - データベース（error が文字列）: databaseErrorName の一覧
 function firebaseErrorName(text) {
   try {
     const body = JSON.parse(text);
+    if (body && typeof body.error === 'string') return databaseErrorName(body.error);
     const msg = body && body.error && typeof body.error.message === 'string' ? body.error.message : '';
     const m = msg.match(/^[A-Z_]+/);
     if (m) return m[0];
@@ -97,20 +113,24 @@ export function createCheckSteps(deps) {
     });
   }
 
-  // Firebase に送り、2xx なら JSON を返す。そうでなければ what（エラーの名前）の文で投げる。
-  // 投げる Error には、名前を firebaseError として付ける
+  // Firebase に送り、2xx なら JSON を返す。そうでなければ what（エラーの名前、HTTP の状態番号）の文で投げる。
+  // 投げる Error には、名前を firebaseError として、かっこの中の文を reasonText として付ける
   async function firebase(url, init, what) {
     const r = await request(url, init, FIREBASE_TIMEOUT_MS, FIREBASE_UNREACHABLE);
     if (!r.ok) {
       const name = firebaseErrorName(r.text);
-      const err = new Error(`${what}（${name}）`);
+      const reasonText = `${name}、HTTP ${r.status}`;
+      const err = new Error(`${what}（${reasonText}）`);
       err.firebaseError = name;
+      err.reasonText = reasonText;
       throw err;
     }
     try {
       return JSON.parse(r.text);
     } catch {
-      throw new Error(`${what}（返事の形が正しくありません）`);
+      const err = new Error(`${what}（返事の形が正しくありません）`);
+      err.reasonText = '返事の形が正しくありません';
+      throw err;
     }
   }
 
@@ -172,6 +192,8 @@ export function createCheckSteps(deps) {
     // 1. check/ping を読む
     async readPing() {
       const v = await firebase(`${dbBase}/check/ping.json`, { method: 'GET' }, 'check/ping を読めませんでした');
+      // 値の種類を「文字」のまま入れたとき（"true"）は、直し方がわかる文にする
+      if (v === 'true') throw new Error('check/ping が文字の "true" になっています。種類を boolean にしてください');
       if (v !== true) throw new Error('check/ping に true が入っていません');
       return '';
     },
@@ -296,7 +318,8 @@ export function createCheckSteps(deps) {
       return `全体 ${formatBytes(res.limit)}、使用 ${formatBytes(res.used)}`;
     },
 
-    // 後片付け: GAS の cleanup と、Firebase のアカウントの削除（accounts:delete）。失敗しても投げず、詳細に書く
+    // 後片付け: GAS の cleanup、データベースの check/<uid> の削除、Firebase のアカウントの削除（accounts:delete）。
+    // 失敗しても投げず、詳細に書く
     async cleanup() {
       if (!idToken) return '';
       const notes = [];
@@ -305,6 +328,18 @@ export function createCheckSteps(deps) {
         notes.push(`確認用の写真 ${Number(res.removed) || 0} 枚をゴミ箱に入れました`);
       } catch (err) {
         notes.push(`写真の後片付けができませんでした（${err.message}）`);
+      }
+      // アカウントを消すと書き込んだ数値を消せなくなるので、先に消す
+      if (uid) {
+        try {
+          await firebase(
+            `${dbBase}/check/${encodeURIComponent(uid)}.json?auth=${encodeURIComponent(idToken)}`,
+            { method: 'DELETE' },
+            'データベースの後片付けができませんでした',
+          );
+        } catch (err) {
+          notes.push(`データベースの後片付けができませんでした（${err.reasonText ?? err.message}）`);
+        }
       }
       try {
         await identity('delete', { idToken }, 'アカウントを消せませんでした');

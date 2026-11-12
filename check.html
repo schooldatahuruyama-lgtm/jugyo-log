@@ -87,6 +87,10 @@
   <h1>授業ログ 接続確認</h1>
   <p>この端末とネットワークで、授業ログに必要な通信と保存ができるかを確かめます。</p>
 
+  <!-- 古い iPadOS でモジュールが動かないときに、黙って止まらないようにする（動いたらスクリプトの最初で隠す） -->
+  <p id="boot-note">読み込み中です。このままの場合は、iPadOS が古い可能性があります。端末の情報（設定 → 一般 → 情報）を Claude Code に伝えてください。</p>
+  <noscript><p>JavaScript が使えないため、確認できません。</p></noscript>
+
   <div class="card warn" id="config-error" hidden>
     <p id="config-error-text"></p>
   </div>
@@ -124,6 +128,7 @@ import { createCheckSteps } from './js/check-steps.js';
 import { reportText, PARALLEL_COUNT } from './js/check-logic.js';
 import { FIREBASE } from './js/firebase-config.js';
 import { GAS } from './js/gas-config.js';
+document.getElementById('boot-note').hidden = true;
 
 const $ = (id) => document.getElementById(id);
 

@@ -48,6 +48,10 @@ function makeDeps(handler = () => undefined) {
         db[m[1]] = JSON.parse(init.body);
         return { json: db[m[1]] };
       }
+      if (init && init.method === 'DELETE') {
+        delete db[m[1]];
+        return { json: null };
+      }
       return { json: m[1] in db ? db[m[1]] : null };
     }
     return { status: 404, text: 'not found' };
@@ -176,7 +180,7 @@ test('ほかのエラーでは次を試さない', async () => {
     }
   });
   const steps = createCheckSteps(deps);
-  await assert.rejects(steps.signUp(), { message: 'アカウントを作れませんでした（TOO_MANY_ATTEMPTS_TRY_LATER）' });
+  await assert.rejects(steps.signUp(), { message: 'アカウントを作れませんでした（TOO_MANY_ATTEMPTS_TRY_LATER、HTTP 400）' });
   assert.equal(calls.length, 1);
   assert.equal(steps.state().hasToken, false);
 });
@@ -244,7 +248,7 @@ test('GAS の知らないエラーは unknown にし、中身を出さない', a
     }
   }
   // 既知のコードはそのまま出す
-  for (const code of ['bad', 'auth', 'server', 'toobig', 'notfound']) {
+  for (const code of ['bad', 'auth', 'server', 'toobig', 'notfound', 'config']) {
     const { deps } = makeDeps((url) => {
       if (url.startsWith(GAS_URL)) return { json: { ok: false, error: code } };
     });
@@ -267,14 +271,85 @@ test('Firebase のエラー名は、先頭の英大文字と _ だけを出し�
     });
     const steps = createCheckSteps(deps);
     await steps.signUp();
-    await assert.rejects(steps.signIn(), { message: `ログインできませんでした（${name}）` });
+    await assert.rejects(steps.signIn(), { message: `ログインできませんでした（${name}、HTTP 400）` });
   }
   const { deps } = makeDeps((url) => {
     if (url.includes('accounts:signInWithPassword')) return { status: 500, text: 'someone@school.example' };
   });
   const steps = createCheckSteps(deps);
   await steps.signUp();
-  await assert.rejects(steps.signIn(), { message: 'ログインできませんでした（UNKNOWN）' });
+  await assert.rejects(steps.signIn(), { message: 'ログインできませんでした（UNKNOWN、HTTP 500）' });
+});
+
+test('データベースの文字列のエラーは、決まった一覧に当たるものだけ名前にする', async () => {
+  const cases = [
+    ['Permission denied', 'PERMISSION_DENIED'],
+    ['permission denied.', 'PERMISSION_DENIED'],
+    ['Auth token is expired', 'TOKEN_EXPIRED'],
+    ['Could not parse auth token.', 'BAD_TOKEN'],
+    ['could not parse auth token', 'BAD_TOKEN'],
+    ['Some other error', 'UNKNOWN'],
+  ];
+  for (const [error, name] of cases) {
+    const { deps } = makeDeps((url) => {
+      if (url.endsWith('/check/ping.json')) return { status: 401, json: { error } };
+    });
+    await assert.rejects(createCheckSteps(deps).readPing(), {
+      message: `check/ping を読めませんでした（${name}、HTTP 401）`,
+    });
+  }
+});
+
+test('データベースが 401 と Permission denied を返したら、名前と HTTP 401 を出す', async () => {
+  const { deps } = makeDeps((url) => {
+    if (url.startsWith(DB_URL + '/check/' + UID)) return { status: 401, json: { error: 'Permission denied' } };
+  });
+  const steps = createCheckSteps(deps);
+  await steps.signUp();
+  await assert.rejects(steps.writeAndRead(), (err) => {
+    assert.ok(err.message.includes('PERMISSION_DENIED'), err.message);
+    assert.ok(err.message.includes('HTTP 401'), err.message);
+    assert.equal(err.message, '書き込めませんでした（PERMISSION_DENIED、HTTP 401）');
+    return true;
+  });
+});
+
+test('データベースが 404 と HTML を返したら、UNKNOWN と HTTP 404 を出す', async () => {
+  const { deps } = makeDeps((url) => {
+    if (url.endsWith('/check/ping.json')) return { status: 404, text: '<!DOCTYPE html><html><body>Not Found</body></html>' };
+  });
+  await assert.rejects(createCheckSteps(deps).readPing(), (err) => {
+    assert.ok(err.message.includes('UNKNOWN'), err.message);
+    assert.ok(err.message.includes('HTTP 404'), err.message);
+    return true;
+  });
+});
+
+test('データベースの error の文字列に秘密らしい値があっても、文に出さない', async () => {
+  const secrets = [
+    'Permission denied for someone@school.example',
+    'eyJhbGciOiJSUzI1NiJ9.eyJ1c2VyX2lkIjoic2VjcmV0In0.c2lnbmF0dXJlLXNlY3JldA',
+    'uidXYZ123 is not allowed',
+  ];
+  for (const error of secrets) {
+    const { deps } = makeDeps((url) => {
+      if (url.endsWith('/check/ping.json')) return { status: 401, json: { error } };
+    });
+    await assert.rejects(createCheckSteps(deps).readPing(), (err) => {
+      assert.equal(err.message, 'check/ping を読めませんでした（UNKNOWN、HTTP 401）');
+      assert.equal(err.message.includes(error), false);
+      return true;
+    });
+  }
+});
+
+test('check/ping が文字の "true" のときは、専用の文で失敗にする', async () => {
+  const { deps } = makeDeps((url) => {
+    if (url.endsWith('/check/ping.json')) return { json: 'true' };
+  });
+  await assert.rejects(createCheckSteps(deps).readPing(), {
+    message: 'check/ping が文字の "true" になっています。種類を boolean にしてください',
+  });
 });
 
 test('GAS が断る', async () => {
@@ -488,6 +563,55 @@ test('後片付け: GAS の cleanup が失敗してもアカウントは消し�
   assert.equal(del.length, 1);
   assert.equal(del[0].url, 'https://identitytoolkit.googleapis.com/v1/accounts:delete?key=' + API_KEY);
   assert.equal(bodyOf(del[0]).idToken, TOKEN1);
+});
+
+test('GAS の config（設定まちがい）は、そのまま文に出す', async () => {
+  const { deps } = makeDeps((url, init) => {
+    if (url.startsWith(GAS_URL) && JSON.parse(init.body).op === 'put') return { json: { ok: false, error: 'config' } };
+  });
+  const steps = createCheckSteps(deps);
+  await steps.signUp();
+  await assert.rejects(steps.gasPut('QUJD'), { message: '保存の仕組みが断りました（config）' });
+});
+
+test('後片付け: アカウントを消す前に、データベースの check/<uid> を DELETE で消す', async () => {
+  const { deps, calls, ctx } = makeDeps();
+  const steps = createCheckSteps(deps);
+  await steps.signUp();
+  await steps.signIn();
+  await steps.writeAndRead();
+  assert.equal(UID in ctx.db, true);
+  await steps.cleanup();
+  const delIdx = calls.findIndex((c) => c.init && c.init.method === 'DELETE');
+  const accIdx = calls.findIndex((c) => c.url.includes('accounts:delete'));
+  assert.ok(delIdx >= 0, 'DELETE が呼ばれていません');
+  assert.ok(accIdx >= 0, 'accounts:delete が呼ばれていません');
+  assert.ok(delIdx < accIdx, 'DELETE が accounts:delete より後です');
+  assert.equal(calls[delIdx].url, `${DB_URL}/check/${UID}.json?auth=${TOKEN2}`);
+  assert.equal(UID in ctx.db, false);
+});
+
+test('後片付け: データベースの DELETE が失敗してもアカウントは消し、詳細に書く', async () => {
+  const { deps, calls } = makeDeps((url, init) => {
+    if (init && init.method === 'DELETE') return { status: 401, json: { error: 'Permission denied' } };
+  });
+  const steps = createCheckSteps(deps);
+  await steps.signUp();
+  const detail = await steps.cleanup();
+  assert.ok(detail.includes('データベースの後片付けができませんでした（PERMISSION_DENIED、HTTP 401）'), detail);
+  assert.equal(calls.filter((c) => c.url.includes('accounts:delete')).length, 1);
+  assert.equal(steps.state().hasToken, false);
+});
+
+test('後片付け: データベースにつながらなくても投げず、アカウントは消す', async () => {
+  const { deps, calls } = makeDeps((url, init) => {
+    if (init && init.method === 'DELETE') throw new TypeError('Failed to fetch');
+  });
+  const steps = createCheckSteps(deps);
+  await steps.signUp();
+  const detail = await steps.cleanup();
+  assert.ok(detail.includes('データベースの後片付けができませんでした（Firebase につながりませんでした）'), detail);
+  assert.equal(calls.filter((c) => c.url.includes('accounts:delete')).length, 1);
 });
 
 test('後片付け: アカウントの削除が失敗しても投げない', async () => {

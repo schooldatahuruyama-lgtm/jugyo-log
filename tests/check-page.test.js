@@ -76,6 +76,15 @@ test('Cache と localStorage の確認は、途中で失敗しても finally で
   assert.match(html, /finally\s*\{\s*try\s*\{\s*window\.localStorage\.removeItem\(key\);/, 'localStorage を finally で消していません');
 });
 
+test('check.html に読み込み中の注意（boot-note）と noscript があり、モジュールの最初で注意を隠す', () => {
+  const html = read('check.html');
+  assert.match(html, /<p[^>]*\sid="boot-note"[^>]*>読み込み中です。/);
+  assert.ok(html.includes('<noscript>'), '<noscript> がありません');
+  assert.match(html, /<noscript>(?:<p>)?JavaScript が使えないため、確認できません。/);
+  // import のすぐあとの最初の文で隠す
+  assert.match(html, /from '\.\/js\/gas-config\.js';\s*\n\s*document\.getElementById\('boot-note'\)\.hidden = true;/);
+});
+
 test('index.html に check.html へのリンクがある', () => {
   const html = read('index.html');
   assert.match(html, /<a\s[^>]*href\s*=\s*["']\.?\/?check\.html["']/);

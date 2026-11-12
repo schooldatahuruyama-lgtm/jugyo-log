@@ -56,7 +56,11 @@ function handle_(e) {
   if (op === 'ping') return { ok: true, version: VERSION };
   if (op !== 'put' && op !== 'get' && op !== 'quota' && op !== 'cleanup') return fail_('bad');
 
-  var uid = verify_(req.token);
+  // スクリプト プロパティの DATABASE_URL が空なら、設定まちがいとして config を返す（本人確認ができないため）
+  var base = databaseUrl_();
+  if (!base) return fail_('config');
+
+  var uid = verify_(req.token, base);
   if (!uid) return fail_('auth');
 
   if (op === 'put') return put_(uid, req);
@@ -67,8 +71,15 @@ function handle_(e) {
 
 // ---- 本人確認 ----
 
-// トークンから uid を取り出し、Firebase に問い合わせて本人なら uid を、そうでなければ null を返す
-function verify_(token) {
+// スクリプト プロパティの DATABASE_URL を、最後の / を外して返す。無ければ ''
+function databaseUrl_() {
+  var base = PropertiesService.getScriptProperties().getProperty('DATABASE_URL');
+  if (!base) return '';
+  return String(base).trim().replace(/\/+$/, '');
+}
+
+// トークンから uid を取り出し、Firebase（base はデータベースの URL）に問い合わせて本人なら uid を、そうでなければ null を返す
+function verify_(token, base) {
   if (typeof token !== 'string' || token.length > 4096 || !TOKEN_RE.test(token)) return null;
   var uid = uidFromToken_(token);
   if (!uid) return null;
@@ -77,10 +88,6 @@ function verify_(token) {
   var cacheKey = 'auth_' + Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, token));
   var cached = cache.get(cacheKey);
   if (cached !== null && cached !== undefined) return cached === uid ? uid : null;
-
-  var base = PropertiesService.getScriptProperties().getProperty('DATABASE_URL');
-  if (!base) throw new Error('DATABASE_URL がスクリプト プロパティにありません');
-  base = String(base).replace(/\/+$/, '');
 
   var res = UrlFetchApp.fetch(base + '/check/' + uid + '.json?auth=' + token, { muteHttpExceptions: true });
   if (res.getResponseCode() !== 200) return null;
