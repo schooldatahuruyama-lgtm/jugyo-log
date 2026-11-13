@@ -1,0 +1,138 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "check": {
+      "ping": {
+        ".read": true
+      },
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid",
+        ".validate": "newData.isNumber()"
+      }
+    },
+    "teacherList": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid"
+      }
+    },
+    "gen": {
+      "$sid": {
+        ".read": true,
+        ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+        ".validate": "newData.isNumber()"
+      }
+    },
+    "accounts": {
+      ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+      ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".validate": "newData.isString()"
+      }
+    },
+    "students": {
+      ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+      ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+      "$sid": {
+        "createdAt": {
+          ".validate": "!data.exists() && newData.isNumber()"
+        }
+      }
+    },
+    "counters": {
+      ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+      ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true"
+    },
+    "initialPw": {
+      ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+      ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+      "$sid": {
+        ".write": "auth != null && !newData.exists() && root.child('accounts').child(auth.uid).val() === $sid"
+      }
+    },
+    "classes": {
+      ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+      ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+      "$classId": {
+        ".read": "auth != null && root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true"
+      }
+    },
+    "members": {
+      ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+      ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+      "$classId": {
+        "$sid": {
+          ".read": "auth != null && root.child('accounts').child(auth.uid).val() === $sid",
+          ".validate": "newData.isNumber()"
+        }
+      }
+    },
+    "memberOf": {
+      ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+      ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+      "$sid": {
+        ".read": "auth != null && root.child('accounts').child(auth.uid).val() === $sid"
+      }
+    },
+    "units": {
+      ".read": "auth != null && (root.child('teacherList').child(auth.uid).val() === true || root.child('accounts').child(auth.uid).isString())",
+      ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true"
+    },
+    "lessons": {
+      "$classId": {
+        ".read": "auth != null && (root.child('teacherList').child(auth.uid).val() === true || root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true)",
+        ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true"
+      }
+    },
+    "thumbs": {
+      "$classId": {
+        ".read": "auth != null && (root.child('teacherList').child(auth.uid).val() === true || root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true)",
+        ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true"
+      }
+    },
+    "records": {
+      "$classId": {
+        ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+        "$lessonId": {
+          "$sid": {
+            ".read": "auth != null && root.child('accounts').child(auth.uid).val() === $sid",
+            ".write": "auth != null && root.child('accounts').child(auth.uid).val() === $sid && root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true && root.child('lessons').child($classId).child($lessonId).exists()",
+            ".validate": "newData.hasChildren()",
+            "memo": {
+              ".validate": "newData.isString() && newData.val().length <= 2000"
+            },
+            "learned": {
+              ".validate": "newData.isString() && newData.val().length <= 2000"
+            },
+            "question": {
+              ".validate": "newData.isString() && newData.val().length <= 2000"
+            },
+            "level": {
+              ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 4 && newData.val() % 1 === 0"
+            },
+            "updatedAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        }
+      }
+    },
+    "marks": {
+      "$sid": {
+        ".read": "auth != null && (root.child('teacherList').child(auth.uid).val() === true || root.child('accounts').child(auth.uid).val() === $sid)",
+        "$classId": {
+          ".write": "auth != null && root.child('accounts').child(auth.uid).val() === $sid && root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true",
+          ".validate": "newData.hasChildren()",
+          "$lessonId": {
+            ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 4 && newData.val() % 1 === 0"
+          }
+        }
+      }
+    }
+  }
+}
