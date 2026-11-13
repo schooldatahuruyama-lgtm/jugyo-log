@@ -79,7 +79,7 @@ check/…                                      段階 0 の確認用（そのま
 | `members` | 先生（全体）。`$classId/$sid` は本人も | 先生。数だけ |
 | `memberOf` | 先生（全体）。`$sid` は本人も | 先生 |
 | `units` | 先生と、`accounts` に対応のある生徒 | 先生 |
-| `lessons/$classId`、`thumbs/$classId` | 先生と、その組の一員 | 先生 |
+| `lessons/$classId`、`thumbs/$classId` | 先生と、その組の一員。`lessons` は先生が全体を読める | 先生 |
 | `records/$classId` | 先生。`$lessonId/$sid` は本人も | 本人だけ（その組の一員で、その授業があるとき）。先生は書けない |
 | `marks/$sid` | 先生と本人 | 本人だけ（その組の一員）。1〜4 の数 |
 | `check` | 段階 0 のまま | 段階 0 のまま |

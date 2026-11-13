@@ -48,6 +48,15 @@ test('だれでも読めるのは check/ping と gen/$sid だけ', () => {
   assert.deepEqual(open, ['check/ping', 'gen/$sid']);
 });
 
+test('lessons の全体は先生だけが読め、組ごとの読み書きの規則はそのまま', () => {
+  const teacher = "auth != null && root.child('teacherList').child(auth.uid).val() === true";
+  assert.equal(rules.lessons['.read'], teacher);
+  assert.equal(rules.lessons.$classId['.read'], "auth != null && (root.child('teacherList').child(auth.uid).val() === true || root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true)");
+  assert.equal(rules.lessons.$classId['.write'], teacher);
+  assert.equal(rules.lessons['.write'], undefined);
+  assert.equal(rules.thumbs['.read'], undefined);
+});
+
 test('auth.uid を使う式は、すべて auth != null を含む', () => {
   for (const [p, k, v] of rulesIn(rules)) {
     if (typeof v === 'string' && v.includes('auth.uid')) {

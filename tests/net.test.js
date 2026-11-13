@@ -51,6 +51,29 @@ test('読む: 無ければ null を返す', async () => {
   assert.equal(await net.get('a/none'), null);
 });
 
+test('読む: shallow のときだけ URL に shallow=true を付ける', async () => {
+  const { net, fetch } = make(() => ({ body: { s1: true, s2: true } }));
+  assert.deepEqual(await net.get('records/c1/l1', { shallow: true }), { s1: true, s2: true });
+  await net.get('records/c1/l1');
+  await net.get('records/c1/l1', { shallow: false });
+  assert.deepEqual(fetch.calls.map((c) => c.url), [
+    `${DB}/records/c1/l1.json?auth=tok&shallow=true`,
+    `${DB}/records/c1/l1.json?auth=tok`,
+    `${DB}/records/c1/l1.json?auth=tok`,
+  ]);
+  assert.equal(fetch.calls[0].init.method, 'GET');
+});
+
+test('読む: トークンを取り直しても shallow を保つ', async () => {
+  let n = 0;
+  const { net, fetch } = make(() => (++n === 1 ? { status: 401, body: {} } : { body: { s1: true } }));
+  assert.deepEqual(await net.get('records/c1/l1', { shallow: true }), { s1: true });
+  assert.deepEqual(fetch.calls.map((c) => c.url), [
+    `${DB}/records/c1/l1.json?auth=tok&shallow=true`,
+    `${DB}/records/c1/l1.json?auth=tok2&shallow=true`,
+  ]);
+});
+
 test('書く: set は PUT、update は PATCH、remove は DELETE', async () => {
   const { net, fetch } = make();
   await net.set('a/b', { n: 1 });

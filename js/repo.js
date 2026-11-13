@@ -3,6 +3,7 @@
 // 知っているのはこのモジュールだけ。通信は引数の net（js/net.js の createNet、または js/dev/memory-net.js）で行う。
 // 読んだデータは形を確かめてから返す（欠けや型の違いがあっても落ちない）。
 import { formatStudentId } from './ids.js';
+import { sortLessons, sortUnits } from './lesson-logic.js';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -30,6 +31,31 @@ function toClass(id, v) {
     year: isNum(c.year) ? c.year : 0,
     name: typeof c.name === 'string' ? c.name : '',
     createdAt: isNum(c.createdAt) ? c.createdAt : 0,
+  };
+}
+
+function toUnit(id, v) {
+  const u = isObj(v) ? v : {};
+  return {
+    id,
+    year: isNum(u.year) ? u.year : 0,
+    name: typeof u.name === 'string' ? u.name : '',
+    order: isNum(u.order) ? u.order : 0,
+  };
+}
+
+// 資料の目録は生のオブジェクトで返す（表示のための選別は lesson-logic で行う）
+function toLesson(classId, id, v) {
+  const l = isObj(v) ? v : {};
+  return {
+    id,
+    classId,
+    date: typeof l.date === 'string' ? l.date : '',
+    title: typeof l.title === 'string' ? l.title : '',
+    unitId: typeof l.unitId === 'string' ? l.unitId : '',
+    materials: isObj(l.materials) ? l.materials : {},
+    createdAt: isNum(l.createdAt) ? l.createdAt : 0,
+    updatedAt: isNum(l.updatedAt) ? l.updatedAt : 0,
   };
 }
 
@@ -71,6 +97,124 @@ export function createRepo(net) {
 
     async renameClass(id, name) {
       await net.set(`classes/${key(id)}/name`, name);
+    },
+
+    // その年度の単元（順番が同じなら名前順）
+    async listUnits(year) {
+      return sortUnits(entriesOf(await net.get('units'))
+        .map(([id, v]) => toUnit(id, v))
+        .filter((u) => u.year === year));
+    },
+
+    async createUnit(id, { year, name, order }) {
+      await net.set(`units/${key(id)}`, { year, name, order });
+    },
+
+    async renameUnit(id, name) {
+      await net.set(`units/${key(id)}/name`, name);
+    },
+
+    async setUnitOrders(orders) {
+      const patch = {};
+      for (const [id, order] of Object.entries(orders)) patch[`units/${key(id)}/order`] = order;
+      if (Object.keys(patch).length === 0) return;
+      await net.update('', patch);
+    },
+
+    // 授業の一覧（日付の新しい順、同じ日付は作成日時の新しい順）
+    async listLessons(classId) {
+      const cid = key(classId);
+      return sortLessons(entriesOf(await net.get(`lessons/${cid}`))
+        .map(([id, v]) => toLesson(cid, id, v)));
+    },
+
+    async getLesson(classId, lessonId) {
+      const cid = key(classId);
+      const lid = key(lessonId);
+      const v = await net.get(`lessons/${cid}/${lid}`);
+      return isObj(v) ? toLesson(cid, lid, v) : null;
+    },
+
+    // 共有ファイルの参照を調べるための全授業。先生だけが読める規則を使う
+    async listAllLessons() {
+      return Object.fromEntries(entriesOf(await net.get('lessons')));
+    },
+
+    // 複数クラスの授業を、1 回のルート update で一緒に作る
+    async createLessons(items, now) {
+      const patch = {};
+      for (const { classId, lessonId, date, title, unitId } of items) {
+        const lesson = { date, title, createdAt: now, updatedAt: now };
+        if (unitId) lesson.unitId = unitId;
+        patch[`lessons/${key(classId)}/${key(lessonId)}`] = lesson;
+      }
+      if (Object.keys(patch).length === 0) return;
+      await net.update('', patch);
+    },
+
+    // 資料と作成日時は残し、編集した項目だけを書く。空の単元は外す
+    async updateLesson(classId, lessonId, { date, title, unitId }, now) {
+      const path = `lessons/${key(classId)}/${key(lessonId)}`;
+      await net.update('', {
+        [`${path}/date`]: date,
+        [`${path}/title`]: title,
+        [`${path}/unitId`]: unitId || null,
+        [`${path}/updatedAt`]: now,
+      });
+    },
+
+    // 記録の本文を受け取らず、生徒 ID の数だけを数える
+    async countRecords(classId, lessonId) {
+      const records = await net.get(`records/${key(classId)}/${key(lessonId)}`, { shallow: true });
+      return entriesOf(records).length;
+    },
+
+    // 呼ぶ側で、記録が無いことと資料の共有参照を先に確かめる
+    async deleteLesson(classId, lessonId) {
+      const cid = key(classId);
+      const lid = key(lessonId);
+      await net.update('', { [`lessons/${cid}/${lid}`]: null, [`thumbs/${cid}/${lid}`]: null });
+    },
+
+    // 同じ資料を複数の授業に付ける。授業ごとの順番・画像・更新日時も一緒に書く
+    async addMaterial(targets, materialId, material, thumb, now) {
+      const mid = key(materialId);
+      const patch = {};
+      for (const { classId, lessonId, order } of targets) {
+        const cid = key(classId);
+        const lid = key(lessonId);
+        patch[`lessons/${cid}/${lid}/materials/${mid}`] = { ...material, order };
+        if (typeof thumb === 'string') patch[`thumbs/${cid}/${lid}/${mid}`] = thumb;
+        patch[`lessons/${cid}/${lid}/updatedAt`] = now;
+      }
+      if (Object.keys(patch).length === 0) return;
+      await net.update('', patch);
+    },
+
+    // この授業からだけ外す。ファイル本体を消せるかは、呼ぶ側で全授業の参照を調べる
+    async removeMaterial(classId, lessonId, materialId, now) {
+      const cid = key(classId);
+      const lid = key(lessonId);
+      const mid = key(materialId);
+      await net.update('', {
+        [`lessons/${cid}/${lid}/materials/${mid}`]: null,
+        [`thumbs/${cid}/${lid}/${mid}`]: null,
+        [`lessons/${cid}/${lid}/updatedAt`]: now,
+      });
+    },
+
+    async setMaterialOrders(classId, lessonId, orders, now) {
+      const path = `lessons/${key(classId)}/${key(lessonId)}`;
+      const patch = {};
+      for (const [id, order] of Object.entries(orders)) patch[`${path}/materials/${key(id)}/order`] = order;
+      if (Object.keys(patch).length === 0) return;
+      patch[`${path}/updatedAt`] = now;
+      await net.update('', patch);
+    },
+
+    async getThumbs(classId, lessonId) {
+      return Object.fromEntries(entriesOf(await net.get(`thumbs/${key(classId)}/${key(lessonId)}`))
+        .filter(([, v]) => typeof v === 'string'));
     },
 
     // 発行した生徒 ID の台帳（ID 順）。uid が無ければ null
