@@ -85,8 +85,9 @@ test('check.html に読み込み中の注意（boot-note）と noscript があ�
   assert.match(html, /from '\.\/js\/gas-config\.js';\s*\n\s*document\.getElementById\('boot-note'\)\.hidden = true;/);
 });
 
-test('index.html に check.html へのリンクがある', () => {
+// index.html は、段階 1a-1 でアプリの入り口に置きかえた（check.html へのリンクは置かない）
+test('index.html はアプリの入り口（js/main.js を読みこむ）', () => {
   const html = read('index.html');
-  assert.match(html, /<a\s[^>]*href\s*=\s*["']\.?\/?check\.html["']/);
-  assert.ok(html.includes('授業ログは準備中です'));
+  assert.match(html, /<script\s+type="module"\s+src="js\/main\.js"><\/script>/);
+  assert.ok(html.includes('<div id="app">'));
 });
