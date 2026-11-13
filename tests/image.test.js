@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fitSize, dataUrlBytes, compressCanvas } from '../js/image.js';
+import { fitSize, dataUrlBytes, dataUrlToBase64, compressCanvas } from '../js/image.js';
 
 test('fitSize: 横長の大きな画像は長辺を maxEdge にそろえ、縦横比を保つ', () => {
   assert.deepEqual(fitSize(4000, 3000, 1280), { width: 1280, height: 960 });
@@ -30,6 +30,23 @@ test('fitSize: 結果はいつも整数', () => {
 test('dataUrlBytes: データ URL の文字数を返す', () => {
   assert.equal(dataUrlBytes('data:image/jpeg;base64,AAAA'), 27);
   assert.equal(dataUrlBytes(''), 0);
+});
+
+test('dataUrlToBase64: JPEG のデータ URL から base64 だけを返す', () => {
+  assert.equal(dataUrlToBase64('data:image/jpeg;base64,AAAA'), 'AAAA');
+  assert.equal(dataUrlToBase64('data:image/jpeg;base64,/9j/AA=='), '/9j/AA==');
+});
+
+test('dataUrlToBase64: data: や base64 の印がない文字は受けつけない', () => {
+  for (const value of ['image/jpeg;base64,AAAA', 'https://example.invalid/image', 'data:image/jpeg,AAAA', null]) {
+    assert.throws(() => dataUrlToBase64(value));
+  }
+});
+
+test('dataUrlToBase64: JPEG 以外や、空・不正な base64 は受けつけない', () => {
+  for (const value of ['data:image/png;base64,AAAA', 'data:image/jpeg;base64,', 'data:image/jpeg;base64,A!AA']) {
+    assert.throws(() => dataUrlToBase64(value));
+  }
 });
 
 // toDataURL の代わり: 画質ごとに決まった長さの JPEG のデータ URL を返し、呼ばれた画質を記録する

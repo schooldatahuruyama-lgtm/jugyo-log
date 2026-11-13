@@ -19,6 +19,16 @@ export function dataUrlBytes(dataUrl) {
   return String(dataUrl ?? '').length;
 }
 
+// 縮小した JPEG のデータ URL から、送信用の base64 だけを取り出す。
+export function dataUrlToBase64(dataUrl) {
+  if (typeof dataUrl !== 'string' || !/^data:image\/jpeg;base64,(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(dataUrl)) {
+    throw new Error('JPEG のデータ URL ではありません');
+  }
+  const base64 = dataUrl.slice('data:image/jpeg;base64,'.length);
+  if (!base64) throw new Error('画像のデータがありません');
+  return base64;
+}
+
 // ファイルを画像として読みこむ（向きはブラウザが EXIF に合わせる）
 function loadImage(file) {
   return new Promise((resolve, reject) => {
