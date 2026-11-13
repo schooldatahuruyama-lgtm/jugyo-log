@@ -49,7 +49,7 @@
 
 **Files:**
 - Create: `js/views/teacher-units.js`、`js/views/teacher-lessons.js`、`js/views/parts/teacher-nav.js`
-- Modify: `js/router.js`、`tests/router.test.js`、`js/views/teacher-classes.js`（上部の帯を `teacher-nav.js` に置きかえる）、`css/app.css`
+- Modify: `js/router.js`、`tests/router.test.js`、`js/views/teacher-classes.js`（上部の帯を `teacher-nav.js` に置きかえる）、`css/app.css`、`tests/rules-check.test.js`（下の Step 0）
 
 **Interfaces:**
 - Consumes: Task 1 の `repo` と `lesson-logic`、`schoolYear`（`js/roster-logic.js`）、`newId`、`CONFIG`。
@@ -64,6 +64,10 @@
 
     `classId`・`lessonId` は `/^[A-Za-z0-9]+$/` だけを受けつける。
   - `js/views/parts/teacher-nav.js`: `teacherNav(ctx, current) → HTMLElement`。先生の画面の上部の帯（「授業ログ　先生」、メニュー「クラス」「単元」「授業」、右に「ログアウト」）。`current` は `'classes' | 'units' | 'lessons'` で、今の画面のメニューに印（色と `aria-current="page"`）を付ける。メニューは `ctx.navigate` で移る。ログアウトは確かめてから `ctx.signOutAll()` → `ctx.navigate('login', {}, { confirmed: true })`（今の `teacher-classes.js` のログアウトと同じ動き）。
+
+- [ ] **Step 0: 今 1 件だけ失敗しているテストを直す**
+
+  Task 3 で `js/gas-config.js` に `appUrl`（本番用の GAS の URL。今は空の文字）を足したため、`tests/rules-check.test.js` の「設定ファイルの形が決まりどおりで、値は文字列」が失敗している。このテストを、`GAS` のキーが `appUrl` と `url` の 2 つで、どちらも文字であること、を確かめる形に直す（`js/gas-config.js` は変えない）。ほかのテストは変えない。
 
 - [ ] **Step 1: `tests/router.test.js` にテストを足す**（3 つの画面の行き来、`#/t/lesson/a`・`#/t/lesson/a/b/c`・`#/t/lesson/a%2Fb/c` は `not-found`）
 

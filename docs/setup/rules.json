@@ -84,7 +84,9 @@
       ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
       "$classId": {
         ".read": "auth != null && (root.child('teacherList').child(auth.uid).val() === true || root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true)",
-        ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true"
+        "$lessonId": {
+          ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true && (newData.exists() || !root.child('records').child($classId).child($lessonId).exists())"
+        }
       }
     },
     "thumbs": {

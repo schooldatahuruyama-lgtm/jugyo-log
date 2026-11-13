@@ -6,6 +6,7 @@ import { CONFIG } from '../config.js';
 import { newId } from '../ids.js';
 import { createIssuer } from '../issue.js';
 import { schoolYear, entryYY, isProbeId } from '../roster-logic.js';
+import { teacherNav } from './parts/teacher-nav.js';
 
 const NAME_MAX = 40;    // クラス名の長さの上限
 const ISSUE_MAX = 200;  // 一度に発行できる人数の上限
@@ -74,28 +75,16 @@ export function mount(root, ctx) {
   // ブラウザの「戻る」や ctx.navigate のときも、main.js がこれでたずねる
   if (ctx.setLeaveGuard) ctx.setLeaveGuard(okToLeave);
 
-  const logout = async () => {
-    if (!(await okToLeave()) || !alive) return;
-    const ok = await confirmDialog({
-      title: 'ログアウトしますか？',
-      body: 'もう一度使うときは、メールアドレスとパスワードを入れます。',
-      okLabel: 'ログアウト',
-    });
-    if (!ok || !alive) return;
-    if (myRun) myRun.stop = true; // ログアウトの前に、発行を止める
-    ctx.auth.signOut();
-    ctx.navigate('login', {}, { confirmed: true }); // もう確かめたので、guard にたずねない
-  };
-
   // 移る前の確かめは、main.js が guard（okToLeave）で行う
   const openRoster = (cls) => ctx.navigate('t-roster', { classId: cls.id });
 
-  const bar = el('header', { class: 'topbar topbar-teacher' },
-    el('div', { class: 'topbar-title' },
-      el('span', { class: 'topbar-brand', text: '授業ログ' }),
-      el('span', { class: 'topbar-sub', text: '先生' })),
-    el('nav', { class: 'topbar-menu', 'aria-label': 'メニュー' },
-      el('button', { type: 'button', class: 'btn', text: 'ログアウト', onclick: logout })));
+  const bar = teacherNav({
+    ...ctx, okToLeave,
+    signOutAll: async () => {
+      if (myRun) myRun.stop = true; // ログアウトの前に、発行を止める
+      await ctx.signOutAll();
+    },
+  }, 'classes');
 
   const createBtn = el('button', { type: 'button', class: 'btn btn-primary', text: 'クラスを作る', onclick: () => showCreateForm() });
   const issueBtn = el('button', { type: 'button', class: 'btn', text: '生徒 ID を発行する', onclick: () => showIssueForm() });

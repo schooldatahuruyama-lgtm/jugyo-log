@@ -28,6 +28,9 @@
 .topbar-teacher { background: var(--c-navy); color: #FFFFFF; border-bottom-color: var(--c-navy); }
 .topbar-teacher .btn { background: transparent; color: #FFFFFF; border-color: #FFFFFF; }
 .topbar-teacher .btn:hover { background: rgba(255, 255, 255, 0.12); }
+.topbar-teacher .btn[aria-current='page'] { background: #FFFFFF; color: var(--c-navy); text-decoration: underline; text-underline-offset: 4px; }
+.teacher-menu { margin-left: 0; }
+.teacher-logout { margin-left: auto; }
 .topbar-teacher :focus-visible { outline-color: #FFFFFF; box-shadow: none; }
 
 .page-main { max-width: 1100px; margin: 0 auto; padding: var(--s-3); }
@@ -66,6 +69,29 @@
 .class-open:hover { background: var(--c-bg); }
 .class-name { font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
 .class-go { flex: none; color: var(--c-main); font-weight: 700; }
+
+/* 単元と授業。行の本文と、右の操作を分ける */
+.lesson-filters { display: flex; flex-wrap: wrap; gap: var(--s-1) var(--s-2); }
+.lesson-filters .field { flex: 0 1 240px; min-width: 160px; }
+.unit-rows, .lesson-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-1); }
+.unit-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1) var(--s-2); padding: var(--s-2); background: var(--c-card); border: 1px solid var(--c-line); border-radius: var(--r-1); }
+.unit-name { flex: 1; min-width: 180px; font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
+.unit-actions { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+.lesson-row { display: flex; align-items: stretch; gap: var(--s-1); }
+.lesson-open {
+  flex: 1; min-width: 0; min-height: 64px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1) var(--s-2);
+  padding: var(--s-2); border: 2px solid var(--c-border); border-radius: var(--r-1);
+  background: var(--c-card); color: var(--c-navy); font: inherit; text-align: left; cursor: pointer; touch-action: manipulation;
+}
+.lesson-open:hover { background: var(--c-bg); }
+.lesson-open:disabled { opacity: 0.55; cursor: not-allowed; }
+.lesson-date, .lesson-count { flex: none; }
+.lesson-summary { display: flex; flex-direction: column; flex: 1; min-width: 160px; overflow-wrap: anywhere; }
+.lesson-title { font-size: 20px; font-weight: 700; }
+.lesson-targets { min-width: 0; margin: 0 0 var(--s-2); padding: var(--s-1); border: 1px solid var(--c-border); border-radius: var(--r-1); }
+.inline-form input[type='date'] { width: 100%; min-height: 48px; padding: 10px 12px; border: 2px solid var(--c-border); border-radius: var(--r-1); background: var(--c-card); color: var(--c-navy); font: inherit; }
+.page-message:not(:empty) { margin-bottom: var(--s-2); }
 
 /* 名簿と ID の一覧の表。はみ出すときだけ横に動かせる */
 .table-scroll { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -125,3 +151,52 @@ input[aria-invalid='true'] { border-color: var(--c-danger-text); }
 .rules-table td { vertical-align: top; }
 .rules-mark { white-space: nowrap; font-weight: 700; }
 .rules-copy-text { width: 100%; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
+
+/* 授業の資料。表示するボタンと、並べ替え・削除のボタンを分ける */
+.lesson-materials { border-top: 3px solid var(--teacher); padding-top: var(--s-3); }
+.lesson-materials > h2 { color: var(--teacher); }
+.material-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+.material-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1); }
+.material-open {
+  flex: 1; min-width: 240px; display: flex; align-items: center; gap: var(--s-2);
+  min-height: 112px; padding: var(--s-1); border: 2px solid var(--c-border); border-radius: var(--r-1);
+  background: var(--c-card); color: var(--c-navy); font: inherit; text-align: left; cursor: pointer; touch-action: manipulation;
+}
+.material-open:hover { background: var(--teacher-bg); }
+.material-thumb { display: flex; align-items: center; justify-content: center; flex: none; width: 120px; height: 90px; background: var(--teacher-bg); border-radius: var(--r-1); overflow: hidden; }
+.material-thumb img { width: 100%; height: 100%; object-fit: contain; }
+.material-summary { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.material-name { font-weight: 700; }
+.material-actions { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+.material-file-name { overflow-wrap: anywhere; }
+.material-form .check-list { grid-template-columns: 1fr; }
+
+/* 写真・PDF の全画面表示。指はスクロール、マウスはドラッグでも移動できる */
+dialog.material-viewer {
+  position: fixed; inset: 0; width: 100%; max-width: none; height: 100%; height: 100dvh; max-height: none;
+  margin: 0; padding: var(--s-2); border: 0; background: var(--c-bg); color: var(--c-navy); font-family: inherit;
+  overflow: hidden;
+}
+dialog.material-viewer[open] { display: flex; flex-direction: column; gap: var(--s-1); }
+.material-viewer::backdrop { background: rgba(31, 42, 107, 0.7); }
+.viewer-header { display: flex; align-items: center; justify-content: space-between; gap: var(--s-2); flex: none; }
+.viewer-header h2 { min-width: 0; margin: 0; font-size: 22px; overflow-wrap: anywhere; max-height: 3.9em; overflow-y: auto; }
+.viewer-header .btn { flex: none; }
+.viewer-controls { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: var(--s-1); flex: none; }
+.viewer-counter { min-width: 5em; text-align: center; }
+.viewer-message:empty { display: none; }
+.viewer-message { flex: none; text-align: center; }
+.viewer-message p { margin-bottom: var(--s-1); }
+.viewer-viewport { flex: 1; min-height: 0; min-width: 0; overflow: auto; background: #E2E7F1; touch-action: pan-x pan-y; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.viewer-stage { display: flex; align-items: center; justify-content: center; width: max-content; min-width: 100%; min-height: 100%; padding: 8px; }
+.viewer-stage img { display: block; flex: none; max-width: none; user-select: none; -webkit-user-select: none; }
+.viewer-can-drag { cursor: grab; }
+.viewer-can-drag:active { cursor: grabbing; }
+.viewer-stage:has(.viewer-pdf) { width: 100%; }
+.viewer-pdf { display: block; max-width: 100%; height: auto; background: #FFFFFF; }
+
+@media (max-width: 599px) {
+  .material-open { min-width: 100%; }
+  .material-actions { margin-left: auto; }
+  dialog.material-viewer { padding: var(--s-1); }
+}

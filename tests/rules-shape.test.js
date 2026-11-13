@@ -48,13 +48,22 @@ test('だれでも読めるのは check/ping と gen/$sid だけ', () => {
   assert.deepEqual(open, ['check/ping', 'gen/$sid']);
 });
 
-test('lessons の全体は先生だけが読め、組ごとの読み書きの規則はそのまま', () => {
+test('lessons の全体は先生だけが読め、組ごとの読み取りの規則はそのまま', () => {
   const teacher = "auth != null && root.child('teacherList').child(auth.uid).val() === true";
   assert.equal(rules.lessons['.read'], teacher);
   assert.equal(rules.lessons.$classId['.read'], "auth != null && (root.child('teacherList').child(auth.uid).val() === true || root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true)");
-  assert.equal(rules.lessons.$classId['.write'], teacher);
   assert.equal(rules.lessons['.write'], undefined);
   assert.equal(rules.thumbs['.read'], undefined);
+});
+
+test('lessons は組全体への書きこみを許さず、記録がある授業はまるごと消せない', () => {
+  assert.equal(rules.lessons.$classId['.write'], undefined);
+  const write = rules.lessons.$classId.$lessonId['.write'];
+  assert.equal(typeof write, 'string');
+  assert.ok(write.includes('teacherList'));
+  assert.ok(write.includes('newData.exists()'));
+  assert.ok(write.includes("root.child('records').child($classId).child($lessonId).exists()"));
+  assert.equal(write, "auth != null && root.child('teacherList').child(auth.uid).val() === true && (newData.exists() || !root.child('records').child($classId).child($lessonId).exists())");
 });
 
 test('auth.uid を使う式は、すべて auth != null を含む', () => {

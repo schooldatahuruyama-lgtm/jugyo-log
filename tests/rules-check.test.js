@@ -36,6 +36,7 @@ test('設定ファイルの形が決まりどおりで、値は文字列', async
   assert.equal(typeof fb.FIREBASE.apiKey, 'string');
 
   const gas = await import(pathToFileURL(at('js/gas-config.js')).href);
-  assert.deepEqual(Object.keys(gas.GAS), ['url']);
+  assert.deepEqual(Object.keys(gas.GAS).sort(), ['appUrl', 'url']);
+  assert.equal(typeof gas.GAS.appUrl, 'string');
   assert.equal(typeof gas.GAS.url, 'string');
 });
