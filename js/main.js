@@ -5,6 +5,10 @@ import { FIREBASE } from './firebase-config.js';
 import { createAuth } from './auth.js';
 import { createNet } from './net.js';
 import { createRepo } from './repo.js';
+import { GAS } from './gas-config.js';
+import { createGas } from './gas.js';
+import { createFileCache } from './file-cache.js';
+import { createFiles } from './files.js';
 import { parseRoute, routeHash, viewFile, roleFor } from './router.js';
 import { resolveSession } from './session.js';
 import { isDemoAllowed, createDemoBackend } from './dev/demo.js';
@@ -47,12 +51,16 @@ function memoryStorage() {
 function createBackend() {
   if (isDemoAllowed(location.hostname, location.search)) {
     const demo = createDemoBackend({ storage: window.localStorage, now, random });
-    return { demo, net: demo.net, auth: demo.auth, makeProbeStudent: null };
+    return { demo, net: demo.net, auth: demo.auth, gas: demo.gas, makeProbeStudent: null };
   }
   if (!FIREBASE.databaseURL || !FIREBASE.apiKey) return null;
   const fetchFn = window.fetch.bind(window);
   const auth = createAuth({ apiKey: FIREBASE.apiKey, fetch: fetchFn, storage: window.localStorage, now });
   const net = createNet({ databaseURL: FIREBASE.databaseURL, auth, fetch: fetchFn });
+  const gas = createGas({
+    url: GAS.appUrl, auth, fetch: fetchFn, random,
+    setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window),
+  });
   // 規則の確認（js/rules-probe.js）用: 確認用の生徒として、2 つ目のログインを作る。
   // 先生のログイン（localStorage の 'jugyolog:auth'）には触れない
   const makeProbeStudent = async (email, password) => {
@@ -63,7 +71,7 @@ function createBackend() {
     const probeNet = createNet({ databaseURL: FIREBASE.databaseURL, auth: probeAuth, fetch: fetchFn });
     return { net: probeNet, uid: user.uid };
   };
-  return { demo: null, net, auth, makeProbeStudent };
+  return { demo: null, net, auth, gas, makeProbeStudent };
 }
 
 function showDemoBanner(demo) {
@@ -104,6 +112,16 @@ function start() {
 
   const { auth } = backend;
   const repo = createRepo(backend.net);
+  let cacheStorage;
+  // 練習用ファイルは読み直すと消えるため、取り置きもメモリだけにする
+  if (!backend.demo) {
+    try { cacheStorage = window.caches; } catch { /* 使えないときはメモリで続ける */ }
+  }
+  const files = createFiles({ gas: backend.gas, cache: createFileCache({ caches: cacheStorage }) });
+  async function signOutAll() {
+    try { await files.clearCache(); } catch { /* 片付けに失敗してもログアウトする */ }
+    await auth.signOut();
+  }
   let session = null; // resolveSession の結果。まだ決めていなければ null
   let cleanup = null;
   let renderId = 0;
@@ -207,7 +225,7 @@ function start() {
       return;
     }
     const ctx = {
-      auth, repo, session, navigate, now, random, demo: Boolean(backend.demo), params: route.params,
+      auth, repo, files, signOutAll, session, navigate, now, random, demo: Boolean(backend.demo), params: route.params,
       net: backend.net, makeProbeStudent: backend.makeProbeStudent,
       // 離れてよいかをたずねる関数を置く（null で外す）。古くなった画面からの呼び出しは無視する
       setLeaveGuard: (fn) => { if (!stale()) leave.set(fn); },

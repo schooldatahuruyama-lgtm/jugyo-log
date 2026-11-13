@@ -14,7 +14,7 @@ export function mount(root, ctx) {
       okLabel: 'ログアウト',
     });
     if (!ok || !alive) return;
-    ctx.auth.signOut();
+    await ctx.signOutAll();
     ctx.navigate('login');
   };
 

@@ -3,6 +3,7 @@
 // 練習モードは手動で試すための道具。規則は見ない（だれでも全部を読み書きできる）。2 つのタブの同時の書きこみは守っていない。
 // ブラウザのものは引数で受け取る（Node のテストでも動かせる）。
 import { createMemoryNet } from './memory-net.js';
+import { createDemoGas } from './demo-gas.js';
 import { NetError } from '../errors.js';
 import { CONFIG } from '../config.js';
 import { newId } from '../ids.js';
@@ -163,5 +164,6 @@ export function createDemoBackend({ storage, now = Date.now, random }) {
     await net.update('', seedDb());
   }
 
-  return { net, auth, reset };
+  const gas = createDemoGas({ net, getUser: () => auth.user, random });
+  return { net, auth, gas, reset };
 }

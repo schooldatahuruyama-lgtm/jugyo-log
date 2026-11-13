@@ -1,5 +1,6 @@
 // 通信やログインの失敗を表す共通のエラー
 // code: 'network'（つながらない・時間切れ）, 'denied'（規則が拒否）, 'auth'（ログインが無効）,
+//       'notfound'（資料が見つからない）, 'toobig'（ファイルが大きすぎる）,
 //       'bad-credentials'（ID かパスワードが違う）, 'not-teacher'（先生として登録されていない）,
 //       'email-exists'（そのアカウントはもうある）, 'rate'（短い時間に作りすぎた）,
 //       'weak-password'（パスワードが弱い）, 'reauth'（ログインし直しが必要）, 'unknown'
