@@ -15,9 +15,12 @@ export function createNet({
 }) {
   const base = String(databaseURL).replace(/\/+$/, '');
   // token が無いとき（getPublic）は ?auth= を付けない
-  const urlFor = (path, token) => (token === undefined
-    ? `${base}/${path}.json`
-    : `${base}/${path}.json?auth=${encodeURIComponent(token)}`);
+  const urlFor = (path, token, shallow) => {
+    const url = token === undefined
+      ? `${base}/${path}.json`
+      : `${base}/${path}.json?auth=${encodeURIComponent(token)}`;
+    return shallow ? `${url}${token === undefined ? '?' : '&'}shallow=true` : url;
+  };
 
   // 実物の Firebase は、規則による拒否も HTTP 401 で返す（本文は {"error":"Permission denied"}）。
   // 期限切れ・無効なトークンも 401 だが、本文の文が違う。本文で見分ける
@@ -43,7 +46,7 @@ export function createNet({
 
   // 1 回の要求（送信〜本文を読み終わるまで）。timeoutMs をすぎたら fetch を止めて network にする。
   // 戻り値: { status, ok, permissionDenied（401 のときだけ）, data（readBody で成功のときだけ） }
-  async function attempt(method, path, body, token, readBody) {
+  async function attempt(method, path, body, token, readBody, shallow = false) {
     const controller = new AbortController();
     const init = { method, signal: controller.signal };
     if (body !== undefined) {
@@ -53,7 +56,7 @@ export function createNet({
     async function work() {
       let res;
       try {
-        res = await fetch(urlFor(path, token), init);
+        res = await fetch(urlFor(path, token, shallow), init);
       } catch {
         throw new NetError('network', 'ネットワークにつながりません');
       }
@@ -77,11 +80,11 @@ export function createNet({
   }
 
   // 401 のとき: 規則による拒否ならすぐ denied。それ以外は 1 回だけトークンを取り直してやり直す
-  async function request(method, path, body, readBody = false) {
-    let r = await attempt(method, path, body, await auth.getToken(), readBody);
+  async function request(method, path, body, readBody = false, shallow = false) {
+    let r = await attempt(method, path, body, await auth.getToken(), readBody, shallow);
     if (r.status === 401) {
       if (r.permissionDenied) throw denied();
-      r = await attempt(method, path, body, await auth.forceRefresh(), readBody);
+      r = await attempt(method, path, body, await auth.forceRefresh(), readBody, shallow);
       if (r.status === 401) {
         if (r.permissionDenied) throw denied();
         throw new NetError('auth', 'ログインが無効です');
@@ -101,8 +104,8 @@ export function createNet({
   }
 
   return {
-    async get(path) {
-      const { data } = await request('GET', path, undefined, true);
+    async get(path, { shallow = false } = {}) {
+      const { data } = await request('GET', path, undefined, true, shallow);
       return data === undefined ? null : data;
     },
     async getPublic(path) {

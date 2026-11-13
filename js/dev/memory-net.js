@@ -90,9 +90,11 @@ export function createMemoryNet({ now = Date.now, deny = () => false, initial = 
   }
 
   return {
-    async get(path) {
+    async get(path, { shallow = false } = {}) {
       guard('get', path);
-      return view(read(path));
+      const value = read(path);
+      if (shallow && isObj(value)) return Object.fromEntries(Object.keys(value).map((k) => [k, true]));
+      return view(value);
     },
     // ログインなしの読み出し。規則を見ないので get と同じ
     async getPublic(path) {
