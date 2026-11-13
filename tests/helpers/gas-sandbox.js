@@ -63,7 +63,7 @@ function makeBlob(data, contentType, name) {
 
 // ---- 代役一式 ----
 
-export function makeFakes({ databaseURL, validTokens = {} } = {}) {
+export function makeFakes({ databaseURL, validTokens = {}, db } = {}) {
   const files = []; // 作られたファイル（フォルダの外のものも含む。ゴミ箱に入れても残る）
   const fetched = []; // UrlFetchApp.fetch に渡された URL
   const folders = [];
@@ -137,22 +137,34 @@ export function makeFakes({ databaseURL, validTokens = {} } = {}) {
     getStorageUsed: () => files.reduce((sum, f) => sum + f.getSize(), 0),
   };
 
-  // Firebase の REST の代役: /check/<uid>.json?auth=<token> は、
-  // token が validTokens にあり、その uid が URL の uid と同じときだけ 200（規則 auth.uid === $uid と同じ）
+  // db があれば、トークンから分かった本人の uid で規則とデータを問い合わせる。
+  // db が無ければ、今までどおり /check/<uid> を本人だけが読める代役として動く。
   const UrlFetchApp = {
     fetch: (url, params) => {
       fetched.push(url);
       let code = 401;
+      let body = { error: 'Permission denied' };
       const prefix = `${databaseURL}/check/`;
       if (params?.muteHttpExceptions !== true) throw new Error('muteHttpExceptions を付けていない');
-      if (url.startsWith(prefix)) {
+      if (db) {
+        const base = `${databaseURL}/`;
+        const m = url.startsWith(base) && /^([^?#]+)\.json\?auth=([^&#]+)$/.exec(url.slice(base.length));
+        if (m && Object.hasOwn(validTokens, m[2])) {
+          const result = db.read(m[1], validTokens[m[2]]);
+          code = result.status;
+          body = result.body;
+        }
+      } else if (url.startsWith(prefix)) {
         const rest = url.slice(prefix.length);
         const m = /^([^/?#]+)\.json\?auth=([^&#]+)$/.exec(rest);
-        if (m && Object.hasOwn(validTokens, m[2]) && validTokens[m[2]] === m[1]) code = 200;
+        if (m && Object.hasOwn(validTokens, m[2]) && validTokens[m[2]] === m[1]) {
+          code = 200;
+          body = null;
+        }
       }
       return {
         getResponseCode: () => code,
-        getContentText: () => (code === 200 ? 'null' : '{"error":"Permission denied"}'),
+        getContentText: () => JSON.stringify(body),
       };
     },
   };
