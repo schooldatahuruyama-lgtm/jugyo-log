@@ -1,0 +1,27 @@
+/* ID の一覧を印刷するとき（index.html で media="print" として読む）
+   ボタンと上部の帯を消し、1 人分ずつ切りはなせる罫線（点線）にする */
+@media print {
+  @page { margin: 12mm; }
+
+  #banner, #toasts, .topbar, .no-print, button, .btn { display: none !important; }
+
+  body { background: #FFFFFF; color: #000000; font-size: 12pt; }
+  .page-main { max-width: none; margin: 0; padding: 0; }
+  .sheet-title { font-size: 16pt; margin-bottom: 4mm; }
+  .sheet-howto { margin-bottom: 6mm; font-size: 11pt; }
+  .sheet-howto h2 { font-size: 12pt; }
+
+  /* 表ははみ出しの入れ物を外して、紙の幅いっぱいにする */
+  .table-scroll { overflow: visible; }
+  .sheet-table { width: 100%; border-collapse: collapse; background: #FFFFFF; }
+  .sheet-table thead { display: table-header-group; } /* ページが変わっても見出しを出す */
+  .sheet-table th { background: #FFFFFF; border-bottom: 1.5pt solid #000000; font-size: 11pt; }
+  .sheet-table td {
+    height: 16mm; padding: 2mm 3mm;
+    border-bottom: 1pt dashed #000000; /* 切り取りの線 */
+  }
+  .sheet-table tr { break-inside: avoid; page-break-inside: avoid; }
+  .sheet-table .sheet-name { width: 40%; border-left: 0.5pt solid #888888; border-right: 0.5pt solid #888888; }
+  .sheet-pw { font-size: 16pt; }
+  .muted { color: #000000; }
+}
