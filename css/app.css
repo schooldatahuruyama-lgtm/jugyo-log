@@ -1,0 +1,127 @@
+/* 画面の骨組み: 練習モードの帯、ログイン、上部のバー、生徒のホーム、先生のクラス・名簿・ID の一覧 */
+#banner:empty { display: none; }
+.demo-banner {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: var(--s-1) var(--s-2);
+  padding: var(--s-1) var(--s-2); background: var(--c-warn); color: var(--c-navy); font-weight: 700;
+}
+.demo-banner .btn { background: var(--c-card); }
+
+.loading { padding: var(--s-3); }
+.center-page { max-width: 480px; margin: 0 auto; padding: var(--s-4) var(--s-2); }
+.center-page h1 { text-align: center; }
+.page-pad { max-width: 720px; margin: 0 auto; padding: var(--s-4) var(--s-2); }
+
+/* ログイン */
+.login-form .btn { width: 100%; min-height: 52px; }
+.login-hint { margin-top: var(--s-2); text-align: center; }
+
+/* 上部のバー（生徒のホーム・先生の画面） */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--s-1) var(--s-2);
+  padding: var(--s-1) var(--s-3); background: var(--c-card); border-bottom: 2px solid var(--c-line);
+}
+.topbar-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px var(--s-2); min-width: 0; }
+.topbar-brand { font-size: 20px; font-weight: 700; }
+.topbar-sub { font-weight: 700; overflow-wrap: anywhere; }
+.topbar-menu { display: flex; flex-wrap: wrap; gap: var(--s-1); margin-left: auto; }
+.topbar-teacher { background: var(--c-navy); color: #FFFFFF; border-bottom-color: var(--c-navy); }
+.topbar-teacher .btn { background: transparent; color: #FFFFFF; border-color: #FFFFFF; }
+.topbar-teacher .btn:hover { background: rgba(255, 255, 255, 0.12); }
+.topbar-teacher :focus-visible { outline-color: #FFFFFF; box-shadow: none; }
+
+.page-main { max-width: 1100px; margin: 0 auto; padding: var(--s-3); }
+.page-message:empty { display: none; }
+
+/* 生徒のホーム */
+.home-empty { padding: var(--s-4) var(--s-3); text-align: center; font-size: 20px; }
+
+/* 先生の画面の共通: ボタンの並び、画面の中の入力の form */
+.page-actions { display: flex; flex-wrap: wrap; gap: var(--s-1); margin-bottom: var(--s-2); }
+.page-actions-end { justify-content: flex-end; margin-top: var(--s-2); }
+.form-area:empty { display: none; }
+.inline-form { max-width: 640px; margin-bottom: var(--s-3); }
+.inline-form h2 { font-size: 22px; }
+.field-hint { margin: 0 0 4px; }
+.notice-ok { border-color: var(--c-ok-border); background: var(--c-card); }
+.issue-progress:empty, .pending-area:empty { display: none; }
+.issue-progress p:last-child, .pending-area p:last-child { margin-bottom: 0; }
+.issue-progress { margin-bottom: var(--s-2); }
+.pending-box { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-1) var(--s-2); margin-bottom: var(--s-2); }
+.pending-box p { margin: 0; }
+
+/* 先生のクラスの一覧（年度ごと） */
+.class-year { margin-top: var(--s-3); }
+.class-year h2 { font-size: 22px; }
+.class-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-1); }
+.class-row { display: flex; align-items: stretch; gap: var(--s-1); }
+.class-open {
+  flex: 1; min-width: 0; min-height: 56px;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s-2);
+  padding: var(--s-1) var(--s-2);
+  border: 2px solid var(--c-border); border-radius: var(--r-1);
+  background: var(--c-card); color: var(--c-navy); font: inherit; text-align: left; cursor: pointer;
+  touch-action: manipulation;
+}
+.class-open:hover { background: var(--c-bg); }
+.class-name { font-size: 20px; font-weight: 700; overflow-wrap: anywhere; }
+.class-go { flex: none; color: var(--c-main); font-weight: 700; }
+
+/* 名簿と ID の一覧の表。はみ出すときだけ横に動かせる */
+.table-scroll { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.roster-table, .sheet-table { width: 100%; border-collapse: collapse; background: var(--c-card); }
+.roster-table th, .roster-table td, .sheet-table th, .sheet-table td {
+  padding: var(--s-1) 12px; border-bottom: 1px solid var(--c-line); text-align: left; vertical-align: middle;
+}
+.roster-table th, .sheet-table th { background: var(--c-bg); font-size: 16px; white-space: nowrap; }
+.roster-table .num { width: 7em; }
+.num-input { width: 5em !important; text-align: center; }
+.roster-table .btn { white-space: nowrap; }
+.mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; letter-spacing: 0.04em; }
+.sid { white-space: nowrap; font-weight: 700; }
+.fresh-pw { margin-top: 4px; }
+.fresh-pw strong { font-size: 20px; }
+.row-has-error td { background: #FDECEE; border-bottom: none; }
+.row-error td { background: #FDECEE; color: var(--c-danger-text); font-weight: 700; padding-top: 0; }
+input[aria-invalid='true'] { border-color: var(--c-danger-text); }
+
+/* 生徒を足す（チェックの一覧） */
+.check-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px var(--s-1); max-height: 320px; overflow-y: auto; margin-bottom: var(--s-2); }
+.check-row { display: flex; align-items: center; gap: var(--s-1); min-height: 44px; padding: 0 4px; cursor: pointer; }
+.check-row input { width: 24px; height: 24px; flex: none; }
+.check-all { font-weight: 700; }
+
+/* ID の一覧 */
+.sheet-title { font-size: 28px; }
+.sheet-howto { margin-bottom: var(--s-3); }
+.sheet-howto h2 { font-size: 20px; margin-bottom: var(--s-1); }
+.sheet-howto ol { margin: 0; padding-left: 1.5em; }
+.sheet-url { overflow-wrap: anywhere; }
+.sheet-table .num { width: 6em; }
+.sheet-name { min-width: 12em; }
+.sheet-pw { font-size: 22px; font-weight: 700; }
+
+/* 幅が狭いとき（iPad の縦向きなど） */
+@media (max-width: 899px) {
+  .topbar { padding: var(--s-1) var(--s-2); }
+  .page-main { padding: var(--s-2); }
+  h1 { font-size: 32px; }
+  .roster-table th, .roster-table td { padding: var(--s-1) 6px; }
+  .roster-table .num { width: auto; }
+  .sheet-name { min-width: 8em; }
+}
+
+/* 生徒のパスワードの変更（js/views/password.js） */
+.password-rules { margin-bottom: var(--s-2); }
+.password-rules p { margin-bottom: 4px; font-weight: 700; }
+.password-rules ul { margin: 0; padding-left: 1.5em; }
+.password-actions { display: flex; gap: var(--s-1); }
+.password-actions .btn { flex: 1; min-height: 52px; }
+/* 規則の確認（js/views/teacher-rules.js）と、クラスの画面の下のリンク */
+.rules-link { margin-top: var(--s-4); padding-top: var(--s-2); border-top: 1px solid var(--c-line); }
+.rules-link h2 { font-size: 20px; }
+.rules-status:empty, .rules-result:empty { display: none; }
+.rules-result > * + * { margin-top: var(--s-2); }
+.rules-table td { vertical-align: top; }
+.rules-mark { white-space: nowrap; font-weight: 700; }
+.rules-copy-text { width: 100%; font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
