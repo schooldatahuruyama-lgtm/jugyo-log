@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  reviewPeople, levelCounts, reviewRows, copyText, neighbors, defaultLesson, levelLabel,
+  reviewPeople, levelCounts, levelShares, reviewRows, filterRows, copyText, neighbors, defaultLesson, levelLabel,
 } from '../js/review-logic.js';
 
 const members = [{ studentId: 's26-002', number: 2 }, { studentId: 's26-001', number: 1 }, { studentId: 's26-003', number: 3 }];
@@ -18,6 +18,55 @@ test('reviewPeople: 名簿の全員と、名簿にいない生徒の記録', () 
     [['s26-001', 1, true, false], ['s26-002', 2, true, false], ['s26-003', 3, true, true], ['s26-009', null, false, false]]);
   assert.deepEqual(p[0].record, records['s26-001']);
   assert.deepEqual(levelCounts(p), { 4: 1, 3: 0, 2: 1, 1: 1, none: 1, total: 4 });
+});
+
+test('levelShares: 大きい端数から配り、同じ端数なら理解度の順で合計 100% にする', () => {
+  const counts = Object.freeze({ 4: 9, 3: 11, 2: 3, 1: 1, none: 6, total: 30 });
+  assert.deepEqual(levelShares(counts), [
+    { key: 4, count: 9, percent: 30 }, { key: 3, count: 11, percent: 37 },
+    { key: 2, count: 3, percent: 10 }, { key: 1, count: 1, percent: 3 },
+    { key: 'none', count: 6, percent: 20 },
+  ]);
+  assert.deepEqual(levelShares({ 4: 1, 3: 1, 2: 1, 1: 0, none: 0, total: 3 })
+    .map((item) => item.percent), [34, 33, 33, 0, 0]);
+  assert.deepEqual(levelShares({ 4: 1, 3: 4, 2: 1, total: 6 })
+    .map((item) => item.percent), [17, 67, 16, 0, 0]);
+});
+
+test('levelShares: 0 人・1 人・全員が同じ理解度・とても小さい割合', () => {
+  const empty = { 4: 0, 3: 0, 2: 0, 1: 0, none: 0, total: 0 };
+  assert.deepEqual(levelShares(empty).map((item) => item.percent), [0, 0, 0, 0, 0]);
+  for (const key of [4, 3, 2, 1, 'none']) {
+    for (const count of [1, 30]) {
+      const shares = levelShares({ ...empty, [key]: count, total: count });
+      assert.equal(shares.find((item) => item.key === key).percent, 100);
+      assert.ok(shares.filter((item) => item.key !== key).every((item) => item.percent === 0));
+    }
+  }
+  assert.deepEqual(levelShares({ ...empty, 4: 999, 1: 1, total: 1000 })
+    .map((item) => item.percent), [100, 0, 0, 0, 0]);
+});
+
+test('levelShares: 不正な値を 0 として扱い、元の集計を変えない', () => {
+  const empty = [4, 3, 2, 1, 'none'].map((key) => ({ key, count: 0, percent: 0 }));
+  for (const value of [null, undefined, 1, 'x', {}]) assert.deepEqual(levelShares(value), empty);
+  const invalid = Object.freeze({ 4: '9', 3: NaN, 2: Infinity, 1: -1, none: null, total: 30 });
+  assert.deepEqual(levelShares(invalid), empty);
+  assert.deepEqual(levelShares({ ...invalid, 2: 1 }).map((item) => item.percent), [0, 0, 100, 0, 0]);
+  for (const total of [0, null, '1', NaN, Infinity, -1]) {
+    assert.ok(levelShares({ 4: 1, total }).every((item) => item.percent === 0));
+  }
+});
+
+test('filterRows: 理解度・入力なしでしぼり、全員にも戻せる。元の順番と配列を変えない', () => {
+  const rows = Object.freeze(reviewRows(reviewPeople(members, records)).map(Object.freeze));
+  const before = structuredClone(rows);
+  for (const key of [null, undefined, 'other', '2', 0, 5]) assert.deepEqual(filterRows(rows, key), rows);
+  for (const key of [4, 3, 2, 1]) assert.deepEqual(filterRows(rows, key), rows.filter((row) => row.level === key));
+  assert.deepEqual(filterRows(rows, 'none'), [rows[3]]);
+  assert.deepEqual(copyText(filterRows(rows, 2)), { text: '単位が分からない', count: 1 });
+  assert.deepEqual(rows, before);
+  for (const value of [null, undefined, 'x', 1, {}]) assert.deepEqual(filterRows(value, 2), []);
 });
 
 test('reviewRows: 理解度が低い順、入力なしは最後', () => {

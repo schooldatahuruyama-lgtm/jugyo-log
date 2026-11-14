@@ -7,6 +7,7 @@ import { reviewPeople, neighbors, levelLabel } from '../review-logic.js';
 import { teacherNav } from './parts/teacher-nav.js';
 import { materialPane } from './parts/material-pane.js';
 import { attachmentPane } from './parts/attachment-pane.js';
+import { headingIcon } from './parts/heading-icon.js';
 
 function updatedLabel(value) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '';
@@ -40,13 +41,16 @@ export function mount(root, ctx) {
   const reflectionStatus = el('span', { class: 'reflection-status', role: 'status' });
   const content = el('div', { class: 'student-lesson-columns', hidden: true },
     el('section', { class: 'student-lesson-teacher', 'aria-labelledby': 'record-teacher-heading' },
-      el('header', { class: 'lesson-section-band' }, el('h2', { id: 'record-teacher-heading', text: '先生の資料' })),
+      el('header', { class: 'lesson-section-band' },
+        el('h2', { id: 'record-teacher-heading' }, headingIcon('teacher'), el('span', { text: '先生の資料' }))),
       el('div', { class: 'lesson-section-body' }, materialsArea)),
     el('section', { class: 'student-lesson-mine', 'aria-labelledby': 'record-mine-heading' },
-      el('header', { class: 'lesson-section-band' }, el('h2', { id: 'record-mine-heading', text: 'この生徒の記録' })),
+      el('header', { class: 'lesson-section-band' },
+        el('h2', { id: 'record-mine-heading' }, headingIcon('mine'), el('span', { text: 'この生徒の記録' }))),
       el('div', { class: 'lesson-section-body' }, recordArea)),
     el('section', { class: 'student-lesson-reflection', 'aria-labelledby': 'record-reflection-heading' },
-      el('header', { class: 'lesson-section-band' }, el('h2', { id: 'record-reflection-heading', text: '振り返り' }), reflectionStatus),
+      el('header', { class: 'lesson-section-band' },
+        el('h2', { id: 'record-reflection-heading' }, headingIcon('reflect'), el('span', { text: '振り返り' })), reflectionStatus),
       el('div', { class: 'lesson-section-body' }, reflectionArea)));
   root.replaceChildren(teacherNav(ctx, 'review'),
     el('div', { class: 'student-page' }, el('main', { class: 'student-lesson-page teacher-record-page' },

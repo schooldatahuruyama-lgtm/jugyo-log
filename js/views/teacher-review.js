@@ -2,8 +2,7 @@
 import { el, toast, statusChip } from '../ui.js';
 import { schoolYear } from '../roster-logic.js';
 import { dateLabel, sortLessons } from '../lesson-logic.js';
-import { LEVELS } from '../record-logic.js';
-import { reviewPeople, reviewRows, levelCounts, levelLabel, defaultLesson, copyText } from '../review-logic.js';
+import { reviewPeople, reviewRows, levelCounts, levelShares, filterRows, levelLabel, defaultLesson, copyText } from '../review-logic.js';
 import { teacherNav } from './parts/teacher-nav.js';
 
 export function mount(root, ctx) {
@@ -25,8 +24,10 @@ export function mount(root, ctx) {
   let rows = [];
   let field = 'question';
   let sort = 'level';
+  let levelKey = null;
   const fieldButtons = new Map();
   const sortButtons = new Map();
+  const levelButtons = new Map();
   const yearSelect = el('select', { id: 'review-year', onchange: () => changeSelection('year') });
   const classSelect = el('select', { id: 'review-class', onchange: () => changeSelection('class') });
   const lessonSelect = el('select', { id: 'review-lesson', onchange: () => changeSelection('lesson') });
@@ -35,6 +36,12 @@ export function mount(root, ctx) {
   const pageMessage = el('div', { class: 'page-message', role: 'status', 'aria-live': 'polite' });
   const chartArea = el('div');
   const listArea = el('div');
+  const filterStatus = el('div', { class: 'review-filter-status', role: 'status' });
+  const showAll = el('button', { type: 'button', class: 'btn', text: '全員を出す', onclick: () => {
+    const selected = levelButtons.get(levelKey);
+    selectLevel(null);
+    selected?.focus();
+  } });
   const copyArea = el('div', { class: 'review-copy-area' });
 
   function choices(label, items, buttons, change) {
@@ -53,7 +60,7 @@ export function mount(root, ctx) {
       el('h2', { id: 'review-records-heading', text: '生徒の記録' }),
       choices('読む項目', [['question', '疑問'], ['learned', '分かったこと']], fieldButtons, (value) => { field = value; }),
       choices('並び順', [['level', '理解度が低い順'], ['number', '出席番号順']], sortButtons, (value) => { sort = value; }),
-      el('div', { class: 'page-actions' }, copy), copyArea, listArea));
+      el('div', { class: 'page-actions' }, copy), copyArea, filterStatus, listArea));
   root.replaceChildren(teacherNav(ctx, 'review'),
     el('main', { class: 'page-main review-page' },
       el('h1', { text: '記録' }),
@@ -70,6 +77,11 @@ export function mount(root, ctx) {
     lessonSelect.disabled = loading || lessons.length === 0;
     reload.disabled = loading;
     copy.disabled = loading || !ready || copying;
+    showAll.disabled = loading || !ready;
+    for (const [value, button] of levelButtons) {
+      button.disabled = loading || !ready;
+      button.setAttribute('aria-pressed', String(value === levelKey));
+    }
     for (const [value, button] of fieldButtons) {
       button.disabled = loading || !ready;
       button.setAttribute('aria-pressed', String(value === field));
@@ -98,6 +110,7 @@ export function mount(root, ctx) {
 
   function changeSelection(which) {
     if (!alive || loading) return;
+    levelKey = null;
     if (which === 'lesson') {
       if (lessonSelect.value) void ctx.navigate('t-review', { classId, lessonId: lessonSelect.value });
       return;
@@ -112,20 +125,41 @@ export function mount(root, ctx) {
   }
 
   function renderChart() {
-    const counts = levelCounts(people);
-    const levels = [...LEVELS, { value: 'none', label: 'まだ入力なし' }];
-    const max = Math.max(1, ...levels.map((level) => counts[level.value]));
-    const bars = levels.map((level) => {
-      const bar = el('span', { class: `review-bar review-bar-${level.value}` });
-      bar.style.width = `${counts[level.value] / max * 100}%`;
-      return el('div', { class: 'review-bar-row', 'aria-hidden': 'true' },
-        el('div', { class: 'review-bar-label' }, el('span', { text: level.label }),
-          el('strong', { text: `${counts[level.value]} 人` })),
-        el('div', { class: 'review-bar-track' }, bar));
-    });
-    chartArea.replaceChildren(el('div', { role: 'img',
-      'aria-label': levels.map((level) => `${level.label} ${counts[level.value]} 人`).join('、') }, bars),
-    el('p', { class: 'review-total', text: `全部で ${counts.total} 人` }));
+    levelButtons.clear();
+    const shares = levelShares(levelCounts(people));
+    const present = shares.filter((item) => item.count > 0);
+    if (present.length === 0) {
+      chartArea.replaceChildren(el('p', { text: 'このクラスには、まだ生徒がいません。' }));
+      return;
+    }
+    const band = el('div', { class: 'review-band', role: 'group', 'aria-label': '理解度でしぼりこむ' }, present.map(({ key, count, percent }) => {
+      const button = el('button', { type: 'button', class: `review-segment review-level-${key}`,
+        text: `${percent}%`, 'aria-label': `${levelLabel(key)} ${percent}%`, 'aria-pressed': String(key === levelKey),
+        onclick: () => selectLevel(levelKey === key ? null : key) });
+      button.style.flexGrow = String(count);
+      levelButtons.set(key, button);
+      return button;
+    }));
+    band.style.minWidth = `${present.length * 56}px`;
+    chartArea.replaceChildren(el('div', { class: 'review-band-scroll' }, band),
+      el('ul', { class: 'review-legend', 'aria-label': '理解度の色' }, shares.map(({ key }) =>
+        el('li', { class: `review-level-${key}` },
+          el('span', { class: 'review-legend-color', 'aria-hidden': 'true' }), el('span', { text: levelLabel(key) })))));
+  }
+
+  function selectLevel(value) {
+    if (!alive || loading || !ready) return;
+    levelKey = value;
+    renderRows();
+    syncControls();
+  }
+
+  function renderFilterStatus() {
+    filterStatus.replaceChildren();
+    if (levelKey === null) return;
+    filterStatus.append(el('span', {
+      text: `『${levelLabel(levelKey)}』の ${rows.length} 人を出しています。`,
+    }), showAll);
   }
 
   function clearCopy() {
@@ -136,9 +170,15 @@ export function mount(root, ctx) {
 
   function renderRows() {
     clearCopy();
-    const sorted = reviewRows(people, { field, sort });
+    const all = reviewRows(people, { field, sort });
+    let sorted = filterRows(all, levelKey);
+    if (levelKey !== null && sorted.length === 0) {
+      levelKey = null;
+      sorted = all;
+    }
     // 名簿にいない人は、どちらの並び順でも最後に残す。
     rows = [...sorted.filter((row) => row.inRoster), ...sorted.filter((row) => !row.inRoster)];
+    renderFilterStatus();
     if (rows.length === 0) {
       listArea.replaceChildren(el('p', { text: 'このクラスには、まだ生徒がいません。' }));
       return;
@@ -147,7 +187,7 @@ export function mount(root, ctx) {
       const label = !row.inRoster ? '名簿にいない' : row.number === null ? '出席番号なし' : `${row.number} 番`;
       const name = !row.inRoster || row.number === null ? `${label} ${row.studentId}` : label;
       const kind = row.level === null ? 'info' : row.level >= 3 ? 'ok' : 'warn';
-      return el('li', {}, el('button', { type: 'button', class: 'review-row',
+      return el('li', {}, el('button', { type: 'button', class: `review-row review-level-${row.level ?? 'none'}`,
         'aria-label': `${name}の記録を開く`,
         onclick: () => ctx.navigate('t-record', { classId, lessonId, studentId: row.studentId }) },
       el('span', { class: 'review-row-heading' },
