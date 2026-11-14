@@ -75,6 +75,8 @@ export function mount(root, ctx) {
     el('main', { class: 'page-main' },
       el('div', { class: 'page-actions' }, el('button', {
         type: 'button', class: 'btn', text: '‹ 授業の一覧へ', onclick: () => ctx.navigate('t-lessons'),
+      }), el('button', {
+        type: 'button', class: 'btn', text: '生徒の記録を見る', onclick: () => ctx.navigate('t-review', { classId, lessonId }),
       })), pageMessage, content));
 
   async function okToLeave() {
