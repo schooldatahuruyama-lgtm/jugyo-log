@@ -6,6 +6,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 $paths = @("index.html", "check.html", "css", "js", "assets")
+$head = (git rev-parse --short HEAD).Trim()
 $tmpIndex = Join-Path $env:TEMP ("jugyolog-pages-index-" + [guid]::NewGuid().ToString("N"))
 $env:GIT_INDEX_FILE = $tmpIndex
 try {
@@ -18,13 +19,17 @@ try {
   # .nojekyll: tell GitHub Pages not to run Jekyll
   $empty = ("" | git hash-object -w --stdin).Trim()
   git update-index --add --cacheinfo "100644,$empty,.nojekyll"
+  # Published version: replace the dev marker in the tree only, leaving the working tree alone
+  $versionJs = ("export const VERSION = '$head';" | git hash-object -w --stdin).Trim()
+  git update-index --add --cacheinfo "100644,$versionJs,js/version.js"
+  $versionText = ($head | git hash-object -w --stdin).Trim()
+  git update-index --add --cacheinfo "100644,$versionText,version.txt"
   $tree = (git write-tree).Trim()
 } finally {
   Remove-Item Env:GIT_INDEX_FILE
   if (Test-Path $tmpIndex) { Remove-Item $tmpIndex }
 }
 $parent = git rev-parse --verify --quiet refs/heads/pages
-$head = (git rev-parse --short HEAD).Trim()
 $msg = "pages: $head"
 if ($parent) { $commit = (git commit-tree $tree -p $parent.Trim() -m $msg).Trim() } else { $commit = (git commit-tree $tree -m $msg).Trim() }
 git update-ref refs/heads/pages $commit

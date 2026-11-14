@@ -13,6 +13,32 @@
   <div id="app"><p class="loading">読みこんでいます…</p></div>
   <div id="toasts" aria-live="polite"></div>
   <noscript><p class="notice">授業ログを使うには、JavaScript を使える設定にしてください。</p></noscript>
+  <script>
+    (() => {
+      window.__jugyologBoot = { started: false };
+      function showBootFailure() {
+        if (window.__jugyologBoot.started) return;
+        const main = document.createElement('main');
+        main.className = 'center-page';
+        const heading = document.createElement('h1');
+        heading.textContent = '授業ログ';
+        const message = document.createElement('p');
+        message.className = 'notice';
+        message.setAttribute('role', 'alert');
+        message.textContent = '読みこめませんでした。電波を確かめて、「もう一度」を押してください。';
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'btn btn-primary';
+        retry.textContent = 'もう一度';
+        retry.addEventListener('click', () => location.reload());
+        main.append(heading, message, retry);
+        document.getElementById('app').replaceChildren(main);
+      }
+      // capture で、module の script の error（親へ伝わらないもの）も受け取る。
+      window.addEventListener('error', showBootFailure, true);
+      setTimeout(showBootFailure, 20000);
+    })();
+  </script>
   <script type="module" src="js/main.js"></script>
 </body>
 </html>

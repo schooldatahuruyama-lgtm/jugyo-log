@@ -85,8 +85,9 @@ export function mount(root, ctx) {
   const formArea = el('div', { class: 'form-area' });
   const materialMessage = el('div', { class: 'page-message', role: 'status', 'aria-live': 'polite' });
   const listArea = el('div');
-  const heading = el('h1', { text: '授業の編集' });
-  const content = el('div', { hidden: true }, heading, infoForm, termsSection,
+  const heading = el('h1', { class: 'lesson-edit-heading', text: '授業の編集' });
+  const content = el('div', { hidden: true }, heading,
+    el('div', { class: 'lesson-edit-top' }, infoForm, termsSection),
     el('section', { class: 'lesson-materials', 'aria-label': '授業の資料' },
       el('h2', { text: '授業の資料' }),
       el('div', { class: 'page-actions' }, photoButton, pdfButton, imageInput, pdfInput),

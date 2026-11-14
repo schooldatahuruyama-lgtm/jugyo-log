@@ -6,6 +6,13 @@
   padding: var(--s-1) var(--s-2); background: var(--c-warn); color: var(--c-navy); font-weight: 700;
 }
 .demo-banner .btn { background: var(--c-card); }
+.version-banner {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: var(--s-1) var(--s-2);
+  width: 100%; min-width: 0; padding: var(--s-1) var(--s-2);
+  background: var(--teacher-bg); border-bottom: 2px solid var(--teacher); color: var(--c-navy);
+}
+.version-banner p { margin: 0; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.version-banner .btn { min-width: 44px; min-height: 44px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 
 .loading { padding: var(--s-3); }
 .center-page { max-width: 480px; margin: 0 auto; padding: var(--s-4) var(--s-2); }
@@ -204,8 +211,17 @@
 .lesson-review { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1); }
 .lesson-record-count { white-space: nowrap; font-size: 16px; }
 .lesson-targets { min-width: 0; margin: 0 0 var(--s-2); padding: var(--s-1); border: 1px solid var(--c-border); border-radius: var(--r-1); }
-.inline-form input[type='date'] { width: 100%; min-height: 48px; padding: 10px 12px; border: 2px solid var(--c-border); border-radius: var(--r-1); background: var(--c-card); color: var(--c-navy); font: inherit; }
+.inline-form input[type='date'] { display: block; -webkit-appearance: none; appearance: none; width: 100%; min-width: 0; max-width: 100%; min-height: 48px; box-sizing: border-box; padding: 8px 12px; border: 2px solid var(--c-border); border-radius: var(--r-1); background: var(--c-card); color: var(--c-navy); font: inherit; text-align: left; }
+.inline-form input[type='date']::-webkit-date-and-time-value { text-align: left; }
 .page-message:not(:empty) { margin-bottom: var(--s-2); }
+
+/* 授業の編集。広い画面では情報と重要用語を並べ、資料はその下に置く。 */
+.lesson-edit-heading { overflow-wrap: anywhere; }
+.lesson-edit-top { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-3); align-items: start; margin-bottom: var(--s-3); }
+.lesson-edit-top > .card { min-width: 0; max-width: none; margin-bottom: 0; }
+@media (min-width: 900px) {
+  .lesson-edit-top { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
 
 /* 名簿と ID の一覧の表。はみ出すときだけ横に動かせる */
 .table-scroll { max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
