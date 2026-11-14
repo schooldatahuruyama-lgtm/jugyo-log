@@ -1,13 +1,57 @@
 // 一覧の見出しと、タイルの指の動きを通信なしで確かめる
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classLabel, groupByDate, groupByUnit, swipeDecision, stepIndex } from '../js/student-list-logic.js';
+import { classLabel, groupByDate, groupByUnit, todoLessons, swipeDecision, stepIndex } from '../js/student-list-logic.js';
 
 const lesson = (id, date, createdAt = 0) => ({ id, date, createdAt });
 const groups = (value) => value.map((x) => [x.label, x.lessons.map((l) => l.id)]);
 
 test('classLabel: 年度とクラス名を並べる', () => {
   assert.equal(classLabel({ year: 2026, name: '2年A組' }), '2026年度　2年A組');
+});
+
+test('todoLessons: 今日以前の未記入だけを、元の順で返し、入力を変えない', () => {
+  const lessons = [lesson('today', '2026-11-12'), lesson('old', '2026-10-01'),
+    lesson('tomorrow', '2026-11-13'), lesson('yesterday', '2026-11-11')];
+  const marks = {};
+  const before = structuredClone({ lessons, marks });
+  for (const hour of [0, 23]) {
+    const result = todoLessons(lessons, marks, new Date(2026, 10, 12, hour, 59).getTime());
+    assert.deepEqual(result.map((x) => x.id), ['today', 'old', 'yesterday']);
+    assert.equal(result[0], lessons[0]);
+    assert.notEqual(result, lessons);
+  }
+  assert.deepEqual({ lessons, marks }, before);
+});
+
+test('todoLessons: 1〜4 の整数だけを記入済みとする', () => {
+  const values = [1, 2, 3, 4, 0, 5, '1', '4', 1.5, null, undefined, NaN, Infinity, true, {}];
+  const lessons = values.map((_, i) => lesson(String(i), '2026-11-12'));
+  const marks = Object.fromEntries(values.map((value, i) => [String(i), value]));
+  assert.deepEqual(todoLessons(lessons, marks, new Date(2026, 10, 12).getTime()), lessons.slice(4));
+});
+
+test('todoLessons: 不正な日付や授業を数えず、うるう日と 100 年未満も扱う', () => {
+  const lessons = ['', '2026-02-30', '2026-02-29', '1900-02-29', '2026/11/12', '2026-1-01',
+    '0000-01-01', '2026-13-01', '2026-11-00', null, 5, {}, '2026-11-12T00:00:00']
+    .map((date, i) => lesson(String(i), date));
+  lessons.push(null, undefined, 7, {}, [], lesson('leap', '2024-02-29'), lesson('early', '0099-01-01'));
+  assert.deepEqual(todoLessons(lessons, {}, new Date(2026, 10, 12).getTime()).map((x) => x.id), ['leap', 'early']);
+});
+
+test('todoLessons: 印を読めない場合や不正な引数では空の配列', () => {
+  const lessons = [lesson('today', '2026-11-12')];
+  const today = new Date(2026, 10, 12).getTime();
+  for (const value of [null, undefined, 1, 'marks', true, [], () => {}]) {
+    assert.deepEqual(todoLessons(lessons, value, today), []);
+  }
+  for (const value of [null, undefined, 1, 'lessons', true, {}]) {
+    assert.deepEqual(todoLessons(value, {}, today), []);
+  }
+  for (const value of [null, undefined, '2026-11-12', new Date(today), NaN, Infinity, -Infinity, 1e20]) {
+    assert.deepEqual(todoLessons(lessons, {}, value), []);
+  }
+  assert.deepEqual(todoLessons([], {}, today), []);
 });
 
 test('groupByDate: これから・今週・先週・月ごと・日付なし。入力を変えない', () => {

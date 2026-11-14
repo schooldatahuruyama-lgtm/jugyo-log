@@ -26,14 +26,12 @@ export function lessonTile({ lesson, mark, pending, loadThumbs, onOpen, swipe })
   }, el('span', { class: 'lesson-date', text: date }), el('span', { class: 'lesson-title', text: title }));
   // 印を読めなかった場合は、mark を渡さず、未入力という印も出さない。
   const record = el('div', { class: 'lesson-tile-record' },
-    el('span', { class: 'small', text: '自分の記録' }),
     el('div', { class: 'lesson-tile-marks' },
       mark === 'done' ? statusChip('ok', '記録あり') : null,
       mark === 'todo' ? statusChip('warn', '振り返りがまだ') : null,
       pending ? statusChip('danger', 'まだ保存できていません') : null));
   const node = el('article', { class: 'lesson-tile' },
-    el('div', { class: 'lesson-tile-materials' },
-      el('span', { class: 'lesson-tile-label small', text: '先生の資料' }), frame, controls),
+    el('div', { class: 'lesson-tile-materials' }, frame, controls),
     openButton, record);
 
   function listen(target, type, handler) {

@@ -2,7 +2,7 @@
 import { el, confirmDialog, toast } from '../ui.js';
 import { CONFIG } from '../config.js';
 import { sortUnits } from '../lesson-logic.js';
-import { classLabel, groupByDate, groupByUnit } from '../student-list-logic.js';
+import { classLabel, groupByDate, groupByUnit, todoLessons } from '../student-list-logic.js';
 import { tileMark } from '../record-logic.js';
 import { pendingLessons, resendDrafts } from '../record-flow.js';
 import { lessonTile } from './parts/lesson-tile.js';
@@ -18,6 +18,7 @@ export function mount(root, ctx) {
   let unitsReady = false;
   let ready = false;
   let order = 'date';
+  let onlyTodo = false;
   let tiles = [];
   let navigating = false;
   let signingOut = false;
@@ -42,6 +43,14 @@ export function mount(root, ctx) {
   const filters = el('div', { class: 'student-filters', hidden: true },
     el('label', { class: 'field' }, el('span', { class: 'label', text: '年度' }), yearSelect),
     el('div', { class: 'student-order', role: 'group', 'aria-label': '授業の並べ方' }, dateButton, unitButton));
+  const todoMessage = el('p');
+  const todoButton = el('button', { type: 'button', class: 'btn', 'aria-pressed': 'false',
+    text: 'まだの授業だけ見る', onclick: () => {
+      if (!ready || navigating || signingOut) return;
+      onlyTodo = !onlyTodo;
+      renderLessons();
+    } });
+  const todoArea = el('div', { class: 'notice student-todo', hidden: true }, todoMessage, todoButton);
 
   async function logout() {
     if (!alive || signingOut || navigating) return;
@@ -80,7 +89,8 @@ export function mount(root, ctx) {
       el('button', { type: 'button', class: 'btn', text: 'パスワードを変える', onclick: () => go('password') }),
       el('button', { type: 'button', class: 'btn', text: 'ログアウト', onclick: logout })));
 
-  root.replaceChildren(bar, el('main', { class: 'page-main' }, filters, message, pendingArea, listArea));
+  root.replaceChildren(el('div', { class: 'student-page' }, el('div', { class: 'student-home-page' },
+    bar, el('main', { class: 'page-main' }, filters, todoArea, message, pendingArea, listArea))));
 
   // 再送を待たずに移り、移ったあとの応答では一覧を描き直さない。
   ctx.setLeaveGuard(() => {
@@ -94,6 +104,7 @@ export function mount(root, ctx) {
     yearSelect.disabled = busy;
     dateButton.disabled = busy || !ready;
     unitButton.disabled = busy || !ready;
+    todoButton.disabled = busy || !ready;
     dateButton.setAttribute('aria-pressed', String(order === 'date'));
     unitButton.setAttribute('aria-pressed', String(order === 'unit'));
     for (const button of bar.querySelectorAll('button')) button.disabled = busy;
@@ -142,13 +153,22 @@ export function mount(root, ctx) {
 
   function renderLessons() {
     clearTiles();
+    const today = ctx.now();
+    const todo = todoLessons(lessons, marks, today);
+    if (todo.length === 0) onlyTodo = false;
+    todoArea.hidden = todo.length === 0;
+    todoMessage.replaceChildren(el('span', { text: '振り返りがまだの授業が ' }),
+      el('strong', { text: `${todo.length} つ` }), el('span', { text: 'あります。' }));
+    todoButton.textContent = onlyTodo ? '全部の授業を見る' : 'まだの授業だけ見る';
+    todoButton.setAttribute('aria-pressed', String(onlyTodo));
     if (lessons.length === 0) {
       listArea.replaceChildren(el('p', { class: 'home-empty', text: 'まだ授業がありません。' }));
       return;
     }
     const classId = current.id;
     const pending = pendingLessons(ctx.drafts, studentId, classId);
-    const groups = order === 'date' ? groupByDate(lessons, ctx.now()) : groupByUnit(lessons, units);
+    const visible = onlyTodo ? todo : lessons;
+    const groups = order === 'date' ? groupByDate(visible, today) : groupByUnit(visible, units);
     listArea.replaceChildren(...groups.map((group) => el('section', { class: 'lesson-group' },
       el('h2', { text: group.label }),
       el('div', { class: 'lesson-grid' }, group.lessons.map((lesson) => {
@@ -202,6 +222,7 @@ export function mount(root, ctx) {
     const id = ++loadId;
     const stale = () => !alive || leaving || id !== loadId;
     ready = false;
+    todoArea.hidden = true;
     clearTiles();
     message.replaceChildren();
     listArea.replaceChildren(el('p', { class: 'loading', role: 'status', text: '読みこんでいます…' }));
