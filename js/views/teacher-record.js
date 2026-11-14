@@ -37,21 +37,27 @@ export function mount(root, ctx) {
   const materialsArea = el('div');
   const recordArea = el('div');
   const reflectionArea = el('div');
+  const reflectionStatus = el('span', { class: 'reflection-status', role: 'status' });
   const content = el('div', { class: 'student-lesson-columns', hidden: true },
     el('section', { class: 'student-lesson-teacher', 'aria-labelledby': 'record-teacher-heading' },
-      el('h2', { id: 'record-teacher-heading', text: '先生の資料' }), materialsArea),
+      el('header', { class: 'lesson-section-band' }, el('h2', { id: 'record-teacher-heading', text: '先生の資料' })),
+      el('div', { class: 'lesson-section-body' }, materialsArea)),
     el('section', { class: 'student-lesson-mine', 'aria-labelledby': 'record-mine-heading' },
-      el('h2', { id: 'record-mine-heading', text: 'この生徒の記録' }), recordArea),
+      el('header', { class: 'lesson-section-band' }, el('h2', { id: 'record-mine-heading', text: 'この生徒の記録' })),
+      el('div', { class: 'lesson-section-body' }, recordArea)),
     el('section', { class: 'student-lesson-reflection', 'aria-labelledby': 'record-reflection-heading' },
-      el('h2', { id: 'record-reflection-heading', text: '振り返り' }), reflectionArea));
+      el('header', { class: 'lesson-section-band' }, el('h2', { id: 'record-reflection-heading', text: '振り返り' }), reflectionStatus),
+      el('div', { class: 'lesson-section-body' }, reflectionArea)));
   root.replaceChildren(teacherNav(ctx, 'review'),
-    el('main', { class: 'student-lesson-page teacher-record-page' },
+    el('div', { class: 'student-page' }, el('main', { class: 'student-lesson-page teacher-record-page' },
       el('div', { class: 'page-actions' },
         el('button', { type: 'button', class: 'btn', text: '‹ 一覧へ', onclick: goList }), previous, next),
-      titleArea, pageMessage, content));
+      titleArea, pageMessage, content)));
 
   function showRecord(person, savedAttachments) {
     const record = normalizeRecord(person.record, { max: CONFIG.recordTextMax });
+    reflectionStatus.classList.toggle('is-complete', record.level !== null);
+    reflectionStatus.textContent = record.level !== null ? '✓ 記入済み' : '！ 未記入';
     const text = (value) => value.trim() ? value : '（まだ書いていません）';
     const updated = updatedLabel(person.record?.updatedAt);
     attachments?.destroy();

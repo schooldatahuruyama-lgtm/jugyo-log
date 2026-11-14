@@ -35,6 +35,14 @@ export function mount(root, ctx) {
   const date = el('p', { class: 'student-lesson-date' });
   const materialsArea = el('div');
   const attachmentsArea = el('div');
+  const reflectionStatus = el('span', { class: 'reflection-status', role: 'status' });
+
+  function sectionHeading(id, number, title, description, status = null) {
+    return el('header', { class: 'lesson-section-band' },
+      el('span', { class: 'lesson-section-number', 'aria-hidden': 'true', text: number }),
+      el('h2', { id, text: title }), status,
+      el('p', { class: 'lesson-section-description', text: description }));
+  }
 
   function textField(key, label, rows) {
     const id = `student-record-${key}`;
@@ -55,22 +63,25 @@ export function mount(root, ctx) {
     })));
   const content = el('div', { class: 'student-lesson-columns', hidden: true },
     el('section', { class: 'student-lesson-teacher', 'aria-labelledby': 'student-teacher-heading' },
-      el('h2', { id: 'student-teacher-heading', text: '先生の資料' }), materialsArea),
+      sectionHeading('student-teacher-heading', 1, '先生の資料', '資料をめくったり、拡大したりできます。'),
+      el('div', { class: 'lesson-section-body' }, materialsArea)),
     el('section', { class: 'student-lesson-mine', 'aria-labelledby': 'student-mine-heading' },
-      el('h2', { id: 'student-mine-heading', text: '自分の記録' }), memo,
-      el('h3', { text: '自分の写真・PDF' }), attachmentsArea),
+      sectionHeading('student-mine-heading', 2, '自分の記録', '授業中に気づいたことを書きます。'),
+      el('div', { class: 'lesson-section-body' }, memo,
+        el('h3', { text: '自分の写真・PDF' }), attachmentsArea)),
     el('section', { class: 'student-lesson-reflection', 'aria-labelledby': 'student-reflection-heading' },
-      el('h2', { id: 'student-reflection-heading', text: '振り返り' }), levels,
-      el('div', { class: 'student-reflection-fields' },
-        textField('learned', '分かったこと・学んだこと', 4),
-        textField('question', '疑問・まだ分からないこと', 4))));
+      sectionHeading('student-reflection-heading', 3, '振り返り', '授業の終わりに書きます。', reflectionStatus),
+      el('div', { class: 'lesson-section-body' }, levels,
+        el('div', { class: 'student-reflection-fields' },
+          textField('learned', '分かったこと・学んだこと', 4),
+          textField('question', '疑問・まだ分からないこと', 4)))));
   const goHome = () => ctx.navigate('home', { classId });
-  root.replaceChildren(el('main', { class: 'student-lesson-page' },
+  root.replaceChildren(el('div', { class: 'student-page' }, el('main', { class: 'student-lesson-page' },
     el('header', { class: 'student-lesson-header' },
       el('button', { type: 'button', class: 'btn', text: '‹ 一覧へ', onclick: goHome }),
       el('div', { class: 'student-lesson-title' }, date, heading),
       el('div', { class: 'student-lesson-states' }, saveStatus, connectionStatus)),
-    draftWarning, pageMessage, content));
+    draftWarning, pageMessage, content)));
 
   function showSaveState(state) {
     if (!alive) return;
@@ -90,6 +101,10 @@ export function mount(root, ctx) {
   }
 
   function syncRecord() {
+    const filled = LEVELS.some((level) => level.value === record.level);
+    reflectionStatus.classList.toggle('is-complete', filled);
+    const statusText = filled ? '✓ 記入済み' : '！ 未記入';
+    if (reflectionStatus.textContent !== statusText) reflectionStatus.textContent = statusText;
     for (const key of Object.keys(fields)) {
       // 同じ文字を入れ直さず、変換中のカーソルやフォーカスを保つ。
       if (fields[key].value !== record[key]) fields[key].value = record[key];

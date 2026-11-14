@@ -26,6 +26,20 @@ function lessonDate(value) {
   return date;
 }
 
+// 印を読めなかったときは数えない。今日の授業も含め、受け取った順を保つ。
+export function todoLessons(lessons, marks, todayMs) {
+  if (!Array.isArray(lessons) || marks === null || typeof marks !== 'object' || Array.isArray(marks) || !isNum(todayMs)) return [];
+  const today = new Date(todayMs);
+  if (!Number.isFinite(today.getTime())) return [];
+  today.setHours(0, 0, 0, 0);
+  return lessons.filter((lesson) => {
+    const date = lessonDate(lesson?.date);
+    if (date === null || date > today) return false;
+    const level = marks[lesson.id];
+    return !Number.isInteger(level) || level < 1 || level > 4;
+  });
+}
+
 export function groupByDate(lessons, todayMs) {
   const today = new Date(todayMs);
   today.setHours(0, 0, 0, 0);

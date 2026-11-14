@@ -28,13 +28,19 @@
   --c-border: #6B79B3;      /* 操作部品の枠（隣の色と 3:1 以上。薄い区切り線だけに頼らない） */
   --c-ok-border: #2E8B57;   /* 成功の枠（--c-ok を濃くして白や背景と 3:1 以上にしたもの） */
   --c-warn-border: #8F6F00; /* 注意の枠（--c-warn を濃くして淡黄と 3:1 以上にしたもの） */
-  /* 先生の資料は青系、自分の記録は黄土色系（設計書 7 章。色だけでなく「先生の資料」「自分の記録」の文字も添える） */
-  --teacher: #1F5FA8;       /* 先生の資料の見出しと枠 */
-  --teacher-bg: #EAF2FC;    /* 先生の資料の背景 */
-  --mine: #8A6414;          /* 自分の記録の見出しと枠 */
-  --mine-bg: #FBF4E2;       /* 自分の記録の背景 */
-  --reflect: #1F7A5C;       /* 振り返りの見出しと枠 */
-  --reflect-bg: #E9F6F0;    /* 振り返りの背景 */
+  /* 色だけでなく、番号・見出し・説明でも枠を分ける。 */
+  --teacher: #0B57B0;
+  --teacher-bg: #F1F7FE;
+  --teacher-band: #D6E8FB;
+  --mine: #9A4A08;
+  --mine-bg: #FDF4EA;
+  --mine-band: #FBE3CC;
+  --reflect: #14694B;
+  --reflect-bg: #EEF7F1;
+  --reflect-band: #D5EBDD;
+  --page-warm: #FAF7F2;
+  --soft-line: #C9CFDD;
+  --soft-shadow: 0 2px 6px rgba(31, 42, 107, 0.12);
   --r-1: 12px; --r-2: 16px; --r-3: 24px;
   --s-1: 8px; --s-2: 16px; --s-3: 24px; --s-4: 32px;
   --shadow: 0 2px 8px rgba(31, 42, 107, 0.10);

@@ -37,6 +37,16 @@
 .page-message:empty { display: none; }
 
 /* 生徒のホーム */
+.student-page { min-height: 100vh; min-height: 100dvh; padding: var(--s-2); background: var(--page-warm); }
+.student-home-page, .student-lesson-page { background: var(--c-card); border-radius: 16px; box-shadow: var(--soft-shadow); }
+.student-home-page { max-width: 1100px; margin: 0 auto; }
+.student-home-page > .topbar { border-radius: 16px 16px 0 0; border-bottom-width: 1px; }
+.student-home-page .topbar-brand { font-size: 24px; }
+.student-todo { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--s-1) var(--s-2); margin-bottom: var(--s-3); border-width: 1px; }
+.student-todo p { margin: 0; }
+.student-lesson-page .btn:where(:not(.btn-primary):not(.btn-danger)), .student-home-page .lesson-tile-arrow, .student-todo .btn {
+  border: 1px solid var(--soft-line); border-radius: 12px; background: #FFFFFF; box-shadow: var(--soft-shadow); font-weight: 700;
+}
 .home-empty { padding: var(--s-4) var(--s-3); text-align: center; font-size: 20px; }
 .student-filters { display: flex; align-items: flex-end; flex-wrap: wrap; gap: var(--s-2); margin-bottom: var(--s-3); }
 .student-filters .field { flex: 0 1 360px; max-width: 100%; margin-bottom: 0; }
@@ -45,10 +55,9 @@
 .lesson-group + .lesson-group { margin-top: var(--s-4); }
 .lesson-group h2 { font-size: 24px; }
 .lesson-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-2); }
-.lesson-tile { min-width: 0; display: flex; flex-direction: column; background: var(--c-card); border: 1px solid var(--c-line); border-radius: var(--r-1); box-shadow: var(--shadow); }
-.lesson-tile-materials { border-top: 3px solid var(--teacher); border-radius: var(--r-1) var(--r-1) 0 0; background: var(--teacher-bg); }
-.lesson-tile-label { display: block; padding: 4px var(--s-1); color: var(--teacher); font-weight: 700; }
-.lesson-tile-frame { position: relative; display: flex; align-items: center; justify-content: center; aspect-ratio: 4 / 3; background: #E2E7F1; overflow: hidden; touch-action: pan-y; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.lesson-tile { min-width: 0; display: flex; flex-direction: column; background: var(--c-card); border: 0; border-radius: 12px; box-shadow: var(--soft-shadow); }
+.lesson-tile-materials { border-radius: 12px 12px 0 0; background: var(--c-card); }
+.lesson-tile-frame { position: relative; display: flex; align-items: center; justify-content: center; aspect-ratio: 4 / 3; border-radius: 12px 12px 0 0; background: #E2E7F1; overflow: hidden; touch-action: pan-y; cursor: pointer; user-select: none; -webkit-user-select: none; }
 .lesson-tile-frame img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 .lesson-tile-placeholder { max-height: 100%; padding: var(--s-2); text-align: center; overflow: hidden; overflow-wrap: anywhere; }
 .lesson-tile-controls { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 4px; }
@@ -60,8 +69,7 @@
 .lesson-tile-open:hover { background: var(--c-bg); }
 .lesson-tile-open .lesson-date { font-size: 16px; }
 .lesson-tile-open .lesson-title { font-size: 18px; }
-.lesson-tile-record { margin-top: auto; padding: var(--s-1); border-top: 2px solid var(--mine); border-radius: 0 0 var(--r-1) var(--r-1); background: var(--mine-bg); }
-.lesson-tile-record > .small { display: block; margin-bottom: 4px; color: var(--mine); font-weight: 700; }
+.lesson-tile-record { margin-top: auto; padding: var(--s-1); border-radius: 0 0 12px 12px; background: var(--c-card); }
 .lesson-tile-marks { display: flex; flex-wrap: wrap; gap: 4px; }
 .lesson-tile-marks .chip { max-width: 100%; font-size: 14px; overflow-wrap: anywhere; }
 
@@ -77,55 +85,59 @@
 
 /* 生徒の授業。資料と記録を同じ幅で並べ、下に振り返りを置く。縦向きでは一列にする。 */
 .student-lesson-page { max-width: 1400px; margin: 0 auto; padding: var(--s-2); }
-.student-lesson-header { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1) var(--s-2); margin-bottom: var(--s-2); }
+.student-lesson-header { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1) var(--s-2); margin-bottom: var(--s-2); padding-bottom: var(--s-2); border-bottom: 1px solid var(--soft-line); }
 .student-lesson-title { flex: 1; min-width: 180px; overflow-wrap: anywhere; }
 .student-lesson-title h1 { margin: 0; font-size: 24px; }
-.student-lesson-date { margin: 0; }
+.student-lesson-date { margin: 0; font-size: 16px; }
 .student-lesson-states { display: flex; flex-wrap: wrap; gap: var(--s-1); }
 .student-lesson-status { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1); }
 .student-lesson-status:empty, .student-material-message:empty, .student-record-count:empty { display: none; }
 .student-lesson-status .chip { max-width: 100%; overflow-wrap: anywhere; }
-.student-lesson-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: var(--s-2); }
+.student-lesson-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: var(--s-2); }
 .student-lesson-columns[hidden] { display: none; }
-.student-lesson-teacher, .student-lesson-mine, .student-lesson-reflection { min-width: 0; padding: var(--s-2); border: 2px solid; border-radius: var(--r-1); }
-.student-lesson-teacher { border-color: var(--teacher); background: var(--teacher-bg); max-height: calc(100vh - 160px); max-height: calc(100dvh - 160px); overflow-y: auto; -webkit-overflow-scrolling: touch; }
-.student-lesson-mine { border-color: var(--mine); background: var(--mine-bg); }
-.student-lesson-reflection { grid-column: 1 / -1; border-color: var(--reflect); background: var(--reflect-bg); overflow-wrap: anywhere; }
-.student-lesson-teacher > h2 { color: var(--teacher); }
-.student-lesson-mine > h2, .student-lesson-mine > h3 { color: var(--mine); }
-.student-lesson-reflection > h2 { color: var(--reflect); }
-.student-lesson-teacher > h2, .student-lesson-mine > h2, .student-lesson-reflection > h2 { font-size: 22px; }
-.student-lesson-mine > h3 { margin-top: var(--s-3); font-size: 20px; }
-.student-lesson-mine textarea, .student-lesson-reflection textarea { display: block; width: 100%; min-height: 120px; resize: vertical; }
+.student-lesson-teacher, .student-lesson-mine, .student-lesson-reflection { min-width: 0; border: 1px solid var(--section-band); border-radius: 14px; box-shadow: var(--soft-shadow); }
+.student-lesson-teacher { --section-color: var(--teacher); --section-band: var(--teacher-band); background: var(--teacher-bg); max-height: calc(100vh - 160px); max-height: calc(100dvh - 160px); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.student-lesson-mine { --section-color: var(--mine); --section-band: var(--mine-band); background: var(--mine-bg); }
+.student-lesson-reflection { --section-color: var(--reflect); --section-band: var(--reflect-band); grid-column: 1 / -1; background: var(--reflect-bg); overflow-wrap: anywhere; }
+.lesson-section-band { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; padding: 12px var(--s-2); border-radius: 13px 13px 0 0; background: var(--section-band); }
+.lesson-section-band h2 { min-width: 0; margin: 0; color: var(--section-color); font-size: 22px; overflow-wrap: anywhere; }
+.lesson-section-number { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--section-color); color: #FFFFFF; font-size: 22px; font-weight: 700; }
+.lesson-section-description { flex-basis: 100%; margin: 0; font-size: 15px; }
+.lesson-section-body { min-width: 0; padding: var(--s-2); }
+.lesson-section-body > :last-child { margin-bottom: 0; }
+.student-lesson-mine .lesson-section-body > h3 { margin-top: var(--s-3); font-size: 20px; color: var(--mine); }
+.reflection-status { flex: none; margin-left: auto; padding: 2px 12px; border: 1px solid var(--c-warn-border); border-radius: 999px; background: #FFF6D6; font-size: 15px; font-weight: 700; }
+.reflection-status.is-complete { border-color: #0F5239; background: #0F5239; color: #FFFFFF; }
+.student-lesson-mine textarea, .student-lesson-reflection textarea { display: block; width: 100%; min-height: 120px; resize: vertical; border: 1px solid var(--soft-line); border-radius: 10px; background: #FFFFFF; }
+.student-lesson-page textarea:focus { outline: 2px solid var(--section-color); outline-offset: 0; }
 .student-reflection-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-2); }
 .student-reflection-fields > * { min-width: 0; }
 .student-record-count { margin: 4px 0 0; text-align: right; }
 .student-record-levels { min-width: 0; margin: 0 0 var(--s-2); padding: 0; border: 0; }
-.student-record-level-buttons { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; border: 2px solid var(--reflect); border-radius: var(--r-1); overflow: hidden; }
-.student-record-level-buttons .btn { min-width: 44px; min-height: 48px; border: 0; border-radius: 0; background: #FFFFFF; white-space: normal; overflow-wrap: anywhere; }
-.student-record-level-buttons .btn + .btn { border-left: 1px solid var(--reflect); }
-.student-record-level-buttons .btn[aria-pressed='true'] { background: var(--reflect); color: #FFFFFF; }
+.student-record-level-buttons { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; border: 1px solid var(--soft-line); border-radius: 10px; overflow: hidden; }
+.student-lesson-page .student-record-level-buttons .btn { min-width: 44px; min-height: 48px; border: 0; border-radius: 0; background: #FFFFFF; box-shadow: none; white-space: normal; overflow-wrap: anywhere; }
+.student-lesson-page .student-record-level-buttons .btn + .btn { border-left: 1px solid var(--soft-line); }
+.student-lesson-page .student-record-level-buttons .btn[aria-pressed='true'] { background: var(--reflect); color: #FFFFFF; }
 .student-record-level-buttons .btn:focus-visible { outline-offset: -6px; box-shadow: none; }
 .student-record-level-buttons .btn[aria-pressed='true']:focus-visible { outline-color: #FFFFFF; }
 .student-lesson-page button { min-width: 44px; min-height: 44px; }
-.student-material-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
-.student-material-open { display: flex; flex-direction: column; width: 100%; padding: var(--s-1); border: 2px solid var(--teacher); border-radius: var(--r-1); background: var(--c-card); color: var(--c-navy); font: inherit; text-align: left; cursor: pointer; touch-action: manipulation; }
-.student-material-open:disabled { cursor: default; }
-.student-material-open:hover:not(:disabled) { background: var(--teacher-bg); }
-.student-material-preview { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 90px; background: var(--teacher-bg); }
-.student-material-preview img { display: block; width: 100%; height: auto; object-fit: contain; }
-.student-material-pdf { height: 160px; }
-.student-material-pdf img { width: 100%; height: 100%; }
-.student-material-summary { display: flex; flex-direction: column; gap: 4px; padding-top: var(--s-1); overflow-wrap: anywhere; }
+.student-material-open { display: block; width: 100%; padding: 0; border: 1px solid var(--soft-line); border-radius: 10px; background: #FFFFFF; color: var(--c-navy); font: inherit; cursor: pointer; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.student-material-open[aria-disabled='true'] { cursor: default; }
+.student-material-preview { position: relative; display: flex; align-items: center; justify-content: center; width: 100%; aspect-ratio: 4 / 3; border-radius: 9px; overflow: hidden; pointer-events: none; }
+.student-material-preview img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
+.student-material-caption { display: flex; align-items: center; justify-content: space-between; gap: var(--s-1); margin-top: var(--s-1); }
+.student-material-counter { flex: none; }
+.student-material-summary { display: flex; flex-direction: column; min-width: 0; gap: 4px; overflow-wrap: anywhere; }
 .student-material-summary > .small { color: var(--teacher); font-weight: 700; }
+.student-material-controls { display: flex; align-items: center; justify-content: center; gap: var(--s-2); margin-top: var(--s-1); }
 .student-material-message { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1); margin-top: var(--s-1); }
 
 @media (orientation: portrait), (max-width: 899px) {
   .student-lesson-columns { grid-template-columns: minmax(0, 1fr); }
   .student-reflection-fields { grid-template-columns: minmax(0, 1fr); }
   .student-record-level-buttons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .student-record-level-buttons .btn:nth-child(odd) { border-left: 0; }
-  .student-record-level-buttons .btn:nth-child(n+3) { border-top: 1px solid var(--reflect); }
+  .student-lesson-page .student-record-level-buttons .btn:nth-child(odd) { border-left: 0; }
+  .student-lesson-page .student-record-level-buttons .btn:nth-child(n+3) { border-top: 1px solid var(--soft-line); }
 }
 
 @media (orientation: portrait) {
@@ -255,8 +267,9 @@ input[aria-invalid='true'] { border-color: var(--c-danger-text); }
   min-height: 112px; padding: var(--s-1); border: 2px solid var(--c-border); border-radius: var(--r-1);
   background: var(--c-card); color: var(--c-navy); font: inherit; text-align: left; cursor: pointer; touch-action: manipulation;
 }
-.material-open:hover { background: var(--teacher-bg); }
-.material-thumb { display: flex; align-items: center; justify-content: center; flex: none; width: 120px; height: 90px; background: var(--teacher-bg); border-radius: var(--r-1); overflow: hidden; }
+/* 先生の資料管理は、共通変数の変更前の色を保つ。 */
+.material-open:hover { background: #EAF2FC; }
+.material-thumb { display: flex; align-items: center; justify-content: center; flex: none; width: 120px; height: 90px; background: #EAF2FC; border-radius: var(--r-1); overflow: hidden; }
 .material-thumb img { width: 100%; height: 100%; object-fit: contain; }
 .material-summary { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
 .material-name { font-weight: 700; }
@@ -325,7 +338,7 @@ dialog.material-viewer[open] { display: flex; flex-direction: column; gap: var(-
   padding: var(--s-2); border: 2px solid var(--c-border); border-radius: var(--r-1);
   background: var(--c-card); color: var(--c-navy); font: inherit; text-align: left; cursor: pointer; touch-action: manipulation;
 }
-.review-row:hover { background: var(--mine-bg); }
+.review-row:hover { background: #FBF4E2; } /* 先生の一覧は元の色を保つ。 */
 .review-row:disabled { opacity: 0.55; cursor: not-allowed; }
 .review-row-heading { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1); max-width: 100%; }
 .review-row-heading .chip { max-width: 100%; overflow-wrap: anywhere; }
