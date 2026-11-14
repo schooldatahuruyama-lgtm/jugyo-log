@@ -6,6 +6,7 @@ import { normalizeRecord } from '../record-logic.js';
 import { reviewPeople, neighbors, levelLabel } from '../review-logic.js';
 import { teacherNav } from './parts/teacher-nav.js';
 import { materialPane } from './parts/material-pane.js';
+import { attachmentPane } from './parts/attachment-pane.js';
 
 function updatedLabel(value) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '';
@@ -21,6 +22,7 @@ export function mount(root, ctx) {
   let loading = false;
   let loadId = 0;
   let materials = null;
+  let attachments = null;
   let adjacent = { prev: null, next: null };
   const goList = () => ctx.navigate('t-review', { classId, lessonId });
   const move = (id) => { if (alive && !loading && id) void ctx.navigate('t-record', { classId, lessonId, studentId: id }); };
@@ -45,14 +47,18 @@ export function mount(root, ctx) {
         el('button', { type: 'button', class: 'btn', text: '‹ 一覧へ', onclick: goList }), previous, next),
       titleArea, pageMessage, content));
 
-  function showRecord(person) {
+  function showRecord(person, savedAttachments) {
     const record = normalizeRecord(person.record, { max: CONFIG.recordTextMax });
     const text = (value) => value.trim() ? value : '（まだ書いていません）';
     const updated = updatedLabel(person.record?.updatedAt);
+    attachments?.destroy();
+    attachments = attachmentPane({ ctx, classId, lessonId, studentId,
+      attachments: Array.isArray(savedAttachments) ? savedAttachments : [], readOnly: true });
     recordArea.replaceChildren(
       ...(person.record === null ? [el('p', { class: 'notice', text: 'この生徒は、まだ何も書いていません。' })] : []),
       el('dl', { class: 'record-values' },
         el('dt', { text: 'メモ' }), el('dd', { class: 'review-text', text: text(record.memo) }),
+        el('dt', { text: '写真・PDF' }), el('dd', {}, attachments.node),
         el('dt', { text: '理解度' }), el('dd', { text: levelLabel(record.level) }),
         el('dt', { text: '分かったこと・学んだこと' }), el('dd', { class: 'review-text', text: text(record.learned) }),
         el('dt', { text: '疑問・まだ分からないこと' }), el('dd', { class: 'review-text', text: text(record.question) })),
@@ -93,7 +99,7 @@ export function mount(root, ctx) {
       const label = !person.inRoster ? '名簿にいない生徒' : person.number === null ? '出席番号なしの生徒' : `${person.number} 番`;
       personHeading.textContent = `${label}の記録（読み取り専用）`;
       identity.textContent = `生徒 ID：${person.studentId}`;
-      showRecord(person);
+      showRecord(person, recordsResult.value?.[studentId]?.attachments);
       materials?.destroy();
       materials = materialPane({ ctx, classId, lessonId, lesson });
       materialsArea.replaceChildren(materials.node);
@@ -114,5 +120,5 @@ export function mount(root, ctx) {
   }
 
   void load();
-  return () => { alive = false; loadId += 1; materials?.destroy(); };
+  return () => { alive = false; loadId += 1; materials?.destroy(); attachments?.destroy(); };
 }

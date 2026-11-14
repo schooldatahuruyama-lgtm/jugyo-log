@@ -4,7 +4,7 @@
 // 読んだデータは形を確かめてから返す（欠けや型の違いがあっても落ちない）。
 import { formatStudentId } from './ids.js';
 import { sortLessons, sortUnits } from './lesson-logic.js';
-import { normalizeRecord, tileMark } from './record-logic.js';
+import { normalizeRecord, tileMark, attachmentList } from './record-logic.js';
 import { CONFIG } from './config.js';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -16,6 +16,11 @@ function key(s) {
     throw new TypeError(`データベースのキーに使えない値です: ${String(s)}`);
   }
   return s;
+}
+
+function attachmentSlot(slot) {
+  if (!CONFIG.attachmentSlots.includes(slot)) throw new TypeError('添付の置き場所が正しくありません。');
+  return slot;
 }
 
 // 読んだ値を { キー: 値 } の形にそろえる（null や数などは空のオブジェクトにする）。
@@ -168,7 +173,8 @@ export function createRepo(net) {
     async getRecord(classId, lessonId, studentId) {
       const value = await net.get(`records/${key(classId)}/${key(lessonId)}/${key(studentId)}`);
       if (value === null || value === undefined) return null;
-      return { ...normalizeRecord(value, { max: CONFIG.recordTextMax }), updatedAt: isNum(value.updatedAt) ? value.updatedAt : 0 };
+      return { ...normalizeRecord(value, { max: CONFIG.recordTextMax }), updatedAt: isNum(value.updatedAt) ? value.updatedAt : 0,
+        attachments: attachmentList(value.attachments) };
     },
 
     // 先生が読む、授業 1 回分の全員の記録。書きかけも含め、1 回で読む
@@ -176,21 +182,45 @@ export function createRepo(net) {
       const value = await net.get(`records/${key(classId)}/${key(lessonId)}`);
       return Object.fromEntries((isObj(value) ? Object.entries(value) : [])
         .filter(([, v]) => isObj(v))
-        .map(([id, v]) => [id, { ...normalizeRecord(v, { max: CONFIG.recordTextMax }), updatedAt: isNum(v.updatedAt) ? v.updatedAt : 0 }]));
+        .map(([id, v]) => [id, { ...normalizeRecord(v, { max: CONFIG.recordTextMax }), updatedAt: isNum(v.updatedAt) ? v.updatedAt : 0,
+          attachments: attachmentList(v.attachments) }]));
     },
 
-    // 記録と一覧の印を、1 回のルート update で一緒に変える
+    // 添付は残し、文字・理解度・一覧の印を 1 回のルート update で一緒に変える
     async saveRecord(classId, lessonId, studentId, record, now) {
       const cid = key(classId);
       const lid = key(lessonId);
       const sid = key(studentId);
       const { memo, level, learned, question } = normalizeRecord(record, { max: CONFIG.recordTextMax });
-      const value = { memo, learned, question, updatedAt: now };
-      if (level !== null) value.level = level;
+      const path = `records/${cid}/${lid}/${sid}`;
       await net.update('', {
-        [`records/${cid}/${lid}/${sid}`]: value,
+        [`${path}/memo`]: memo,
+        [`${path}/learned`]: learned,
+        [`${path}/question`]: question,
+        [`${path}/updatedAt`]: now,
+        [`${path}/level`]: level,
         [`marks/${sid}/${cid}/${lid}`]: level,
       });
+    },
+
+    // 添付の目録と小さい画像だけを書く。文字の記録と更新日時は変えない。
+    async addAttachment(classId, lessonId, studentId, slot, { type, fileId, bytes }, thumb, now) {
+      const path = `${key(classId)}/${key(lessonId)}/${key(studentId)}`;
+      const aid = attachmentSlot(slot);
+      const patch = { [`records/${path}/attachments/${aid}`]: { type, fileId, bytes, addedAt: now } };
+      if (typeof thumb === 'string') patch[`recThumbs/${path}/${aid}`] = thumb;
+      await net.update('', patch);
+    },
+
+    async removeAttachment(classId, lessonId, studentId, slot) {
+      const path = `${key(classId)}/${key(lessonId)}/${key(studentId)}`;
+      const aid = attachmentSlot(slot);
+      await net.update('', { [`records/${path}/attachments/${aid}`]: null, [`recThumbs/${path}/${aid}`]: null });
+    },
+
+    async getRecThumbs(classId, lessonId, studentId) {
+      return Object.fromEntries(entriesOf(await net.get(`recThumbs/${key(classId)}/${key(lessonId)}/${key(studentId)}`))
+        .filter(([, v]) => typeof v === 'string'));
     },
 
     async getMarks(studentId, classId) {

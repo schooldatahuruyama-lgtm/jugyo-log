@@ -32,6 +32,7 @@ export const CONFIG = {
   thumb: { maxEdge: 320, maxChars: 20000 },
   pdfMaxBytes: 10485760,
   materialsPerLesson: 12,
+  attachmentSlots: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'],
   // GAS の待ち時間・試す回数・やり直す間隔の基準
   gas: { timeoutMs: 60000, maxTries: 3, retryBaseMs: 1500 },
 };

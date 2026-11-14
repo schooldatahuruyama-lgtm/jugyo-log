@@ -1,4 +1,6 @@
 // 記録の形と、サーバー・下書きの選び方。通信や現在時刻の取得はしない。
+import { CONFIG } from './config.js';
+
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const isLevel = (v) => Number.isInteger(v) && v >= 1 && v <= 4;
@@ -37,4 +39,24 @@ export function pickInitial(server, draft, { max }) {
 
 export function tileMark(level) {
   return isLevel(level) ? 'done' : 'todo';
+}
+
+// 目録の形を確かめ、足した順に並べる。元のファイル名など、余分な項目は返さない。
+export function attachmentList(v) {
+  return (isObj(v) ? Object.entries(v) : [])
+    .filter(([slot, a]) => CONFIG.attachmentSlots.includes(slot) && isObj(a)
+      && ['image', 'pdf'].includes(a.type) && typeof a.fileId === 'string' && a.fileId.length >= 1 && a.fileId.length <= 200
+      && isNum(a.bytes) && a.bytes >= 0 && isNum(a.addedAt))
+    .map(([slot, { type, fileId, bytes, addedAt }]) => ({ slot, type, fileId, bytes, addedAt }))
+    .sort((a, b) => (a.addedAt - b.addedAt) || a.slot.localeCompare(b.slot));
+}
+
+export function freeSlot(attachments, busy = []) {
+  const used = new Set([...attachments.map((a) => a.slot), ...busy]);
+  return CONFIG.attachmentSlots.find((slot) => !used.has(slot)) ?? null;
+}
+
+export function attachmentLabels(attachments) {
+  const counts = { image: 0, pdf: 0 };
+  return Object.fromEntries(attachments.map(({ slot, type }) => [slot, `${type === 'image' ? '写真' : 'PDF'} ${++counts[type]}`]));
 }

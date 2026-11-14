@@ -1,5 +1,5 @@
 // 規則の確認: 本物の Firebase の規則が、生徒に読ませてはいけないものを読ませていないかを確かめる
-// （docs/superpowers/specs/2026-11-13-jugyo-log-1a-data.md の 4 章。1a-3 までの範囲）。
+// （docs/superpowers/specs/2026-11-13-jugyo-log-1a-data.md の 4 章。1b-1 までの範囲）。
 // 通信の道具は引数で受け取る。画面や fetch は知らない。
 // 規則そのものを試すので、データベースの場所をここに直接書く（repo.js の例外。確かめる場所の一覧）。
 // パスワードとトークンは、結果・console・例外の文に出さない。
@@ -103,6 +103,14 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
     const memoOnly = { memo: 'あ'.repeat(2000), learned: '', question: '', updatedAt: now() };
     const record = { memo: '確認用のメモ', learned: '', question: '', updatedAt: now() };
     const ownRecord = `records/${inId}/${inLessonId}/${sid}`;
+    const attachment = { type: 'image', fileId: 'probe', bytes: 42, addedAt: now() };
+    const ownThumbs = `recThumbs/${inId}/${inLessonId}/${sid}`;
+    const otherThumbs = `recThumbs/${inId}/${inLessonId}/s00-998`;
+    const writeAttachment = (slot, value) => {
+      const path = `${ownRecord}/attachments/${slot}`;
+      return trackWrite({ [path]: null }, () => net.set(path, value));
+    };
+    const writeRecThumb = (path) => trackWrite({ [path]: null }, () => net.set(`${path}/a1`, PROBE_THUMB));
 
     const checks = [
       ['gen/s00-999 を読む（ログインなし）', 'ok', () => net.getPublic(`gen/${sid}`)],
@@ -147,6 +155,17 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
         return trackWrite({ [path]: null }, () => net.set(path, 3));
       }],
       ['先生として確認用の生徒の records を書く', 'denied', () => writeRecord(teacherNet, inId, inLessonId, sid, record)],
+      ['自分の attachments/a1 を書く', 'ok', () => writeAttachment('a1', attachment)],
+      ['自分の attachments/a7 を書く', 'denied', () => writeAttachment('a7', attachment)],
+      ['type が video の attachments/a2 を書く', 'denied', () => writeAttachment('a2', { ...attachment, type: 'video' })],
+      ['自分の recThumbs/a1 を書く', 'ok', () => writeRecThumb(ownThumbs)],
+      ['自分の recThumbs を読む', 'ok', () => net.get(ownThumbs)],
+      ['ほかの生徒（s00-998）の recThumbs を読む', 'denied', () => net.get(otherThumbs)],
+      ['ほかの生徒（s00-998）の recThumbs/a1 を書く', 'denied', () => writeRecThumb(otherThumbs)],
+      ['先生として確認用の生徒の recThumbs を読む', 'ok', () => teacherNet.get(ownThumbs)],
+      ['すでにある attachments/a1 を同じ fileId で書き直す', 'ok', () => writeAttachment('a1', { ...attachment, bytes: 43 })],
+      ['すでにある attachments/a1 を別の fileId で書きかえる', 'denied', () => writeAttachment('a1', { ...attachment, fileId: 'probe-changed' })],
+      ['自分の recThumbs に文字を直接書く', 'denied', () => trackWrite({ [ownThumbs]: null }, () => net.set(ownThumbs, PROBE_THUMB))],
       ['classes/（入っているクラス）/name を書く', 'denied', () => net.set(`classes/${inId}/name`, '書きかえ')],
       ['memberOf/s00-999/（入っていないクラス）に true を書く', 'denied', () => net.set(`memberOf/${sid}/${outId}`, true)],
       ['accounts/（自分の uid）を別の ID に書きかえる', 'denied', () => net.set(`accounts/${uid}`, 's00-998')],
@@ -165,7 +184,7 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
     rows.push(failRow(PREPARE_LABEL));
   }
 
-  // 3. 生徒として記録と印を消してから、先生として片付ける（途中で失敗しても）。
+  // 3. 生徒として記録・印・小さい画像を消してから、先生として片付ける（途中で失敗しても）。
   // students/s00-999 と gen/s00-999 は残す。
   // (a) 分かっている場所の削除と (b) uid を読み直しての accounts の削除は、別々に試みる
   const okRecords = await removeRecords();
@@ -233,6 +252,7 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       for (const lessonId of lessonIds) {
         patch[`lessons/${c.id}/${lessonId}`] = null;
         studentPatch[`records/${c.id}/${lessonId}/${sid}`] = null;
+        studentPatch[`recThumbs/${c.id}/${lessonId}/${sid}`] = null;
       }
       if (ofIds.includes(c.id) && of[c.id] === true
         && await attempt(() => studentNet.update('', studentPatch)) !== 'ok') recordsRemoved = false;
