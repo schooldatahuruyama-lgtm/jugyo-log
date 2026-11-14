@@ -8,6 +8,7 @@ import { teacherNav } from './parts/teacher-nav.js';
 import { materialPane } from './parts/material-pane.js';
 import { attachmentPane } from './parts/attachment-pane.js';
 import { headingIcon } from './parts/heading-icon.js';
+import { termRow } from './parts/term-row.js';
 
 function updatedLabel(value) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '';
@@ -24,6 +25,7 @@ export function mount(root, ctx) {
   let loadId = 0;
   let materials = null;
   let attachments = null;
+  let terms = null;
   let adjacent = { prev: null, next: null };
   const goList = () => ctx.navigate('t-review', { classId, lessonId });
   const move = (id) => { if (alive && !loading && id) void ctx.navigate('t-record', { classId, lessonId, studentId: id }); };
@@ -37,6 +39,7 @@ export function mount(root, ctx) {
   const pageMessage = el('div', { class: 'page-message', role: 'status', 'aria-live': 'polite' });
   const materialsArea = el('div');
   const recordArea = el('div');
+  const termsArea = el('div');
   const reflectionArea = el('div');
   const reflectionStatus = el('span', { class: 'reflection-status', role: 'status' });
   const content = el('div', { class: 'student-lesson-columns', hidden: true },
@@ -47,7 +50,8 @@ export function mount(root, ctx) {
     el('section', { class: 'student-lesson-mine', 'aria-labelledby': 'record-mine-heading' },
       el('header', { class: 'lesson-section-band' },
         el('h2', { id: 'record-mine-heading' }, headingIcon('mine'), el('span', { text: 'この生徒の記録' }))),
-      el('div', { class: 'lesson-section-body' }, recordArea)),
+      el('div', { class: 'lesson-section-body' },
+        el('div', { class: 'term-heading' }, el('h3', { text: '重要用語' })), termsArea, recordArea)),
     el('section', { class: 'student-lesson-reflection', 'aria-labelledby': 'record-reflection-heading' },
       el('header', { class: 'lesson-section-band' },
         el('h2', { id: 'record-reflection-heading' }, headingIcon('reflect'), el('span', { text: '振り返り' })), reflectionStatus),
@@ -121,6 +125,9 @@ export function mount(root, ctx) {
       materials?.destroy();
       materials = materialPane({ ctx, classId, lessonId, lesson });
       materialsArea.replaceChildren(materials.node);
+      terms?.destroy();
+      terms = termRow({ ctx, classId, lessonId, studentId, lesson, readOnly: true });
+      termsArea.replaceChildren(terms.node);
       pageMessage.replaceChildren();
       titleArea.hidden = false;
       content.hidden = false;
@@ -138,5 +145,5 @@ export function mount(root, ctx) {
   }
 
   void load();
-  return () => { alive = false; loadId += 1; materials?.destroy(); attachments?.destroy(); };
+  return () => { alive = false; loadId += 1; materials?.destroy(); attachments?.destroy(); terms?.destroy(); };
 }

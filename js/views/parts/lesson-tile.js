@@ -2,8 +2,9 @@
 import { el, statusChip } from '../../ui.js';
 import { dateLabel, thumbOrder } from '../../lesson-logic.js';
 import { swipeDecision, stepIndex } from '../../student-list-logic.js';
+import { mergedTerms, termKey } from '../../term-logic.js';
 
-export function lessonTile({ lesson, mark, pending, loadThumbs, onOpen, swipe }) {
+export function lessonTile({ lesson, myTerms, query = '', mark, pending, loadThumbs, onOpen, swipe }) {
   let alive = true;
   let loaded = false;
   let opened = false;
@@ -24,6 +25,14 @@ export function lessonTile({ lesson, mark, pending, loadThumbs, onOpen, swipe })
   const openButton = el('button', {
     type: 'button', class: 'lesson-tile-open', 'aria-label': `${date} ${title} を開く`,
   }, el('span', { class: 'lesson-date', text: date }), el('span', { class: 'lesson-title', text: title }));
+  const key = termKey(query);
+  const terms = mergedTerms(lesson, myTerms);
+  const matches = (term) => Boolean(key && termKey(term.text).includes(key));
+  if (key) terms.sort((a, b) => Number(matches(b)) - Number(matches(a)));
+  const termsArea = terms.length ? el('div', { class: 'term-list lesson-tile-terms' },
+    terms.slice(0, 3).map((term) => el('span', {
+      class: `term-pill term-pill-small${matches(term) ? ' is-match' : ''}`, text: term.text,
+    })), terms.length > 3 ? el('span', { class: 'term-more', text: `ほか ${terms.length - 3}` }) : null) : null;
   // 印を読めなかった場合は、mark を渡さず、未入力という印も出さない。
   const record = el('div', { class: 'lesson-tile-record' },
     el('div', { class: 'lesson-tile-marks' },
@@ -32,7 +41,7 @@ export function lessonTile({ lesson, mark, pending, loadThumbs, onOpen, swipe })
       pending ? statusChip('danger', 'まだ保存できていません') : null));
   const node = el('article', { class: 'lesson-tile' },
     el('div', { class: 'lesson-tile-materials' }, frame, controls),
-    openButton, record);
+    openButton, termsArea, record);
 
   function listen(target, type, handler) {
     target.addEventListener(type, handler);

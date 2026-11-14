@@ -7,6 +7,7 @@ import { dateLabel } from '../lesson-logic.js';
 import { materialPane } from './parts/material-pane.js';
 import { attachmentPane } from './parts/attachment-pane.js';
 import { headingIcon } from './parts/heading-icon.js';
+import { termRow } from './parts/term-row.js';
 
 export function mount(root, ctx) {
   const { classId, lessonId } = ctx.params;
@@ -24,6 +25,7 @@ export function mount(root, ctx) {
   let draftWarned = false;
   let materials = null;
   let attachments = null;
+  let terms = null;
   const dialogs = new AbortController();
   const fields = {};
   const counts = {};
@@ -36,6 +38,7 @@ export function mount(root, ctx) {
   const date = el('p', { class: 'student-lesson-date' });
   const materialsArea = el('div');
   const attachmentsArea = el('div');
+  const termsArea = el('div');
   const reflectionStatus = el('span', { class: 'reflection-status', role: 'status' });
 
   function sectionHeading(id, kind, title, description, status = null) {
@@ -67,7 +70,9 @@ export function mount(root, ctx) {
       el('div', { class: 'lesson-section-body' }, materialsArea)),
     el('section', { class: 'student-lesson-mine', 'aria-labelledby': 'student-mine-heading' },
       sectionHeading('student-mine-heading', 'mine', '自分の記録', '授業中に気づいたことを書きます。'),
-      el('div', { class: 'lesson-section-body' }, memo,
+      el('div', { class: 'lesson-section-body' },
+        el('div', { class: 'term-heading' }, el('h3', { text: '重要用語' }),
+          el('span', { class: 'small', text: '自分で足した用語は、押すと外せます。' })), termsArea, memo,
         el('h3', { text: '自分の写真・PDF' }), attachmentsArea)),
     el('section', { class: 'student-lesson-reflection', 'aria-labelledby': 'student-reflection-heading' },
       sectionHeading('student-reflection-heading', 'reflect', '振り返り', '授業の終わりに書きます。', reflectionStatus),
@@ -204,6 +209,8 @@ export function mount(root, ctx) {
       attachments = attachmentPane({ ctx, classId, lessonId, studentId,
         attachments: Array.isArray(server?.attachments) ? server.attachments : [], readOnly: false });
       attachmentsArea.replaceChildren(attachments.node);
+      terms = termRow({ ctx, classId, lessonId, studentId, lesson, readOnly: false });
+      termsArea.replaceChildren(terms.node);
     } catch {
       if (alive) pageMessage.replaceChildren(
         el('p', { class: 'error', text: 'つながりません。電波を確かめて、もう一度ためしてください。' }),
@@ -227,19 +234,27 @@ export function mount(root, ctx) {
   }
 
   async function okToLeave() {
-    if (saver?.dirty) {
-      showSaveState('saving');
-      const saved = await saver.flush();
+    terms?.setLocked(true);
+    let leaving = false;
+    try {
+      if (terms && !await terms.settle()) return false;
+      if (saver?.dirty) {
+        showSaveState('saving');
+        const saved = await saver.flush();
+        if (!alive) return false;
+        if (!saved && !await confirmDialog({ title: 'まだ保存できていません',
+          body: 'この iPad の中に残して、一覧へもどりますか？　次に一覧を開いたときに、もう一度送ります。',
+          okLabel: '一覧へもどる', cancelLabel: 'ここに残る', signal: dialogs.signal })) return false;
+      }
       if (!alive) return false;
-      if (!saved && !await confirmDialog({ title: 'まだ保存できていません',
-        body: 'この iPad の中に残して、一覧へもどりますか？　次に一覧を開いたときに、もう一度送ります。',
+      if (attachments?.busy && !await confirmDialog({ title: 'まだ送れていない写真・PDF があります',
+        body: 'まだ送れていない写真・PDF があります。離れると、送れていない分は消えます。',
         okLabel: '一覧へもどる', cancelLabel: 'ここに残る', signal: dialogs.signal })) return false;
+      leaving = alive;
+      return leaving;
+    } finally {
+      if (!leaving) terms?.setLocked(false);
     }
-    if (!alive) return false;
-    if (attachments?.busy) return confirmDialog({ title: 'まだ送れていない写真・PDF があります',
-      body: 'まだ送れていない写真・PDF があります。離れると、送れていない分は消えます。',
-      okLabel: '一覧へもどる', cancelLabel: 'ここに残る', signal: dialogs.signal });
-    return true;
   }
 
   const onBeforeUnload = (event) => {
@@ -273,5 +288,6 @@ export function mount(root, ctx) {
     document.removeEventListener('visibilitychange', refreshRecord);
     materials?.destroy();
     attachments?.destroy();
+    terms?.destroy();
   };
 }

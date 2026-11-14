@@ -3,6 +3,7 @@ import { el, confirmDialog, toast, statusChip } from '../ui.js';
 import { CONFIG } from '../config.js';
 import { newId } from '../ids.js';
 import { checkLesson, sortUnits, materialList, nextOrder, moveInOrder } from '../lesson-logic.js';
+import { cleanTerm, checkTerm, termKey, lessonTerms, suggestTerms } from '../term-logic.js';
 import { compressImage, compressCanvas, dataUrlToBase64 } from '../image.js';
 import { openPdf } from '../pdf.js';
 import { addMaterialFlow, removeMaterialFlow } from '../material-flow.js';
@@ -40,6 +41,11 @@ export function mount(root, ctx) {
   let pending = null;
   let viewer = null;
   let baseline = '';
+  let termBusy = false;
+  let termLocked = false;
+  let termRequest = null;
+  let allLessons = null;
+  let suggestionId = 0;
   const dialogs = new AbortController();
 
   const date = el('input', { id: 'edit-lesson-date', type: 'date' });
@@ -57,6 +63,21 @@ export function mount(root, ctx) {
       el('p', { class: 'small muted field-hint', text: `${CONFIG.lessonTitleMax} 文字まで` }), title),
     el('div', { class: 'field' }, el('label', { class: 'label', for: 'edit-lesson-unit', text: '単元' }), unit),
     infoError, infoStatus, el('div', { class: 'dialog-actions' }, save));
+  const termList = el('div', { class: 'term-list' });
+  const termError = el('p', { class: 'error term-message', role: 'alert' });
+  const termLimit = el('p', { class: 'small term-message', role: 'status' });
+  const termInput = el('input', { type: 'text', maxlength: CONFIG.termMax, autocomplete: 'off',
+    placeholder: `用語を足す（${CONFIG.termMax} 文字まで）`, 'aria-label': '重要用語を足す',
+    'aria-describedby': 'lesson-term-hint',
+    onkeydown: (ev) => { if (ev.key === 'Enter' && (ev.isComposing || ev.keyCode === 229)) ev.preventDefault(); } });
+  const termAdd = el('button', { type: 'submit', class: 'btn', text: '＋ 足す' });
+  const suggestions = el('div', { class: 'term-suggestions', hidden: true });
+  const termsSection = el('section', { class: 'card lesson-terms', 'aria-labelledby': 'lesson-terms-heading' },
+    el('h2', { id: 'lesson-terms-heading', text: '重要用語' }), termList,
+    el('form', { class: 'term-input-row', novalidate: true,
+      onsubmit: (ev) => { ev.preventDefault(); void addTerm(termInput.value); } }, termInput, termAdd),
+    el('p', { id: 'lesson-term-hint', class: 'small term-message', text: '人の名前など、個人が分かる言葉は入れないでください。' }),
+    termLimit, termError, suggestions);
   const imageInput = el('input', { type: 'file', accept: 'image/*', hidden: true, onchange: () => selectFile(imageInput, 'image') });
   const pdfInput = el('input', { type: 'file', accept: 'application/pdf', hidden: true, onchange: () => selectFile(pdfInput, 'pdf') });
   const photoButton = el('button', { type: 'button', class: 'btn', text: '写真を足す', onclick: () => chooseFile(imageInput) });
@@ -65,7 +86,7 @@ export function mount(root, ctx) {
   const materialMessage = el('div', { class: 'page-message', role: 'status', 'aria-live': 'polite' });
   const listArea = el('div');
   const heading = el('h1', { text: '授業の編集' });
-  const content = el('div', { hidden: true }, heading, infoForm,
+  const content = el('div', { hidden: true }, heading, infoForm, termsSection,
     el('section', { class: 'lesson-materials', 'aria-label': '授業の資料' },
       el('h2', { text: '授業の資料' }),
       el('div', { class: 'page-actions' }, photoButton, pdfButton, imageInput, pdfInput),
@@ -80,16 +101,31 @@ export function mount(root, ctx) {
       })), pageMessage, content));
 
   async function okToLeave() {
-    if (saving || materialBusy) { toast('処理しています。終わるまで待ってください。'); return false; }
-    if (!dirty() && !pending) return true;
-    const sending = pending?.sending;
-    return confirmDialog({
-      title: sending ? '資料を送っています' : '保存していない変更があります',
-      body: sending
-        ? '送信はまだ終わっていません。画面を移っても送信が続くことがあります。移りますか？'
-        : '授業の変更や、足そうとしている資料がまだ保存されていません。保存しないで移りますか？',
-      okLabel: 'この画面を離れる', cancelLabel: 'この画面に残る', signal: dialogs.signal,
-    });
+    if (termLocked) return false;
+    termLocked = true;
+    syncTermControls();
+    try {
+      if (termBusy) {
+        try { await termRequest; } catch { return false; }
+        if (!alive) return false;
+      }
+      if (saving || materialBusy) { toast('処理しています。終わるまで待ってください。'); return false; }
+      if (dirty() || pending) {
+        const sending = pending?.sending;
+        if (!await confirmDialog({
+          title: sending ? '資料を送っています' : '保存していない変更があります',
+          body: sending
+            ? '送信はまだ終わっていません。画面を移っても送信が続くことがあります。移りますか？'
+            : '授業の変更や、足そうとしている資料がまだ保存されていません。保存しないで移りますか？',
+          okLabel: 'この画面を離れる', cancelLabel: 'この画面に残る', signal: dialogs.signal,
+        })) return false;
+      }
+      return alive;
+    } finally {
+      // ログアウトでは、このあとにも取り消せる確認があるので、成功時も元に戻す。
+      termLocked = false;
+      syncTermControls();
+    }
   }
   if (ctx.setLeaveGuard) ctx.setLeaveGuard(okToLeave);
   const onBeforeUnload = (ev) => {
@@ -101,6 +137,7 @@ export function mount(root, ctx) {
 
   function syncControls() {
     if (!alive) return;
+    syncTermControls();
     const infoLocked = !ready || loading || saving || materialBusy || selecting || pending !== null;
     for (const control of infoForm.querySelectorAll('input, select, button')) control.disabled = infoLocked;
     photoButton.disabled = infoLocked;
@@ -149,6 +186,8 @@ export function mount(root, ctx) {
       content.hidden = false;
       pageMessage.replaceChildren();
       renderMaterials();
+      renderTerms();
+      void loadSuggestions();
     } catch {
       if (alive) pageMessage.replaceChildren(
         el('p', { class: 'error', role: 'alert', text: 'つながりません。もう一度ためしてください。' }),
@@ -181,12 +220,109 @@ export function mount(root, ctx) {
       title.value = values.title;
       baseline = snapshot();
       infoStatus.replaceChildren(statusChip('ok', '保存しました'));
+      void loadSuggestions();
     } catch {
       if (alive) { infoError.textContent = '保存できませんでした。もう一度ためしてください。'; infoError.hidden = false; infoStatus.replaceChildren(); }
     } finally {
       saving = false;
       syncControls();
     }
+  }
+
+  function syncTermControls() {
+    if (!alive) return;
+    const locked = !ready || loading || termBusy || termLocked;
+    const full = lessonTerms(lesson).length >= CONFIG.termsPerLesson;
+    for (const button of termsSection.querySelectorAll('button')) button.disabled = locked;
+    for (const button of suggestions.querySelectorAll('button')) button.disabled = locked || full;
+    termInput.disabled = locked || full;
+    termAdd.disabled = locked || full;
+    termLimit.textContent = full ? `重要用語は ${CONFIG.termsPerLesson} 個までです。` : '';
+  }
+
+  function renderTerms() {
+    if (!alive || !lesson) return;
+    const terms = lessonTerms(lesson);
+    termList.replaceChildren(...(terms.length ? terms.map((term) => el('button', {
+      type: 'button', class: 'term-pill', text: `${term.text} ×`, 'aria-label': `${term.text} を外す`,
+      onclick: () => removeTerm(term),
+    })) : [el('span', { class: 'small', text: '（まだありません）' })]));
+    renderSuggestions();
+  }
+
+  function renderSuggestions() {
+    if (!alive || !lesson) return;
+    // 候補を読んだあとに足した・外した用語も、今の授業の内容で除く。
+    const source = allLessons ? { ...allLessons, [classId]: { ...allLessons[classId], [lessonId]: lesson } } : null;
+    const texts = suggestTerms(source, { classId, lessonId, unitId: lesson.unitId }, 12);
+    suggestions.hidden = texts.length === 0;
+    suggestions.replaceChildren(...(texts.length ? [
+      el('h3', { text: '同じ単元で前に使った用語' }),
+      el('div', { class: 'term-list' }, texts.map((text) => el('button', {
+        type: 'button', class: 'term-pill', text, onclick: () => addTerm(text),
+      }))),
+    ] : []));
+    syncTermControls();
+  }
+
+  async function loadSuggestions() {
+    const id = ++suggestionId;
+    allLessons = null;
+    renderSuggestions();
+    if (!lesson?.unitId) return;
+    try {
+      const found = await ctx.repo.listAllLessons();
+      if (!alive || id !== suggestionId) return;
+      allLessons = found;
+      renderSuggestions();
+    } catch { /* 候補を読めなくても、用語の入力は使える。 */ }
+  }
+
+  async function addTerm(value) {
+    if (!alive || !ready || loading || termBusy || termLocked) return;
+    termError.textContent = '';
+    const code = checkTerm(value);
+    if (code === 'empty') return;
+    if (code) { termError.textContent = `用語は ${CONFIG.termMax} 文字までです。`; return; }
+    const text = cleanTerm(value);
+    const terms = lessonTerms(lesson);
+    if (terms.some((term) => termKey(term.text) === termKey(text))) {
+      termError.textContent = 'その用語は、もうあります。';
+      return;
+    }
+    if (terms.length >= CONFIG.termsPerLesson) { syncTermControls(); return; }
+    termBusy = true;
+    syncTermControls();
+    try {
+      const termId = ctx.now().toString(36).padStart(9, '0') + newId(ctx.random, 4);
+      termRequest = ctx.repo.addLessonTerm(classId, lessonId, termId, text, ctx.now());
+      await termRequest;
+      if (!alive) return;
+      lesson.terms = { ...lesson.terms, [termId]: text };
+      termInput.value = '';
+      renderTerms();
+    } catch {
+      if (alive) termError.textContent = '保存できませんでした。もう一度ためしてください。';
+    } finally { termBusy = false; syncTermControls(); }
+  }
+
+  async function removeTerm(term) {
+    if (!alive || !ready || loading || termBusy || termLocked) return;
+    termBusy = true;
+    termError.textContent = '';
+    syncTermControls();
+    try {
+      termRequest = ctx.repo.removeLessonTerm(classId, lessonId, term.id, ctx.now());
+      await termRequest;
+      if (!alive) return;
+      const terms = { ...lesson.terms };
+      delete terms[term.id];
+      lesson.terms = terms;
+      renderTerms();
+      toast(`『${term.text}』を外しました。`);
+    } catch {
+      if (alive) termError.textContent = '保存できませんでした。もう一度ためしてください。';
+    } finally { termBusy = false; syncTermControls(); }
   }
 
   function viewMaterial(material) {
