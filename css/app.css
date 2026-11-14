@@ -279,3 +279,59 @@ dialog.material-viewer[open] { display: flex; flex-direction: column; gap: var(-
   .material-actions { margin-left: auto; }
   dialog.material-viewer { padding: var(--s-1); }
 }
+
+/* 先生の記録確認。人数は棒の長さと数字の両方で示す。 */
+.review-page { max-width: 1400px; }
+.review-filters { display: flex; align-items: flex-end; flex-wrap: wrap; gap: var(--s-1) var(--s-2); margin-bottom: var(--s-3); }
+.review-filters .field { flex: 1 1 160px; min-width: 0; max-width: 100%; margin-bottom: 0; }
+.review-filters .review-lesson-filter { flex: 3 1 320px; }
+.review-filters select { max-width: 100%; }
+.review-columns { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(0, 2fr); align-items: start; gap: var(--s-3); }
+.review-chart, .review-records { min-width: 0; }
+.review-columns h2 { font-size: 24px; }
+.review-chart { padding: var(--s-2); }
+.review-bar-row + .review-bar-row { margin-top: var(--s-2); }
+.review-bar-label { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s-1); margin-bottom: 4px; font-size: 16px; }
+.review-bar-label > span { min-width: 0; overflow-wrap: anywhere; }
+.review-bar-label > strong { flex: none; }
+.review-bar-track { height: 18px; border-radius: 4px; background: var(--c-line); overflow: hidden; }
+.review-bar { display: block; height: 100%; background: var(--c-main); }
+.review-bar-4 { background: var(--c-ok-border); }
+.review-bar-3 { background: var(--teacher); }
+.review-bar-2 { background: var(--c-warn-border); }
+.review-bar-1 { background: var(--c-danger-text); }
+.review-bar-none { background: var(--c-border); }
+.review-total { margin: var(--s-3) 0 0; font-weight: 700; }
+.review-choices { display: flex; flex-wrap: wrap; gap: var(--s-1); margin-bottom: var(--s-2); }
+.review-choices .btn[aria-pressed='true'] { background: var(--c-navy); border-color: var(--c-navy); color: #FFFFFF; text-decoration: underline; text-underline-offset: 4px; }
+.review-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-1); }
+.review-rows > li { min-width: 0; }
+.review-row {
+  display: flex; flex-direction: column; gap: var(--s-1); width: 100%; min-width: 44px; min-height: 44px;
+  padding: var(--s-2); border: 2px solid var(--c-border); border-radius: var(--r-1);
+  background: var(--c-card); color: var(--c-navy); font: inherit; text-align: left; cursor: pointer; touch-action: manipulation;
+}
+.review-row:hover { background: var(--mine-bg); }
+.review-row:disabled { opacity: 0.55; cursor: not-allowed; }
+.review-row-heading { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1); max-width: 100%; }
+.review-row-heading .chip { max-width: 100%; overflow-wrap: anywhere; }
+.review-person { font-weight: 700; }
+.review-text { display: block; min-width: 0; max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-copy-area:empty { display: none; }
+.review-copy-area textarea { display: block; width: 100%; margin: var(--s-1) 0; white-space: pre-wrap; overflow-wrap: anywhere; resize: vertical; }
+
+/* 一人の記録。資料の並びは生徒の授業と共通にし、文章は読むだけで出す。 */
+.record-heading { margin-bottom: var(--s-3); overflow-wrap: anywhere; }
+.record-heading h1 { margin-bottom: var(--s-1); font-size: 24px; }
+.record-heading h2 { margin-bottom: var(--s-1); font-size: 22px; }
+.record-heading p:last-child { margin-bottom: 0; }
+.record-values { margin: 0; }
+.record-values dt { margin-bottom: var(--s-1); color: var(--mine); font-weight: 700; }
+.record-values dd { margin: 0 0 var(--s-3); padding: var(--s-2); border: 1px solid var(--c-line); border-radius: var(--r-1); background: var(--c-card); }
+.teacher-record-page .student-lesson-teacher { max-height: calc(100vh - 300px); max-height: calc(100dvh - 300px); }
+
+@media (orientation: portrait), (max-width: 899px) {
+  .review-columns { grid-template-columns: minmax(0, 1fr); }
+  .teacher-record-page .student-lesson-columns { grid-template-columns: minmax(0, 1fr); }
+  .teacher-record-page .student-lesson-teacher { max-height: none; overflow-y: visible; }
+}
