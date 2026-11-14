@@ -53,6 +53,39 @@ function setup(initial = null) {
 
 const writes = (calls) => calls.set.length + calls.update.length + calls.remove.length;
 
+test('listRecords: 2 人分を 1 回で読み、getRecord と同じ形で返す。書きこみをしない', async () => {
+  const first = { memo: 'メモ', level: 4, learned: '分かったこと', question: '', updatedAt: 10 };
+  const second = { memo: 5, level: '3', learned: 'あ'.repeat(2001), question: null, updatedAt: '20', extra: true };
+  const { repo, mem, calls } = setup({ records: { c1: { l1: { 's26-001': first, 's26-002': second } } } });
+  const before = mem.dump();
+  const result = await repo.listRecords('c1', 'l1');
+  assert.deepEqual(result, {
+    's26-001': first,
+    's26-002': { memo: '', level: null, learned: 'あ'.repeat(2000), question: '', updatedAt: 0 },
+  });
+  assert.deepEqual(calls.get, [['records/c1/l1']]);
+  assert.equal(calls.getPublic.length, 0);
+  assert.equal(writes(calls), 0);
+  assert.deepEqual(mem.dump(), before);
+  for (const sid of Object.keys(result)) assert.deepEqual(result[sid], await repo.getRecord('c1', 'l1', sid));
+});
+
+test('listRecords: 無ければ空。オブジェクトでない 1 人分は入れない', async () => {
+  const { repo } = setup();
+  assert.deepEqual(await repo.listRecords('c1', 'l1'), {});
+  for (const value of [null, undefined, [], [{ memo: '不正な一覧' }], 'x', 1]) {
+    assert.deepEqual(await createRepo({ get: async () => value }).listRecords('c1', 'l1'), {});
+  }
+  const all = { 's26-001': {}, 's26-002': 'x', 's26-003': null, 's26-004': [], 's26-005': 1 };
+  assert.deepEqual(await createRepo({ get: async () => all }).listRecords('c1', 'l1'), {
+    's26-001': { memo: '', level: null, learned: '', question: '', updatedAt: 0 },
+  });
+  for (const updatedAt of [undefined, null, NaN, Infinity]) {
+    const direct = createRepo({ get: async () => ({ 's26-001': { updatedAt } }) });
+    assert.equal((await direct.listRecords('c1', 'l1'))['s26-001'].updatedAt, 0);
+  }
+});
+
 test('saveRecord: 理解度なしは level を置かず、1 回の update で記録を保存し印を消す', async () => {
   const { repo, mem, calls } = setup({ marks: { 's26-001': { c1: { l1: 3, l2: 4 } } } });
   const record = { memo: 'm', level: null, learned: '', question: '' };
@@ -118,6 +151,8 @@ test('記録のメソッド: 不正な ID は通信の前に例外にする', as
     }
     await assert.rejects(repo.getMarks(bad, 'c1'), TypeError);
     await assert.rejects(repo.getMarks('s26-001', bad), TypeError);
+    await assert.rejects(repo.listRecords(bad, 'l1'), TypeError);
+    await assert.rejects(repo.listRecords('c1', bad), TypeError);
   }
   assert.equal(calls.get.length, 0);
   assert.equal(writes(calls), 0);
@@ -129,6 +164,7 @@ test('記録のメソッド: 通信エラーをそのまま伝え、保存の失
     const fail = async () => { throw error; };
     const repo = createRepo({ get: fail, update: fail });
     await assert.rejects(repo.getRecord('c1', 'l1', 's26-001'), (e) => e === error);
+    await assert.rejects(repo.listRecords('c1', 'l1'), (e) => e === error);
     await assert.rejects(repo.getMarks('s26-001', 'c1'), (e) => e === error);
     await assert.rejects(repo.saveRecord('c1', 'l1', 's26-001', { level: 3 }, 1000), (e) => e === error);
   }

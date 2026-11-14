@@ -153,6 +153,8 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       ['gen/s00-999 を書く', 'denied', () => net.set(`gen/${sid}`, r.generation + 1)],
       ['initialPw/s00-999 に文字を書く', 'denied', () => net.set(`initialPw/${sid}`, 'kakikae')],
       ['initialPw/s00-999 を消す', 'ok', () => net.remove(`initialPw/${sid}`)],
+      ['先生として records/（入っているクラス）/（授業）を読む', 'ok', () => teacherNet.get(`records/${inId}/${inLessonId}`)],
+      ['先生として marks/s00-999 を読む', 'ok', () => teacherNet.get(`marks/${sid}`)],
     ];
     for (const [label, expect, fn] of checks) {
       const got = await attempt(fn);

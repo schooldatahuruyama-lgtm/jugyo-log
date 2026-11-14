@@ -69,7 +69,13 @@ function fakeTeacherNet({ failUpdate = () => false, data = {}, answer = () => un
   const calls = [];
   return {
     calls,
-    async get(path, options) { calls.push(['get', path, options]); return path in data ? data[path] : null; },
+    async get(path, options) {
+      calls.push(['get', path, options]);
+      const a = answer('get', path) ?? 'ok';
+      if (a instanceof Error) throw a;
+      if (a === 'denied') throw new NetError('denied', '権限がありません');
+      return path in data ? data[path] : null;
+    },
     async set(path, value) {
       calls.push(['set', path, value]);
       const a = answer('set', path, value) ?? (path.startsWith('records/') ? 'denied' : 'ok');
@@ -248,9 +254,9 @@ function matchesRecordCheck(check, method, path, value) {
   return m === method && (p === null || p === path) && accepts(value, path);
 }
 
-const LABEL_COUNT = 44;
+const LABEL_COUNT = 46;
 
-test('runRulesProbe: 規則が正しければ、全部の行が pass: true（44 行）', async () => {
+test('runRulesProbe: 規則が正しければ、全部の行が pass: true（46 行）', async () => {
   const s = setup();
   const rows = await runRulesProbe(s.args);
   assert.equal(rows.length, LABEL_COUNT);
@@ -267,7 +273,31 @@ test('runRulesProbe: 規則が正しければ、全部の行が pass: true（44 
     'ok', 'ok', 'ok', 'ok', 'denied', 'denied', 'denied', 'denied', 'denied', 'denied',
     'denied', 'denied', 'denied', 'denied', 'denied',
     'denied', 'denied', 'denied', 'denied', 'denied', 'ok',
+    'ok', 'ok',
   ]);
+});
+
+test('runRulesProbe: 先生が記録一覧と印を読む 2 行は、拒否や通信失敗を合格にしない', async (t) => {
+  for (let i = 0; i < 2; i++) {
+    for (const got of ['ok', 'denied', 'error']) {
+      await t.test(`先生の読み取り ${i + 1}: ${got}`, async () => {
+        const s = setup({ overrideTeacher: (m, p, repo) => {
+          const inside = repo.state.lessons[0];
+          const path = i === 0 ? `records/${inside?.classId}/${inside?.id}` : 'marks/s00-999';
+          if (m !== 'get' || p !== path) return undefined;
+          return got === 'error' ? new NetError('network', 'つながりません') : got;
+        } });
+        const rows = await runRulesProbe(s.args);
+        assert.equal(rows.length, LABEL_COUNT);
+        const row = rows[44 + i];
+        assert.equal(row.expect, 'ok');
+        assert.equal(row.got, got);
+        assert.equal(row.pass, got === 'ok');
+        assert.equal(rows.filter((r) => !r.pass).length, got === 'ok' ? 0 : 1);
+        assertLessonCleanup(s);
+      });
+    }
+  }
 });
 
 test('runRulesProbe: 記録の追加 15 行は、期待と逆の答えや通信失敗を合格にしない', async (t) => {
@@ -409,6 +439,23 @@ test('runRulesProbe: 生徒の記録と印を先に消し、そのあと先生�
     && Object.entries(v).some(([p, x]) => p.startsWith('lessons/') && x === null));
   assert.ok(removeRecords >= 0 && removeRecords < removeLessons);
   assert.ok(Object.keys(s.events[removeRecords][3]).some((p) => p.startsWith('marks/')));
+});
+
+test('runRulesProbe: 先生の記録一覧と印の読み取りは、生徒が書いたあと・消す前に 1 回ずつ行う', async () => {
+  const s = recordCleanupSetup();
+  const rows = await runRulesProbe(s.args);
+  assert.ok(rows.slice(44, 46).every((r) => r.pass));
+  const write = s.events.findIndex(([who, m, , v]) => who === '生徒' && m === 'update'
+    && Object.entries(v).some(([p, x]) => p.startsWith('records/') && x?.level === 3));
+  const own = Object.keys(s.events[write][3]).find((p) => p.startsWith('records/'));
+  const readPaths = [own.split('/').slice(0, 3).join('/'), 'marks/s00-999'];
+  const cleanup = s.events.findIndex(([who, m, , v]) => who === '生徒' && m === 'update'
+    && Object.values(v).every((x) => x === null));
+  for (const path of readPaths) {
+    const reads = s.events.map(([who, m, p], i) => who === '先生' && m === 'get' && p === path ? i : -1).filter((i) => i >= 0);
+    assert.equal(reads.length, 1);
+    assert.ok(write < reads[0] && reads[0] < cleanup);
+  }
 });
 
 function oldRecordData(member = true) {

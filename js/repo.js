@@ -171,6 +171,14 @@ export function createRepo(net) {
       return { ...normalizeRecord(value, { max: CONFIG.recordTextMax }), updatedAt: isNum(value.updatedAt) ? value.updatedAt : 0 };
     },
 
+    // 先生が読む、授業 1 回分の全員の記録。書きかけも含め、1 回で読む
+    async listRecords(classId, lessonId) {
+      const value = await net.get(`records/${key(classId)}/${key(lessonId)}`);
+      return Object.fromEntries((isObj(value) ? Object.entries(value) : [])
+        .filter(([, v]) => isObj(v))
+        .map(([id, v]) => [id, { ...normalizeRecord(v, { max: CONFIG.recordTextMax }), updatedAt: isNum(v.updatedAt) ? v.updatedAt : 0 }]));
+    },
+
     // 記録と一覧の印を、1 回のルート update で一緒に変える
     async saveRecord(classId, lessonId, studentId, record, now) {
       const cid = key(classId);
