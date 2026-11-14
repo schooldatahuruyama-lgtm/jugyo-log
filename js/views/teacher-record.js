@@ -40,11 +40,10 @@ export function mount(root, ctx) {
   const content = el('div', { class: 'student-lesson-columns', hidden: true },
     el('section', { class: 'student-lesson-teacher', 'aria-labelledby': 'record-teacher-heading' },
       el('h2', { id: 'record-teacher-heading', text: '先生の資料' }), materialsArea),
-    el('div', { class: 'student-lesson-side' },
-      el('section', { class: 'student-lesson-mine', 'aria-labelledby': 'record-mine-heading' },
-        el('h2', { id: 'record-mine-heading', text: 'この生徒の記録' }), recordArea),
-      el('section', { class: 'student-lesson-mine', 'aria-labelledby': 'record-reflection-heading' },
-        el('h2', { id: 'record-reflection-heading', text: '振り返り' }), reflectionArea)));
+    el('section', { class: 'student-lesson-mine', 'aria-labelledby': 'record-mine-heading' },
+      el('h2', { id: 'record-mine-heading', text: 'この生徒の記録' }), recordArea),
+    el('section', { class: 'student-lesson-reflection', 'aria-labelledby': 'record-reflection-heading' },
+      el('h2', { id: 'record-reflection-heading', text: '振り返り' }), reflectionArea));
   root.replaceChildren(teacherNav(ctx, 'review'),
     el('main', { class: 'student-lesson-page teacher-record-page' },
       el('div', { class: 'page-actions' },
@@ -65,9 +64,12 @@ export function mount(root, ctx) {
         el('dt', { text: '写真・PDF' }), el('dd', {}, attachments.node)));
     reflectionArea.replaceChildren(
       el('dl', { class: 'record-values' },
-        el('dt', { text: '理解度' }), el('dd', { text: levelLabel(record.level) }),
-        el('dt', { text: '分かったこと・学んだこと' }), el('dd', { class: 'review-text', text: text(record.learned) }),
-        el('dt', { text: '疑問・まだ分からないこと' }), el('dd', { class: 'review-text', text: text(record.question) })),
+        el('dt', { text: '理解度' }), el('dd', { text: levelLabel(record.level) })),
+      el('div', { class: 'student-reflection-fields' },
+        el('dl', { class: 'record-values' },
+          el('dt', { text: '分かったこと・学んだこと' }), el('dd', { class: 'review-text', text: text(record.learned) })),
+        el('dl', { class: 'record-values' },
+          el('dt', { text: '疑問・まだ分からないこと' }), el('dd', { class: 'review-text', text: text(record.question) }))),
       ...(updated ? [el('p', { class: 'small', text: `最後に書いた日時：${updated}` })] : []));
   }
 
