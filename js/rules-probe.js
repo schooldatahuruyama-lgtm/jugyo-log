@@ -1,5 +1,5 @@
 // 規則の確認: 本物の Firebase の規則が、生徒に読ませてはいけないものを読ませていないかを確かめる
-// （docs/superpowers/specs/2026-11-13-jugyo-log-1a-data.md の 4 章。1b-1 までの範囲）。
+// （docs/superpowers/specs/2026-11-13-jugyo-log-1a-data.md の 4 章。1b-1 と重要用語の範囲）。
 // 通信の道具は引数で受け取る。画面や fetch は知らない。
 // 規則そのものを試すので、データベースの場所をここに直接書く（repo.js の例外。確かめる場所の一覧）。
 // パスワードとトークンは、結果・console・例外の文に出さない。
@@ -106,6 +106,9 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
     const attachment = { type: 'image', fileId: 'probe', bytes: 42, addedAt: now() };
     const ownThumbs = `recThumbs/${inId}/${inLessonId}/${sid}`;
     const otherThumbs = `recThumbs/${inId}/${inLessonId}/s00-998`;
+    const ownTerms = `terms/${sid}/${inId}`;
+    const writeTerm = (slot, text) => trackWrite({ [ownTerms]: null },
+      () => net.set(`${ownTerms}/${inLessonId}/${slot}`, text));
     const writeAttachment = (slot, value) => {
       const path = `${ownRecord}/attachments/${slot}`;
       return trackWrite({ [path]: null }, () => net.set(path, value));
@@ -166,6 +169,12 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       ['すでにある attachments/a1 を同じ fileId で書き直す', 'ok', () => writeAttachment('a1', { ...attachment, bytes: 43 })],
       ['すでにある attachments/a1 を別の fileId で書きかえる', 'denied', () => writeAttachment('a1', { ...attachment, fileId: 'probe-changed' })],
       ['自分の recThumbs に文字を直接書く', 'denied', () => trackWrite({ [ownThumbs]: null }, () => net.set(ownThumbs, PROBE_THUMB))],
+      ['自分の terms/t1 を書く', 'ok', () => writeTerm('t1', '光の反射')],
+      ['自分の terms/（入っているクラス）を読む', 'ok', () => net.get(ownTerms)],
+      ['自分の terms/t9 を書く', 'denied', () => writeTerm('t9', '鏡の実験')],
+      ['21 文字の用語を terms/t1 に書く', 'denied', () => writeTerm('t1', 'あ'.repeat(21))],
+      ['ほかの生徒（s00-998）の terms を読む', 'denied', () => net.get('terms/s00-998')],
+      ['lessons/（入っているクラス）/（授業）/terms/（用語）を書く', 'denied', () => net.set(`lessons/${inId}/${inLessonId}/terms/${materialId}`, '光の反射')],
       ['classes/（入っているクラス）/name を書く', 'denied', () => net.set(`classes/${inId}/name`, '書きかえ')],
       ['memberOf/s00-999/（入っていないクラス）に true を書く', 'denied', () => net.set(`memberOf/${sid}/${outId}`, true)],
       ['accounts/（自分の uid）を別の ID に書きかえる', 'denied', () => net.set(`accounts/${uid}`, 's00-998')],
@@ -184,11 +193,11 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
     rows.push(failRow(PREPARE_LABEL));
   }
 
-  // 3. 生徒として記録・印・小さい画像を消してから、先生として片付ける（途中で失敗しても）。
+  // 3. 生徒として記録・印・小さい画像・用語を消してから、先生として片付ける（途中で失敗しても）。
   // students/s00-999 と gen/s00-999 は残す。
   // (a) 分かっている場所の削除と (b) uid を読み直しての accounts の削除は、別々に試みる
   const okRecords = await removeRecords();
-  const okA = await removeKnown();
+  const okA = await removeKnown(okRecords);
   const okB = await removeAccount();
   if (leftoversFailed || !okRecords || !okA || !okB) rows.push(failRow(CLEANUP_LABEL));
   return rows;
@@ -248,7 +257,7 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       // lessons は授業 1 件から下だけを書ける規則なので、クラスの場所をまるごと消さない
       const lessons = await teacherNet.get(`lessons/${c.id}`, { shallow: true });
       const lessonIds = lessons !== null && typeof lessons === 'object' && !Array.isArray(lessons) ? Object.keys(lessons) : [];
-      const studentPatch = { [`marks/${sid}/${c.id}`]: null };
+      const studentPatch = { [`marks/${sid}/${c.id}`]: null, [`terms/${sid}/${c.id}`]: null };
       for (const lessonId of lessonIds) {
         patch[`lessons/${c.id}/${lessonId}`] = null;
         studentPatch[`records/${c.id}/${lessonId}/${sid}`] = null;
@@ -258,16 +267,23 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
         && await attempt(() => studentNet.update('', studentPatch)) !== 'ok') recordsRemoved = false;
       delete patch[`members/${c.id}/${sid}`]; // 親（members/<ID>）を消すので、子の指定は外す（同じ update で親子を並べない）
     }
+    // クラス本体が先に消えた場合も、所属が残っているうちに自分の用語を片付ける。
+    for (const id of ofIds) {
+      if (of[id] === true && !old.some((c) => c.id === id)
+        && await attempt(() => studentNet.update('', { [`terms/${sid}/${id}`]: null })) !== 'ok') recordsRemoved = false;
+    }
     for (const u of units) patch[`units/${u.id}`] = null;
-    await teacherNet.update('', patch);
+    // 消せなかった記録を次の回に片付けられるよう、クラス・授業・所属を残す。
     if (!recordsRemoved) throw new NetError('denied', '前回の記録を片付けられませんでした');
+    await teacherNet.update('', patch);
   }
 
   // (a) 確認用のクラス 2 つ・授業・資料・単元・members・memberOf・initialPw を消し、gen を戻す。済めば true
-  async function removeKnown() {
+  async function removeKnown(recordsRemoved) {
     try {
       const patch = {};
-      if (classesMade) {
+      // 生徒の片付けに失敗したときは、次の回に必要なクラス・授業・所属を残す。
+      if (classesMade && recordsRemoved) {
         for (const { classId: id, lessonId } of targets) {
           patch[`classes/${id}`] = null;
           patch[`members/${id}`] = null;

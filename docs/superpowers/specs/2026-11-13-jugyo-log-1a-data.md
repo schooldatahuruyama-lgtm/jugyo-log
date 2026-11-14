@@ -31,7 +31,7 @@
 
 ## 3. Realtime Database の形
 
-ID（`classId`・`unitId`・`lessonId`・`materialId`）は、端末で作る 12 文字の英数字。生徒 ID は `s<入学年度の下 2 桁>-<3 桁の連番>`（例 `s26-017`）。
+ID（`classId`・`unitId`・`lessonId`・`materialId`・`termId`）は、端末で作る 12 文字の英数字。生徒 ID は `s<入学年度の下 2 桁>-<3 桁の連番>`（例 `s26-017`）。
 
 ```
 teacherList/<uid>: true                      先生の一覧（コンソールでだけ書く）
@@ -44,7 +44,9 @@ classes/<classId>: { year, name, createdAt } year は数（例 2026）
 members/<classId>/<studentId>: number        出席番号
 memberOf/<studentId>/<classId>: true         members の逆引き（規則と、生徒の授業一覧で使う）
 units/<unitId>: { year, name, order }                                              … 1a-2
-lessons/<classId>/<lessonId>: { date, title, unitId, materials, createdAt, updatedAt } … 1a-2
+lessons/<classId>/<lessonId>: { date, title, unitId, materials, terms, createdAt, updatedAt } … 1a-2・重要用語
+lessons/<classId>/<lessonId>/terms/<termId>: "光の反射"   先生の重要用語
+terms/<studentId>/<classId>/<lessonId>/<t1〜t8>: "鏡の実験"   生徒が足した用語
 thumbs/<classId>/<lessonId>/<materialId>: "<data URL>"   一覧用の小さい画像          … 1a-2
 records/<classId>/<lessonId>/<studentId>: { memo, level, learned, question, updatedAt, attachments } … 1a-3・1b-1
 records/<classId>/<lessonId>/<studentId>/attachments/<a1〜a6>: { type, fileId, bytes, addedAt } … 1b-1
@@ -54,6 +56,9 @@ check/…                                      段階 0 の確認用（そのま
 ```
 
 - `lessons/.../materials/<materialId>`: `{ kind: 'board'|'handout', type: 'image'|'pdf', fileId, name, order, bytes }`。`fileId` は Drive のファイル ID。
+- 先生の重要用語は `lessons` の中に置き、1 授業につき 8 個まで、1 つ 20 文字まで。追加・削除は、用語 1 つと `updatedAt` を 1 回の update で変える。授業の編集・資料の追加や削除では `terms` を残す。
+- 生徒が足した用語は `terms` に生徒 ID ごとにまとめ、`t1`〜`t8` に 1 つ 20 文字まで置く。`terms/<studentId>/<classId>` を 1 回読むと、そのクラスの全授業の自分の用語がそろう。本人と先生だけが読める。
+- 用語は前後の空白を取り、中の改行・タブ・連続した空白を 1 つの空白にしてから文字数を確かめる。検索と重複の比較では NFKC・小文字・ひらがなにそろえ、空白を除く。表示は整えた文字のまま。先生の用語を先にし、同じ用語は最初の 1 つだけ出す。重なっている自分の用語も保存した値は消さない。
 - `date` は `'YYYY-MM-DD'`。
 - 理解度の数: 4 よく分かった／3 分かった／2 あまり分からなかった／1 全然分からなかった。選んでいなければ項目を置かない。
 - `members` と `memberOf` は、必ず 1 回の書きこみ（ルートへの複数パスの update）で一緒に変える。
@@ -89,13 +94,17 @@ check/…                                      段階 0 の確認用（そのま
 | `records/$classId` | 先生。`$lessonId/$sid` は本人も | 本人だけ（その組の一員で、その授業があるとき）。先生は書けない |
 | `recThumbs/$classId` | 先生。`$lessonId/$sid` は本人も | 本人だけ（その組の一員で、その授業があるとき）。`records` と同じ式。先生は書けない |
 | `marks/$sid` | 先生と本人 | 本人だけ（その組の一員）。1〜4 の数 |
+| `terms/$sid` | 先生と本人（`marks/$sid` と同じ式） | `$classId` から下に本人だけ（その組の一員。`marks/$sid/$classId` と同じ式）。先生は書けない |
 | `check` | 段階 0 のまま | 段階 0 のまま |
 
 - `records` の中身は、`memo`・`learned`・`question` が 2000 文字までの文字、`level` が 1〜4 の整数、`updatedAt` が数。1b-1 で `attachments` を追加する。それ以外の項目は、今までどおり `$other: false` で受けつけない。
 - `attachments` は子を持つ目録。`$aid` は `/^a[1-6]$/` に合うものだけで、7 個目の置き場所は受けつけない。各項目には `type`（`'image'` または `'pdf'`）・`fileId`（1〜200 文字の文字）・`bytes`（0 以上の数）・`addedAt`（数）の 4 つを必須とし、ほかの項目は受けつけない。同じ置き場所への再送は置きかえになる。呼ぶ側は、保存済みと送信中の置き場所を数え、空きだけを使う。
 - すでに目録がある置き場所への書きこみは、同じ `fileId` のときだけ受けつける（`!data.exists() || newData.child('fileId').val() === data.child('fileId').val()`）。別のファイルに入れかえるには先に消す。`null` による削除は今までどおりできる。
 - `recThumbs` の `$aid` も `/^a[1-6]$/` に合うものだけ。値は 20000 文字までの文字。`$classId` の読み取りは `teacherList` で先生を確かめ、`$lessonId/$sid` の読み取りは `accounts` で本人を確かめる。書きこみは本人に限り、`memberOf` の所属と `lessons` の授業の存在も確かめる。
-- 生徒が自分で書きかえられるのは、`records`・`recThumbs`・`marks` の自分の分と、`initialPw` の自分の分を消すことだけ。`accounts`・`memberOf`・`lessons` は先生しか書けないので、規則と GAS の判断の根拠にしてよい。添付の `fileId` は本人が書きかえられるため、ファイルを開けるかどうかの根拠にしない。GAS が保存時に付けた持ち主と、認証した本人で判断する。
+- `terms/$sid/$classId` は `newData.hasChildren()`、その下の `$lessonId` は `newData.hasChildren() && root.child('lessons').child($classId).child($lessonId).exists()` で、実在する授業の用語だけを受けつける。`$tid` は `$tid.matches(/^t[1-8]$/) && newData.isString() && newData.val().length >= 1 && newData.val().length <= 20`。削除は `null` で行う。
+- 先生の用語は既存の `lessons` の規則をそのまま使う。先生だけが書け、その組の一員が読める。先生の用語の個数と文字数は呼ぶ側で確かめる。公開読み取り（`.read: true`）は引き続き `check/ping` と `gen/$sid` だけ。
+- 規則の確認は用語の 6 行を加えて 63 行にする。確認用の生徒として用語の書きこみ・読み取りを試し、置き場所 `t9`・21 文字・ほかの生徒の読み取り・先生の用語への書きこみは拒否を確かめる。今回と前回の残りの片付けでは、所属を消す前に生徒として `terms/<自分>/<入っているクラス>` を消す。
+- 生徒が自分で書きかえられるのは、`records`・`recThumbs`・`marks`・`terms` の自分の分と、`initialPw` の自分の分を消すことだけ。`accounts`・`memberOf`・`lessons` は先生しか書けないので、規則と GAS の判断の根拠にしてよい。添付の `fileId` は本人が書きかえられるため、ファイルを開けるかどうかの根拠にしない。GAS が保存時に付けた持ち主と、認証した本人で判断する。
 - パスワードを出し直すと、古いアカウントの `accounts/<uid>` が消えるので、古いアカウントは何も読めなくなる。
 - メール／パスワードのアカウントは、公開している API キーでだれでも作れる。作っただけのアカウントには `accounts` の対応がないので、`gen` と `check` のほかは何も読めない。
 

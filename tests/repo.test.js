@@ -53,6 +53,113 @@ function setup(initial = null) {
 
 const writes = (calls) => calls.set.length + calls.update.length + calls.remove.length;
 
+test('先生の用語: 1 回の update で追加・削除と日時を変え、資料とほかの用語を残す', async () => {
+  const materials = { m1: { fileId: 'F' } };
+  const lesson = { title: '光', createdAt: 10, updatedAt: 20, materials, terms: { keep: '鏡' } };
+  const { repo, mem, calls } = setup({ lessons: { c1: { l1: lesson } } });
+  await repo.addLessonTerm('c1', 'l1', 'term00000001', '光の反射', 100);
+  assert.equal(writes(calls), 1);
+  assert.deepEqual(calls.update[0], ['', {
+    'lessons/c1/l1/terms/term00000001': '光の反射', 'lessons/c1/l1/updatedAt': 100,
+  }]);
+  assert.deepEqual(await mem.get('lessons/c1/l1'), { ...lesson, updatedAt: 100, terms: { keep: '鏡', term00000001: '光の反射' } });
+  await repo.removeLessonTerm('c1', 'l1', 'term00000001', 200);
+  assert.equal(writes(calls), 2);
+  assert.deepEqual(calls.update[1], ['', {
+    'lessons/c1/l1/terms/term00000001': null, 'lessons/c1/l1/updatedAt': 200,
+  }]);
+  assert.deepEqual(await mem.get('lessons/c1/l1'), { ...lesson, updatedAt: 200 });
+});
+
+test('授業と資料の編集: updateLesson・addMaterial・setMaterialOrders・removeMaterial は用語を残す', async () => {
+  const terms = { term00000001: '光の反射' };
+  const { repo, mem } = setup({ lessons: { c1: { l1: { title: '光', terms } } } });
+  await repo.updateLesson('c1', 'l1', { date: '2026-11-15', title: '反射', unitId: '' }, 100);
+  assert.deepEqual(await mem.get('lessons/c1/l1/terms'), terms);
+  await repo.addMaterial([{ classId: 'c1', lessonId: 'l1', order: 0 }], 'm1', { fileId: 'F' }, '画像', 200);
+  assert.deepEqual(await mem.get('lessons/c1/l1/terms'), terms);
+  await repo.setMaterialOrders('c1', 'l1', { m1: 1 }, 300);
+  assert.deepEqual(await mem.get('lessons/c1/l1/terms'), terms);
+  await repo.removeMaterial('c1', 'l1', 'm1', 400);
+  assert.deepEqual(await mem.get('lessons/c1/l1/terms'), terms);
+});
+
+test('getLesson・listLessons: 用語は生のオブジェクト、無いものや型違いは空。listAllLessons は生のまま', async () => {
+  const terms = { term00000001: ' ＡＢＣ ', bad: 3 };
+  const lessons = { c1: { l1: { terms }, l2: { title: '光' }, l3: { terms: ['光'] }, l4: { terms: '光' } } };
+  const { repo } = setup({ lessons });
+  assert.deepEqual((await repo.getLesson('c1', 'l1')).terms, terms);
+  for (const lesson of await repo.listLessons('c1')) {
+    assert.deepEqual(lesson.terms, lesson.id === 'l1' ? terms : {});
+    assert.deepEqual((await repo.getLesson('c1', lesson.id)).terms, lesson.terms);
+  }
+  assert.deepEqual(await repo.listAllLessons(), lessons);
+});
+
+test('getMyTerms・getMyLessonTerms: 1 回で読み、t1〜t8 の文字だけを生のまま返す', async () => {
+  const value = { t8: '鏡', t1: ' ＡＢＣ ', t2: '', t3: 3, t4: {}, t9: '外', t01: '外', 't1\n': '外' };
+  const { repo, calls } = setup({ terms: { 's00-001': { c1: { l1: value, l2: { t2: '光' }, bad: '不正', array: ['光'] } } } });
+  const expected = { t8: '鏡', t1: ' ＡＢＣ ', t2: '' };
+  assert.deepEqual(await repo.getMyTerms('s00-001', 'c1'), { l1: expected, l2: { t2: '光' } });
+  assert.deepEqual(calls.get, [['terms/s00-001/c1']]);
+  assert.deepEqual(await repo.getMyLessonTerms('s00-001', 'c1', 'l1'), expected);
+  assert.deepEqual(calls.get.at(-1), ['terms/s00-001/c1/l1']);
+  assert.equal(writes(calls), 0);
+  for (const value of [null, undefined, 3, '文字', [], ['光']]) {
+    const direct = createRepo({ get: async () => value });
+    assert.deepEqual(await direct.getMyTerms('s00-001', 'c1'), {});
+    assert.deepEqual(await direct.getMyLessonTerms('s00-001', 'c1', 'l1'), {});
+  }
+});
+
+test('setMyTerm・removeMyTerm: 指定の置き場所だけを書き、ほかの授業・用語を残す', async () => {
+  const { repo, mem, calls } = setup({ terms: { 's00-001': { c1: { l1: { t2: '鏡' }, l2: { t1: '光' } } } } });
+  await repo.setMyTerm('s00-001', 'c1', 'l1', 't1', '光の反射');
+  assert.deepEqual(calls.set, [['terms/s00-001/c1/l1/t1', '光の反射']]);
+  assert.equal(writes(calls), 1);
+  assert.deepEqual(await mem.get('terms/s00-001/c1/l1'), { t1: '光の反射', t2: '鏡' });
+  await repo.removeMyTerm('s00-001', 'c1', 'l1', 't1');
+  assert.deepEqual(calls.remove, [['terms/s00-001/c1/l1/t1']]);
+  assert.equal(writes(calls), 2);
+  assert.deepEqual(await mem.get('terms/s00-001/c1'), { l1: { t2: '鏡' }, l2: { t1: '光' } });
+});
+
+test('用語の通信: 不正な置き場所・ID は通信の前に断る', async () => {
+  const { repo, calls } = setup();
+  for (const slot of ['t9', 't0', 't01', 't1\n', 't1/x', '', null, 1, ['t1']]) {
+    await assert.rejects(repo.setMyTerm('s00-001', 'c1', 'l1', slot, '光'), TypeError);
+    await assert.rejects(repo.removeMyTerm('s00-001', 'c1', 'l1', slot), TypeError);
+  }
+  for (let i = 0; i < 3; i++) {
+    const ids = ['c1', 'l1', 'term00000001'];
+    ids[i] = 'bad/key';
+    await assert.rejects(repo.addLessonTerm(...ids, '光', 100), TypeError);
+    await assert.rejects(repo.removeLessonTerm(...ids, 100), TypeError);
+    const own = ['s00-001', 'c1', 'l1'];
+    own[i] = 'bad/key';
+    await assert.rejects(repo.getMyLessonTerms(...own), TypeError);
+    await assert.rejects(repo.setMyTerm(...own, 't1', '光'), TypeError);
+    await assert.rejects(repo.removeMyTerm(...own, 't1'), TypeError);
+    if (i < 2) await assert.rejects(repo.getMyTerms(...own.slice(0, 2)), TypeError);
+  }
+  assert.equal(writes(calls), 0);
+  assert.equal(calls.get.length, 0);
+});
+
+test('用語の通信: NetError はそのまま伝える', async () => {
+  for (const code of ['network', 'denied']) {
+    const error = new NetError(code);
+    const fail = async () => { throw error; };
+    const repo = createRepo({ get: fail, set: fail, update: fail, remove: fail });
+    await assert.rejects(repo.addLessonTerm('c1', 'l1', 'term00000001', '光', 100), (e) => e === error);
+    await assert.rejects(repo.removeLessonTerm('c1', 'l1', 'term00000001', 100), (e) => e === error);
+    await assert.rejects(repo.getMyTerms('s00-001', 'c1'), (e) => e === error);
+    await assert.rejects(repo.getMyLessonTerms('s00-001', 'c1', 'l1'), (e) => e === error);
+    await assert.rejects(repo.setMyTerm('s00-001', 'c1', 'l1', 't1', '光'), (e) => e === error);
+    await assert.rejects(repo.removeMyTerm('s00-001', 'c1', 'l1', 't1'), (e) => e === error);
+  }
+});
+
 test('listRecords: 2 人分を 1 回で読み、getRecord と同じ形で返す。書きこみをしない', async () => {
   const first = { memo: 'メモ', level: 4, learned: '分かったこと', question: '', updatedAt: 10 };
   const second = { memo: 5, level: '3', learned: 'あ'.repeat(2001), question: null, updatedAt: '20', extra: true };
@@ -475,8 +582,8 @@ test('listLessons・getLesson: 日付・作成日時の新しい順で、欠け�
   } } });
   const list = await repo.listLessons('c1');
   assert.deepEqual(list.map((x) => x.id), ['l3', 'l2', 'l1', 'bad']);
-  assert.deepEqual(list[2], { id: 'l1', classId: 'c1', date: '2026-11-11', title: '電流', unitId: 'u1', materials, createdAt: 900, updatedAt: 1000 });
-  assert.deepEqual(list[3], { id: 'bad', classId: 'c1', date: '', title: '', unitId: '', materials: {}, createdAt: 0, updatedAt: 0 });
+  assert.deepEqual(list[2], { id: 'l1', classId: 'c1', date: '2026-11-11', title: '電流', unitId: 'u1', materials, terms: {}, createdAt: 900, updatedAt: 1000 });
+  assert.deepEqual(list[3], { id: 'bad', classId: 'c1', date: '', title: '', unitId: '', materials: {}, terms: {}, createdAt: 0, updatedAt: 0 });
   assert.deepEqual(list[0].materials, {});
   assert.deepEqual(await repo.getLesson('c1', 'l1'), list[2]);
   assert.equal(await repo.getLesson('c1', 'missing'), null);

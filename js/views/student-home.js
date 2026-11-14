@@ -2,6 +2,7 @@
 import { el, confirmDialog, toast } from '../ui.js';
 import { CONFIG } from '../config.js';
 import { sortUnits } from '../lesson-logic.js';
+import { cleanTerm, termKey, matchLessons, frequentTerms } from '../term-logic.js';
 import { classLabel, groupByDate, groupByUnit, todoLessons } from '../student-list-logic.js';
 import { tileMark } from '../record-logic.js';
 import { pendingLessons, resendDrafts } from '../record-flow.js';
@@ -15,6 +16,10 @@ export function mount(root, ctx) {
   let lessons = [];
   let units = [];
   let marks = null;
+  let myTerms = {};
+  let termsReady = false;
+  let query = '';
+  let searchTimer = null;
   let unitsReady = false;
   let ready = false;
   let order = 'date';
@@ -26,6 +31,8 @@ export function mount(root, ctx) {
   let resendStarted = false;
   let resending = null;
   const studentId = ctx.session.studentId;
+  const setTimer = ctx.timers?.setTimeout || setTimeout;
+  const clearTimer = ctx.timers?.clearTimeout || clearTimeout;
   const sub = el('span', { class: 'topbar-sub' });
   const message = el('div', { class: 'page-message', 'aria-live': 'polite' });
   const pendingArea = el('div', { class: 'pending-area', role: 'status' });
@@ -43,6 +50,19 @@ export function mount(root, ctx) {
   const filters = el('div', { class: 'student-filters', hidden: true },
     el('label', { class: 'field' }, el('span', { class: 'label', text: '年度' }), yearSelect),
     el('div', { class: 'student-order', role: 'group', 'aria-label': '授業の並べ方' }, dateButton, unitButton));
+  const searchInput = el('input', { id: 'lesson-term-search', type: 'search', placeholder: '用語でさがす（例: 反射）',
+    oninput: () => {
+      searchClear.hidden = searchInput.value === '';
+      clearTimer(searchTimer);
+      searchTimer = setTimer(applySearch, 200);
+    } });
+  const searchClear = el('button', { type: 'button', class: 'btn', text: '消す', hidden: true,
+    onclick: () => chooseSearch('') });
+  const searchStatus = el('p', { class: 'term-message', role: 'status', 'aria-live': 'polite' });
+  const frequentArea = el('div', { class: 'term-list term-frequent', hidden: true });
+  const searchArea = el('section', { class: 'term-search', hidden: true, 'aria-label': '用語でさがす' },
+    el('label', { class: 'label', for: 'lesson-term-search', text: '用語でさがす' }),
+    el('div', { class: 'term-input-row' }, searchInput, searchClear), searchStatus, frequentArea);
   const todoMessage = el('p');
   const todoButton = el('button', { type: 'button', class: 'btn', 'aria-pressed': 'false',
     text: 'まだの授業だけ見る', onclick: () => {
@@ -90,7 +110,7 @@ export function mount(root, ctx) {
       el('button', { type: 'button', class: 'btn', text: 'ログアウト', onclick: logout })));
 
   root.replaceChildren(el('div', { class: 'student-page' }, el('div', { class: 'student-home-page' },
-    bar, el('main', { class: 'page-main' }, filters, todoArea, message, pendingArea, listArea))));
+    bar, el('main', { class: 'page-main' }, filters, searchArea, todoArea, message, pendingArea, listArea))));
 
   // 再送を待たずに移り、移ったあとの応答では一覧を描き直さない。
   ctx.setLeaveGuard(() => {
@@ -105,6 +125,8 @@ export function mount(root, ctx) {
     dateButton.disabled = busy || !ready;
     unitButton.disabled = busy || !ready;
     todoButton.disabled = busy || !ready;
+    searchInput.disabled = busy || !ready;
+    for (const button of searchArea.querySelectorAll('button')) button.disabled = busy || !ready;
     dateButton.setAttribute('aria-pressed', String(order === 'date'));
     unitButton.setAttribute('aria-pressed', String(order === 'unit'));
     for (const button of bar.querySelectorAll('button')) button.disabled = busy;
@@ -135,6 +157,30 @@ export function mount(root, ctx) {
     renderLessons();
   }
 
+  function applySearch() {
+    searchTimer = null;
+    if (!alive || leaving || !ready) return;
+    query = cleanTerm(searchInput.value);
+    renderLessons();
+  }
+
+  function chooseSearch(text) {
+    if (!alive || !ready || navigating || signingOut) return;
+    clearTimer(searchTimer);
+    searchInput.value = text;
+    searchClear.hidden = text === '';
+    applySearch();
+    searchInput.focus();
+  }
+
+  function renderFrequent() {
+    const texts = frequentTerms(lessons, myTerms, CONFIG.frequentTerms);
+    frequentArea.hidden = texts.length === 0;
+    frequentArea.replaceChildren(...(texts.length ? [el('span', { class: 'small', text: 'よく使う用語:' }),
+      ...texts.map((text) => el('button', { type: 'button', class: 'term-pill', text, onclick: () => chooseSearch(text) })),
+    ] : []));
+  }
+
   function renderPending() {
     const count = ctx.drafts.list(studentId).length;
     pendingArea.replaceChildren(...(count > 0 ? [el('p', {
@@ -146,7 +192,7 @@ export function mount(root, ctx) {
 
   function renderPartial() {
     message.replaceChildren();
-    if (marks === null || !unitsReady) message.append(
+    if (marks === null || !unitsReady || !termsReady) message.append(
       el('p', { class: 'notice', text: '一部を読みこめませんでした。' }),
       el('button', { type: 'button', class: 'btn', text: 'もう一度', onclick: load }));
   }
@@ -161,19 +207,25 @@ export function mount(root, ctx) {
       el('strong', { text: `${todo.length} つ` }), el('span', { text: 'あります。' }));
     todoButton.textContent = onlyTodo ? '全部の授業を見る' : 'まだの授業だけ見る';
     todoButton.setAttribute('aria-pressed', String(onlyTodo));
+    searchArea.hidden = lessons.length === 0;
+    searchStatus.textContent = '';
     if (lessons.length === 0) {
       listArea.replaceChildren(el('p', { class: 'home-empty', text: 'まだ授業がありません。' }));
       return;
     }
     const classId = current.id;
     const pending = pendingLessons(ctx.drafts, studentId, classId);
-    const visible = onlyTodo ? todo : lessons;
+    const visible = matchLessons(onlyTodo ? todo : lessons, myTerms, query);
+    if (termKey(query)) searchStatus.textContent = visible.length
+      ? `『${query}』の授業が ${visible.length} つ見つかりました。`
+      : `『${query}』の授業は見つかりませんでした。`;
     const groups = order === 'date' ? groupByDate(visible, today) : groupByUnit(visible, units);
     listArea.replaceChildren(...groups.map((group) => el('section', { class: 'lesson-group' },
       el('h2', { text: group.label }),
       el('div', { class: 'lesson-grid' }, group.lessons.map((lesson) => {
         const tile = lessonTile({
           lesson,
+          myTerms: myTerms[lesson.id], query,
           mark: marks !== null ? tileMark(marks[lesson.id]) : undefined,
           pending: pending.has(lesson.id),
           loadThumbs: () => ctx.thumbs.load(lesson),
@@ -223,6 +275,9 @@ export function mount(root, ctx) {
     const stale = () => !alive || leaving || id !== loadId;
     ready = false;
     todoArea.hidden = true;
+    searchArea.hidden = true;
+    clearTimer(searchTimer);
+    searchTimer = null;
     clearTiles();
     message.replaceChildren();
     listArea.replaceChildren(el('p', { class: 'loading', role: 'status', text: '読みこんでいます…' }));
@@ -243,8 +298,9 @@ export function mount(root, ctx) {
       sub.textContent = current.number === null ? current.name : `${current.name}　出席番号 ${current.number}`;
       yearSelect.value = current.id;
       filters.hidden = false;
-      const [lessonResult, markResult, unitResult] = await Promise.allSettled([
+      const [lessonResult, markResult, unitResult, termResult] = await Promise.allSettled([
         ctx.repo.listLessons(current.id), ctx.repo.getMarks(studentId, current.id), ctx.repo.listUnits(current.year),
+        ctx.repo.getMyTerms(studentId, current.id),
       ]);
       if (stale()) return;
       if (lessonResult.status === 'rejected') throw lessonResult.reason;
@@ -252,8 +308,12 @@ export function mount(root, ctx) {
       marks = markResult.status === 'fulfilled' ? markResult.value : null;
       unitsReady = unitResult.status === 'fulfilled';
       units = unitsReady ? sortUnits(unitResult.value) : [];
+      termsReady = termResult.status === 'fulfilled';
+      myTerms = termsReady ? termResult.value : {};
       ready = true;
+      query = cleanTerm(searchInput.value);
       renderPartial();
+      renderFrequent();
       renderLessons();
       renderPending();
       startResend();
@@ -272,6 +332,7 @@ export function mount(root, ctx) {
   return () => {
     alive = false;
     loadId += 1;
+    clearTimer(searchTimer);
     clearTiles();
   };
 }

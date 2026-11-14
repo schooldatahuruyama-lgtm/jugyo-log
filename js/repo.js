@@ -23,6 +23,16 @@ function attachmentSlot(slot) {
   return slot;
 }
 
+function termSlot(slot) {
+  if (!CONFIG.myTermSlots.includes(slot)) throw new TypeError('用語の置き場所が正しくありません。');
+  return slot;
+}
+
+function toMyTerms(value) {
+  return Object.fromEntries((isObj(value) ? Object.entries(value) : [])
+    .filter(([slot, text]) => CONFIG.myTermSlots.includes(slot) && typeof text === 'string'));
+}
+
 // 読んだ値を { キー: 値 } の形にそろえる（null や数などは空のオブジェクトにする）。
 // 実物は、キーが数字だけだと配列で返すことがあるので、配列もオブジェクトに戻す
 function entriesOf(v) {
@@ -51,7 +61,7 @@ function toUnit(id, v) {
   };
 }
 
-// 資料の目録は生のオブジェクトで返す（表示のための選別は lesson-logic で行う）
+// 資料の目録と用語は生のオブジェクトで返す（表示のための選別はそれぞれの logic で行う）
 function toLesson(classId, id, v) {
   const l = isObj(v) ? v : {};
   return {
@@ -61,6 +71,7 @@ function toLesson(classId, id, v) {
     title: typeof l.title === 'string' ? l.title : '',
     unitId: typeof l.unitId === 'string' ? l.unitId : '',
     materials: isObj(l.materials) ? l.materials : {},
+    terms: isObj(l.terms) ? l.terms : {},
     createdAt: isNum(l.createdAt) ? l.createdAt : 0,
     updatedAt: isNum(l.updatedAt) ? l.updatedAt : 0,
   };
@@ -159,7 +170,7 @@ export function createRepo(net) {
       await net.update('', patch);
     },
 
-    // 資料と作成日時は残し、編集した項目だけを書く。空の単元は外す
+    // 資料・用語・作成日時は残し、編集した項目だけを書く。空の単元は外す
     async updateLesson(classId, lessonId, { date, title, unitId }, now) {
       const path = `lessons/${key(classId)}/${key(lessonId)}`;
       await net.update('', {
@@ -168,6 +179,36 @@ export function createRepo(net) {
         [`${path}/unitId`]: unitId || null,
         [`${path}/updatedAt`]: now,
       });
+    },
+
+    async addLessonTerm(classId, lessonId, termId, text, now) {
+      const path = `lessons/${key(classId)}/${key(lessonId)}`;
+      await net.update('', { [`${path}/terms/${key(termId)}`]: text, [`${path}/updatedAt`]: now });
+    },
+
+    async removeLessonTerm(classId, lessonId, termId, now) {
+      const path = `lessons/${key(classId)}/${key(lessonId)}`;
+      await net.update('', { [`${path}/terms/${key(termId)}`]: null, [`${path}/updatedAt`]: now });
+    },
+
+    // そのクラスの全授業の自分の用語を、1 回で読む
+    async getMyTerms(studentId, classId) {
+      const value = await net.get(`terms/${key(studentId)}/${key(classId)}`);
+      return Object.fromEntries((isObj(value) ? Object.entries(value) : [])
+        .filter(([, terms]) => isObj(terms))
+        .map(([id, terms]) => [id, toMyTerms(terms)]));
+    },
+
+    async getMyLessonTerms(studentId, classId, lessonId) {
+      return toMyTerms(await net.get(`terms/${key(studentId)}/${key(classId)}/${key(lessonId)}`));
+    },
+
+    async setMyTerm(studentId, classId, lessonId, slot, text) {
+      await net.set(`terms/${key(studentId)}/${key(classId)}/${key(lessonId)}/${termSlot(slot)}`, text);
+    },
+
+    async removeMyTerm(studentId, classId, lessonId, slot) {
+      await net.remove(`terms/${key(studentId)}/${key(classId)}/${key(lessonId)}/${termSlot(slot)}`);
     },
 
     async getRecord(classId, lessonId, studentId) {

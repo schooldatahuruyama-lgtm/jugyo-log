@@ -20,6 +20,11 @@ export const CONFIG = {
   lessonTitleMax: 60,
   unitNameMax: 40,
   materialNameMax: 80,
+  // 重要用語の文字数・個数と、よく使う用語に出す数
+  termMax: 20,
+  termsPerLesson: 8,
+  myTermSlots: ['t1', 't2', 't3', 't4', 't5', 't6', 't7', 't8'],
+  frequentTerms: 8,
   // 自分の記録の文字数と、残り文字数を出し始める位置
   recordTextMax: 2000,
   recordCountFrom: 1800,

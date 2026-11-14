@@ -161,6 +161,21 @@
         }
       }
     },
+    "terms": {
+      "$sid": {
+        ".read": "auth != null && (root.child('teacherList').child(auth.uid).val() === true || root.child('accounts').child(auth.uid).val() === $sid)",
+        "$classId": {
+          ".write": "auth != null && root.child('accounts').child(auth.uid).val() === $sid && root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true",
+          ".validate": "newData.hasChildren()",
+          "$lessonId": {
+            ".validate": "newData.hasChildren() && root.child('lessons').child($classId).child($lessonId).exists()",
+            "$tid": {
+              ".validate": "$tid.matches(/^t[1-8]$/) && newData.isString() && newData.val().length >= 1 && newData.val().length <= 20"
+            }
+          }
+        }
+      }
+    },
     "marks": {
       "$sid": {
         ".read": "auth != null && (root.child('teacherList').child(auth.uid).val() === true || root.child('accounts').child(auth.uid).val() === $sid)",

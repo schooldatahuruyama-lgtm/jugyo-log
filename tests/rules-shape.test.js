@@ -31,12 +31,30 @@ test('最上位の場所が決まりどおり', () => {
   const keys = Object.keys(rules).filter((k) => !k.startsWith('.')).sort();
   assert.deepEqual(keys, [
     'check', 'teacherList', 'gen', 'accounts', 'students', 'counters', 'initialPw',
-    'classes', 'members', 'memberOf', 'units', 'lessons', 'thumbs', 'records', 'recThumbs', 'marks',
+    'classes', 'members', 'memberOf', 'units', 'lessons', 'thumbs', 'records', 'recThumbs', 'marks', 'terms',
   ].sort());
 });
 
 test('check は段階 0 の規則と同じ', () => {
   assert.deepEqual(rules.check, check);
+});
+
+test('terms は先生と本人が読み、所属する本人だけが実在する授業に 8 個・20 文字まで書ける', () => {
+  assert.ok(rules.terms);
+  const sid = rules.terms.$sid;
+  const cls = sid.$classId;
+  assert.deepEqual(rulesIn(rules.terms).filter(([, k]) => k === '.read'), [
+    ['$sid', '.read', rules.marks.$sid['.read']],
+  ]);
+  assert.deepEqual(rulesIn(rules.terms).filter(([, k]) => k === '.write'), [
+    ['$sid/$classId', '.write', rules.marks.$sid.$classId['.write']],
+  ]);
+  for (const name of ['teacherList', 'accounts']) assert.ok(sid['.read'].includes(name));
+  for (const name of ['accounts', 'memberOf']) assert.ok(cls['.write'].includes(name));
+  assert.equal(cls['.write'].includes('teacherList'), false);
+  assert.equal(cls['.validate'], 'newData.hasChildren()');
+  assert.equal(cls.$lessonId['.validate'], "newData.hasChildren() && root.child('lessons').child($classId).child($lessonId).exists()");
+  assert.equal(cls.$lessonId.$tid['.validate'], '$tid.matches(/^t[1-8]$/) && newData.isString() && newData.val().length >= 1 && newData.val().length <= 20');
 });
 
 test('teacherList のどこにも .write がない（コンソールでだけ書く）', () => {
