@@ -21,6 +21,7 @@ export function mount(root, ctx) {
   let classes = [];
   let lessons = [];
   let people = [];
+  let attachmentCounts = new Map();
   let rows = [];
   let field = 'question';
   let sort = 'level';
@@ -151,6 +152,7 @@ export function mount(root, ctx) {
         onclick: () => ctx.navigate('t-record', { classId, lessonId, studentId: row.studentId }) },
       el('span', { class: 'review-row-heading' },
         el('span', { class: 'review-person', text: label }), statusChip(kind, levelLabel(row.level)),
+        attachmentCounts.get(row.studentId) > 0 ? el('span', { class: 'small', text: `添付 ${attachmentCounts.get(row.studentId)}` }) : null,
         !row.inRoster || row.number === null ? el('span', { class: 'small', text: row.studentId }) : null),
       el('span', { class: 'review-text', text: row.text.trim() ? row.text : '（まだ書いていません）' })));
     })));
@@ -230,6 +232,10 @@ export function mount(root, ctx) {
       }
       if ([lessonResult, membersResult, recordsResult].some((result) => result.status === 'rejected')) throw new Error('読みこめませんでした');
       people = reviewPeople(membersResult.value, recordsResult.value);
+      attachmentCounts = new Map(people.map((person) => {
+        const attachments = recordsResult.value?.[person.studentId]?.attachments;
+        return [person.studentId, Array.isArray(attachments) ? attachments.length : 0];
+      }));
       ready = true;
       renderChart();
       renderRows();

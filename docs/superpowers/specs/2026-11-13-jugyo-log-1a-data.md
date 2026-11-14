@@ -93,6 +93,7 @@ check/…                                      段階 0 の確認用（そのま
 
 - `records` の中身は、`memo`・`learned`・`question` が 2000 文字までの文字、`level` が 1〜4 の整数、`updatedAt` が数。1b-1 で `attachments` を追加する。それ以外の項目は、今までどおり `$other: false` で受けつけない。
 - `attachments` は子を持つ目録。`$aid` は `/^a[1-6]$/` に合うものだけで、7 個目の置き場所は受けつけない。各項目には `type`（`'image'` または `'pdf'`）・`fileId`（1〜200 文字の文字）・`bytes`（0 以上の数）・`addedAt`（数）の 4 つを必須とし、ほかの項目は受けつけない。同じ置き場所への再送は置きかえになる。呼ぶ側は、保存済みと送信中の置き場所を数え、空きだけを使う。
+- すでに目録がある置き場所への書きこみは、同じ `fileId` のときだけ受けつける（`!data.exists() || newData.child('fileId').val() === data.child('fileId').val()`）。別のファイルに入れかえるには先に消す。`null` による削除は今までどおりできる。
 - `recThumbs` の `$aid` も `/^a[1-6]$/` に合うものだけ。値は 20000 文字までの文字。`$classId` の読み取りは `teacherList` で先生を確かめ、`$lessonId/$sid` の読み取りは `accounts` で本人を確かめる。書きこみは本人に限り、`memberOf` の所属と `lessons` の授業の存在も確かめる。
 - 生徒が自分で書きかえられるのは、`records`・`recThumbs`・`marks` の自分の分と、`initialPw` の自分の分を消すことだけ。`accounts`・`memberOf`・`lessons` は先生しか書けないので、規則と GAS の判断の根拠にしてよい。添付の `fileId` は本人が書きかえられるため、ファイルを開けるかどうかの根拠にしない。GAS が保存時に付けた持ち主と、認証した本人で判断する。
 - パスワードを出し直すと、古いアカウントの `accounts/<uid>` が消えるので、古いアカウントは何も読めなくなる。

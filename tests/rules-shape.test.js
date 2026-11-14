@@ -100,7 +100,7 @@ test('添付は a1〜a6 の置き場所に、決まった 4 項目だけを保�
   const attachments = rules.records.$classId.$lessonId.$sid.attachments;
   assert.equal(attachments['.validate'], 'newData.hasChildren()');
   const aid = attachments.$aid;
-  assert.equal(aid['.validate'], "$aid.matches(/^a[1-6]$/) && newData.hasChildren(['type', 'fileId', 'bytes', 'addedAt'])");
+  assert.equal(aid['.validate'], "$aid.matches(/^a[1-6]$/) && newData.hasChildren(['type', 'fileId', 'bytes', 'addedAt']) && (!data.exists() || newData.child('fileId').val() === data.child('fileId').val())");
   assert.deepEqual(Object.keys(aid).filter((k) => !k.startsWith('.')).sort(), ['$other', 'addedAt', 'bytes', 'fileId', 'type']);
   assert.equal(aid.type['.validate'], "newData.isString() && (newData.val() === 'image' || newData.val() === 'pdf')");
   assert.equal(aid.fileId['.validate'], 'newData.isString() && newData.val().length >= 1 && newData.val().length <= 200');

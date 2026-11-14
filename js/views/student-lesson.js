@@ -5,6 +5,7 @@ import { createRecordSaver } from '../record-saver.js';
 import { pickInitial, normalizeRecord, sameRecord, LEVELS } from '../record-logic.js';
 import { dateLabel } from '../lesson-logic.js';
 import { materialPane } from './parts/material-pane.js';
+import { attachmentPane } from './parts/attachment-pane.js';
 
 export function mount(root, ctx) {
   const { classId, lessonId } = ctx.params;
@@ -21,6 +22,7 @@ export function mount(root, ctx) {
   let online = navigator.onLine !== false;
   let draftWarned = false;
   let materials = null;
+  let attachments = null;
   const dialogs = new AbortController();
   const fields = {};
   const counts = {};
@@ -32,6 +34,7 @@ export function mount(root, ctx) {
   const heading = el('h1', { text: '授業' });
   const date = el('p', { class: 'student-lesson-date' });
   const materialsArea = el('div');
+  const attachmentsArea = el('div');
 
   function textField(key, label, rows) {
     const id = `student-record-${key}`;
@@ -55,6 +58,7 @@ export function mount(root, ctx) {
       el('h2', { id: 'student-teacher-heading', text: '先生の資料' }), materialsArea),
     el('section', { class: 'student-lesson-mine', 'aria-labelledby': 'student-mine-heading' },
       el('h2', { id: 'student-mine-heading', text: '自分の記録' }), memo,
+      el('h3', { text: '自分の写真・PDF' }), attachmentsArea,
       el('h3', { text: '振り返り' }), levels,
       textField('learned', '分かったこと・学んだこと', 4),
       textField('question', '疑問・まだ分からないこと', 4)));
@@ -173,6 +177,9 @@ export function mount(root, ctx) {
       }
       materials = materialPane({ ctx, classId, lessonId, lesson });
       materialsArea.replaceChildren(materials.node);
+      attachments = attachmentPane({ ctx, classId, lessonId, studentId,
+        attachments: Array.isArray(server?.attachments) ? server.attachments : [], readOnly: false });
+      attachmentsArea.replaceChildren(attachments.node);
     } catch {
       if (alive) pageMessage.replaceChildren(
         el('p', { class: 'error', text: 'つながりません。電波を確かめて、もう一度ためしてください。' }),
@@ -196,15 +203,26 @@ export function mount(root, ctx) {
   }
 
   async function okToLeave() {
-    if (!saver?.dirty) return true;
-    showSaveState('saving');
-    const saved = await saver.flush();
+    if (saver?.dirty) {
+      showSaveState('saving');
+      const saved = await saver.flush();
+      if (!alive) return false;
+      if (!saved && !await confirmDialog({ title: 'まだ保存できていません',
+        body: 'この iPad の中に残して、一覧へもどりますか？　次に一覧を開いたときに、もう一度送ります。',
+        okLabel: '一覧へもどる', cancelLabel: 'ここに残る', signal: dialogs.signal })) return false;
+    }
     if (!alive) return false;
-    if (saved) return true;
-    return confirmDialog({ title: 'まだ保存できていません',
-      body: 'この iPad の中に残して、一覧へもどりますか？　次に一覧を開いたときに、もう一度送ります。',
+    if (attachments?.busy) return confirmDialog({ title: 'まだ送れていない写真・PDF があります',
+      body: 'まだ送れていない写真・PDF があります。離れると、送れていない分は消えます。',
       okLabel: '一覧へもどる', cancelLabel: 'ここに残る', signal: dialogs.signal });
+    return true;
   }
+
+  const onBeforeUnload = (event) => {
+    if (!attachments?.busy) return;
+    event.preventDefault();
+    event.returnValue = '';
+  };
 
   const onOffline = () => { online = false; showConnection(); };
   const onOnline = () => {
@@ -215,6 +233,7 @@ export function mount(root, ctx) {
   ctx.setLeaveGuard(okToLeave);
   window.addEventListener('offline', onOffline);
   window.addEventListener('online', onOnline);
+  window.addEventListener('beforeunload', onBeforeUnload);
   document.addEventListener('visibilitychange', refreshRecord);
   showConnection();
   void load();
@@ -226,7 +245,9 @@ export function mount(root, ctx) {
     ctx.setLeaveGuard(null);
     window.removeEventListener('offline', onOffline);
     window.removeEventListener('online', onOnline);
+    window.removeEventListener('beforeunload', onBeforeUnload);
     document.removeEventListener('visibilitychange', refreshRecord);
     materials?.destroy();
+    attachments?.destroy();
   };
 }

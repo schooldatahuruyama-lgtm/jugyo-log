@@ -121,7 +121,7 @@
             "attachments": {
               ".validate": "newData.hasChildren()",
               "$aid": {
-                ".validate": "$aid.matches(/^a[1-6]$/) && newData.hasChildren(['type', 'fileId', 'bytes', 'addedAt'])",
+                ".validate": "$aid.matches(/^a[1-6]$/) && newData.hasChildren(['type', 'fileId', 'bytes', 'addedAt']) && (!data.exists() || newData.child('fileId').val() === data.child('fileId').val())",
                 "type": {
                   ".validate": "newData.isString() && (newData.val() === 'image' || newData.val() === 'pdf')"
                 },
