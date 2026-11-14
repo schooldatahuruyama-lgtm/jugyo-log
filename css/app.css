@@ -87,6 +87,7 @@
 .student-lesson-status .chip { max-width: 100%; overflow-wrap: anywhere; }
 .student-lesson-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: var(--s-2); }
 .student-lesson-columns[hidden] { display: none; }
+.student-lesson-side { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--s-2); }
 .student-lesson-teacher, .student-lesson-mine { min-width: 0; padding: var(--s-2); border: 2px solid; border-radius: var(--r-1); }
 .student-lesson-teacher { border-color: var(--teacher); background: var(--teacher-bg); max-height: calc(100vh - 160px); max-height: calc(100dvh - 160px); overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .student-lesson-mine { border-color: var(--mine); background: var(--mine-bg); }
