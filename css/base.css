@@ -38,6 +38,11 @@
   --reflect: #14694B;
   --reflect-bg: #EEF7F1;
   --reflect-band: #D5EBDD;
+  --lv4: #14694B;
+  --lv3: #7CC0A0;
+  --lv2: #E9B44C;
+  --lv1: #C8402F;
+  --lv0: #C5CAD6;
   --page-warm: #FAF7F2;
   --soft-line: #C9CFDD;
   --soft-shadow: 0 2px 6px rgba(31, 42, 107, 0.12);
@@ -85,6 +90,11 @@ button:focus-visible, a:focus-visible { outline-color: var(--c-navy); box-shadow
 .btn-primary:hover { background: #3454DB; }
 .btn-danger { background: var(--c-danger-text); border-color: var(--c-danger-text); color: #FFFFFF; }
 .btn-danger:hover { background: #962033; }
+.btn-danger-text {
+  min-width: 44px; min-height: 44px; border: 0;
+  background: transparent; color: var(--c-danger-text); font-weight: 700; box-shadow: none;
+}
+.btn-danger-text:hover, .btn-danger-text:focus-visible { background: #FBE9EC; }
 .btn[disabled], .btn[aria-disabled='true'] { opacity: 0.55; cursor: not-allowed; }
 
 /* カード */

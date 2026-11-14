@@ -44,6 +44,32 @@ export function levelCounts(people) {
   return counts;
 }
 
+export function levelShares(counts) {
+  const shares = [4, 3, 2, 1, 'none'].map((key) => ({
+    key, count: isNum(counts?.[key]) ? Math.max(0, counts[key]) : 0, percent: 0,
+  }));
+  if (!isNum(counts?.total) || counts.total <= 0) return shares;
+  // 不正な人数を 0 にした場合も、残った人数の合計で割合をそろえる。
+  const total = shares.reduce((sum, item) => sum + item.count, 0);
+  if (total === 0) return shares;
+  const remainders = shares.map((item, index) => {
+    const scaled = item.count * 100;
+    const exact = scaled / total;
+    item.percent = Math.floor(exact);
+    return { item, index, remainder: scaled % total };
+  }).filter(({ item }) => item.count > 0)
+    .sort((a, b) => b.remainder - a.remainder || a.index - b.index);
+  const left = 100 - shares.reduce((sum, item) => sum + item.percent, 0);
+  for (let i = 0; i < left; i += 1) remainders[i].item.percent += 1;
+  return shares;
+}
+
+export function filterRows(rows, levelKey) {
+  if (!Array.isArray(rows)) return [];
+  if (levelKey === 'none') return rows.filter((row) => row?.level == null);
+  return [4, 3, 2, 1].includes(levelKey) ? rows.filter((row) => row?.level === levelKey) : rows;
+}
+
 export function reviewRows(people, options = {}) {
   const field = options?.field === 'learned' ? 'learned' : 'question';
   const rows = listOf(people).map(({ studentId, number, inRoster, record }) => {

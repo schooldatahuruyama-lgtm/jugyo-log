@@ -215,7 +215,7 @@ export function mount(root, ctx) {
             'aria-label': `${material.name} を上へ`, onclick: () => moveMaterial(material, -1) }),
           el('button', { type: 'button', class: 'btn', text: '下へ', dataset: { materialAction: '', edge: String(index === materials.length - 1) },
             'aria-label': `${material.name} を下へ`, onclick: () => moveMaterial(material, 1) }),
-          el('button', { type: 'button', class: 'btn', text: '消す', dataset: { materialAction: '' },
+          el('button', { type: 'button', class: 'btn btn-danger-text', text: '消す', dataset: { materialAction: '' },
             'aria-label': `${material.name} を消す`, onclick: () => removeMaterial(material) })));
     })) : el('p', { class: 'home-empty', text: 'まだ資料がありません。写真や PDF を足せます。' }));
     syncControls();

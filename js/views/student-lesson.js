@@ -1,11 +1,12 @@
 // 生徒の授業ページ。資料の読みこみや保存の状態が変わっても、入力欄は作り直さない。
-import { el, confirmDialog, toast, statusChip } from '../ui.js';
+import { el, confirmDialog, toast } from '../ui.js';
 import { CONFIG } from '../config.js';
 import { createRecordSaver } from '../record-saver.js';
 import { pickInitial, normalizeRecord, sameRecord, LEVELS } from '../record-logic.js';
 import { dateLabel } from '../lesson-logic.js';
 import { materialPane } from './parts/material-pane.js';
 import { attachmentPane } from './parts/attachment-pane.js';
+import { headingIcon } from './parts/heading-icon.js';
 
 export function mount(root, ctx) {
   const { classId, lessonId } = ctx.params;
@@ -37,10 +38,9 @@ export function mount(root, ctx) {
   const attachmentsArea = el('div');
   const reflectionStatus = el('span', { class: 'reflection-status', role: 'status' });
 
-  function sectionHeading(id, number, title, description, status = null) {
+  function sectionHeading(id, kind, title, description, status = null) {
     return el('header', { class: 'lesson-section-band' },
-      el('span', { class: 'lesson-section-number', 'aria-hidden': 'true', text: number }),
-      el('h2', { id, text: title }), status,
+      el('h2', { id }, headingIcon(kind), el('span', { text: title })), status,
       el('p', { class: 'lesson-section-description', text: description }));
   }
 
@@ -63,14 +63,14 @@ export function mount(root, ctx) {
     })));
   const content = el('div', { class: 'student-lesson-columns', hidden: true },
     el('section', { class: 'student-lesson-teacher', 'aria-labelledby': 'student-teacher-heading' },
-      sectionHeading('student-teacher-heading', 1, '先生の資料', '資料をめくったり、拡大したりできます。'),
+      sectionHeading('student-teacher-heading', 'teacher', '先生の資料', '資料をめくったり、拡大したりできます。'),
       el('div', { class: 'lesson-section-body' }, materialsArea)),
     el('section', { class: 'student-lesson-mine', 'aria-labelledby': 'student-mine-heading' },
-      sectionHeading('student-mine-heading', 2, '自分の記録', '授業中に気づいたことを書きます。'),
+      sectionHeading('student-mine-heading', 'mine', '自分の記録', '授業中に気づいたことを書きます。'),
       el('div', { class: 'lesson-section-body' }, memo,
         el('h3', { text: '自分の写真・PDF' }), attachmentsArea)),
     el('section', { class: 'student-lesson-reflection', 'aria-labelledby': 'student-reflection-heading' },
-      sectionHeading('student-reflection-heading', 3, '振り返り', '授業の終わりに書きます。', reflectionStatus),
+      sectionHeading('student-reflection-heading', 'reflect', '振り返り', '授業の終わりに書きます。', reflectionStatus),
       el('div', { class: 'lesson-section-body' }, levels,
         el('div', { class: 'student-reflection-fields' },
           textField('learned', '分かったこと・学んだこと', 4),
@@ -83,6 +83,13 @@ export function mount(root, ctx) {
       el('div', { class: 'student-lesson-states' }, saveStatus, connectionStatus)),
     draftWarning, pageMessage, content)));
 
+  function statusText(kind, label) {
+    const icons = { ok: '✓', warn: '！', danger: '■' };
+    return el('span', { class: `student-status-text student-status-${kind}` },
+      icons[kind] ? el('span', { 'aria-hidden': 'true', text: `${icons[kind]} ` }) : null,
+      el('span', { text: label }));
+  }
+
   function showSaveState(state) {
     if (!alive) return;
     const labels = {
@@ -90,14 +97,14 @@ export function mount(root, ctx) {
       retrying: ['warn', '保存できませんでした。もう一度ためしています…'], failed: ['danger', '保存できませんでした'],
     };
     const label = labels[state];
-    saveStatus.replaceChildren(...(label ? [statusChip(...label)] : []));
+    saveStatus.replaceChildren(...(label ? [statusText(...label)] : []));
     if (state === 'failed') saveStatus.append(el('button', {
       type: 'button', class: 'btn', text: 'もう一度', onclick: () => saver.retry(),
     }));
   }
 
   function showConnection() {
-    connectionStatus.replaceChildren(...(online ? [] : [statusChip('warn', '接続が切れています')]));
+    connectionStatus.replaceChildren(...(online ? [] : [statusText('warn', '接続が切れています')]));
   }
 
   function syncRecord() {

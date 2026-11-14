@@ -26,6 +26,9 @@ export function mount(root, ctx) {
   let units = [];
   let lessons = [];
   let editor = null;
+  let countState = null;
+  let countObserver = null;
+  let activeCounts = 0;
   const yearClasses = () => classes.filter((c) => c.year === year);
   const dirty = () => editor !== null && editor.dirty();
 
@@ -205,7 +208,64 @@ export function mount(root, ctx) {
     }
   }
 
+  function updateRecordCount(state, entry) {
+    if (!alive || state !== countState || !entry.node) return;
+    const denominator = state.members === null ? '' : ` / ${state.members}`;
+    entry.node.textContent = `記録 ${entry.value}${denominator} 人`;
+  }
+
+  function prepareCounts() {
+    if (countState?.classId === classId) return;
+    countObserver?.disconnect();
+    countObserver = null;
+    countState = classId ? { classId, members: null, entries: new Map(), queue: [] } : null;
+    if (!countState) return;
+    const state = countState;
+    void (async () => {
+      try {
+        const members = await ctx.repo.getMembers(state.classId);
+        if (!alive || state !== countState) return;
+        state.members = members.length;
+      } catch {
+        // 名簿を読めないときは、人数を推測せず分母を省く。
+        if (!alive || state !== countState) return;
+      }
+      for (const entry of state.entries.values()) updateRecordCount(state, entry);
+    })();
+  }
+
+  function readQueuedCounts() {
+    if (!alive || !countState) return;
+    const state = countState;
+    while (activeCounts < 4 && state.queue.length > 0) {
+      const entry = state.queue.shift();
+      activeCounts += 1;
+      void (async () => {
+        try {
+          const count = await ctx.repo.countRecords(state.classId, entry.lessonId);
+          if (alive && state === countState) entry.value = count;
+        } catch {
+          if (alive && state === countState) entry.value = '?';
+        } finally {
+          updateRecordCount(state, entry);
+          activeCounts -= 1;
+          readQueuedCounts();
+        }
+      })();
+    }
+  }
+
+  function queueCount(state, entry) {
+    if (!alive || state !== countState || entry.requested) return;
+    entry.requested = true;
+    state.queue.push(entry);
+    readQueuedCounts();
+  }
+
   function renderLessons() {
+    countObserver?.disconnect();
+    countObserver = null;
+    if (countState) for (const entry of countState.entries.values()) entry.node = null;
     if (!classId) {
       listArea.replaceChildren(el('p', { class: 'home-empty', text: '先にクラスを作ってください。' }));
       return;
@@ -215,11 +275,20 @@ export function mount(root, ctx) {
       return;
     }
     const unitNames = new Map(units.map((u) => [u.id, u.name]));
+    const state = countState;
+    const visibleRows = new Map();
     listArea.replaceChildren(el('ul', { class: 'lesson-rows' }, lessons.map((lesson) => {
       const materials = materialList(lesson.materials);
       const boards = materials.filter((m) => m.kind === 'board').length;
       const handouts = materials.filter((m) => m.kind === 'handout').length;
-      return el('li', { class: 'lesson-row' },
+      let entry = state.entries.get(lesson.id);
+      if (!entry) {
+        entry = { lessonId: lesson.id, value: '…', requested: false, node: null };
+        state.entries.set(lesson.id, entry);
+      }
+      entry.node = el('span', { class: 'lesson-record-count' });
+      updateRecordCount(state, entry);
+      const row = el('li', { class: 'lesson-row' },
         el('button', {
           type: 'button', class: 'lesson-open',
           'aria-label': `${dateLabel(lesson.date)} ${lesson.title} を開く`,
@@ -230,14 +299,35 @@ export function mount(root, ctx) {
           el('span', { class: 'lesson-title', text: lesson.title || '（授業名なし）' }),
           el('span', { class: 'small', text: unitNames.get(lesson.unitId) || '（単元なし）' })),
         el('span', { class: 'lesson-count', text: `板書 ${boards}・資料 ${handouts}` })),
+        el('div', { class: 'lesson-review' }, entry.node,
+          el('button', { type: 'button', class: 'btn', text: '記録を見る ›',
+            onclick: () => ctx.navigate('t-review', { classId: state.classId, lessonId: lesson.id }) })),
         el('button', {
-          type: 'button', class: 'btn', text: '消す',
+          type: 'button', class: 'btn btn-danger-text', text: '消す',
           'aria-label': `「${lesson.title}」を消す`, onclick: () => removeLesson(lesson),
         }));
+      visibleRows.set(row, entry);
+      return row;
     })));
+    if (typeof window.IntersectionObserver === 'function') {
+      countObserver = new window.IntersectionObserver((entries, observer) => {
+        if (!alive || state !== countState || observer !== countObserver) return;
+        for (const item of entries) {
+          if (!item.isIntersecting) continue;
+          observer.unobserve(item.target);
+          const entry = visibleRows.get(item.target);
+          if (entry) queueCount(state, entry);
+        }
+      });
+      for (const [row, entry] of visibleRows) if (!entry.requested) countObserver.observe(row);
+    } else {
+      for (const entry of visibleRows.values()) queueCount(state, entry);
+    }
   }
 
   async function load() {
+    countObserver?.disconnect();
+    countObserver = null;
     loading = true;
     ready = false;
     listArea.replaceChildren(el('p', { class: 'loading', role: 'status', text: '読みこんでいます…' }));
@@ -252,6 +342,7 @@ export function mount(root, ctx) {
         fillClasses();
         classesReady = true;
       }
+      prepareCounts();
       if (classId) {
         const [loadedUnits, loadedLessons] = await Promise.all([ctx.repo.listUnits(year), ctx.repo.listLessons(classId)]);
         if (!alive) return;
@@ -276,6 +367,9 @@ export function mount(root, ctx) {
   load();
   return () => {
     alive = false;
+    countObserver?.disconnect();
+    countObserver = null;
+    countState = null;
     window.removeEventListener('beforeunload', onBeforeUnload);
   };
 }

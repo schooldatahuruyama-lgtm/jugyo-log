@@ -32,7 +32,7 @@ export function attachmentPane({ ctx, classId, lessonId, studentId, attachments,
   const message = el('p', { class: 'error attachment-message', role: 'alert' });
   const limit = el('p', { class: 'small attachment-message', role: 'status' });
   const input = el('input', { type: 'file', accept: 'image/*,application/pdf', hidden: true });
-  const add = el('button', { type: 'button', class: 'btn', text: '＋ 写真・PDF' });
+  const add = el('button', { type: 'button', class: 'btn attachment-add', text: '＋ 写真・PDF' });
   const node = el('div', { class: 'attachment-pane' }, listArea,
     readOnly ? null : [el('div', { class: 'attachment-actions' }, add, input), limit, message]);
 
@@ -87,7 +87,7 @@ export function attachmentPane({ ctx, classId, lessonId, studentId, attachments,
       if (item.state === 'sending') progress.textContent = '送っています…';
       if (!readOnly && item.state === 'saved') {
         controls.append(action('消す', () => remove(item), {
-          disabled: operating, 'aria-label': `${names[index]} を消す`,
+          class: 'btn btn-danger-text', disabled: operating, 'aria-label': `${names[index]} を消す`,
         }));
         if (item.removing) progress.textContent = item.confirming ? '消すか確かめています…' : '消しています…';
       }
