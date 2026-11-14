@@ -56,12 +56,14 @@ export function mount(root, ctx) {
   const content = el('div', { class: 'student-lesson-columns', hidden: true },
     el('section', { class: 'student-lesson-teacher', 'aria-labelledby': 'student-teacher-heading' },
       el('h2', { id: 'student-teacher-heading', text: '先生の資料' }), materialsArea),
-    el('section', { class: 'student-lesson-mine', 'aria-labelledby': 'student-mine-heading' },
-      el('h2', { id: 'student-mine-heading', text: '自分の記録' }), memo,
-      el('h3', { text: '自分の写真・PDF' }), attachmentsArea,
-      el('h3', { text: '振り返り' }), levels,
-      textField('learned', '分かったこと・学んだこと', 4),
-      textField('question', '疑問・まだ分からないこと', 4)));
+    el('div', { class: 'student-lesson-side' },
+      el('section', { class: 'student-lesson-mine', 'aria-labelledby': 'student-mine-heading' },
+        el('h2', { id: 'student-mine-heading', text: '自分の記録' }), memo,
+        el('h3', { text: '自分の写真・PDF' }), attachmentsArea),
+      el('section', { class: 'student-lesson-mine', 'aria-labelledby': 'student-reflection-heading' },
+        el('h2', { id: 'student-reflection-heading', text: '振り返り' }), levels,
+        textField('learned', '分かったこと・学んだこと', 4),
+        textField('question', '疑問・まだ分からないこと', 4))));
   const goHome = () => ctx.navigate('home', { classId });
   root.replaceChildren(el('main', { class: 'student-lesson-page' },
     el('header', { class: 'student-lesson-header' },
