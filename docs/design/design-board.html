@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>授業ログ デザインボード</title>
+<link rel="stylesheet" href="../../css/base.css">
+<style>
+  /* デザインボード（今の決まりの一覧）。色と大きさは css/base.css の変数をそのまま使う。 */
+  body { margin: 0; padding: 24px; background: var(--page-warm); font-size: 16px; }
+  .board { max-width: 1160px; margin: 0 auto; }
+  .board > h1 { font-size: 30px; margin: 0; } .board > p { margin: 2px 0 18px; }
+  .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
+  .panel { background: #fff; border-radius: 16px; box-shadow: var(--soft-shadow); padding: 16px; }
+  .panel > h2 { font-size: 18px; margin: 0 0 10px; display: flex; align-items: baseline; gap: 8px; }
+  .panel > h2 small { font-weight: 400; font-size: 13px; }
+  .c4 { grid-column: span 4; } .c5 { grid-column: span 5; } .c6 { grid-column: span 6; } .c7 { grid-column: span 7; } .c8 { grid-column: span 8; } .c12 { grid-column: span 12; }
+  .sw { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 8px; }
+  .sw div { border-radius: 10px; overflow: hidden; border: 1px solid var(--soft-line); font-size: 12px; line-height: 1.35; }
+  .sw i { display: block; height: 44px; } .sw b, .sw span { display: block; padding: 0 6px; } .sw span { padding-bottom: 4px; font-family: Consolas, monospace; }
+  .trio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .trio .box { border-radius: 14px; overflow: hidden; box-shadow: var(--soft-shadow); font-size: 13px; }
+  .trio .band { padding: 8px 10px; font-weight: 700; font-size: 17px; display: flex; align-items: center; gap: 8px; }
+  .trio .body { padding: 8px 10px; line-height: 1.5; font-family: Consolas, monospace; font-size: 12px; }
+  .ic { display: inline-flex; width: 32px; height: 32px; border-radius: 9px; align-items: center; justify-content: center; flex: none; }
+  .ic svg { width: 20px; height: 20px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .type p { margin: 0 0 6px; display: flex; align-items: baseline; gap: 12px; } .type small { font-size: 12px; font-family: Consolas, monospace; flex: none; width: 150px; }
+  .rowx { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .wbtn { min-height: 44px; padding: 6px 14px; border: 1px solid var(--soft-line); border-radius: 12px; background: #fff; color: var(--c-navy); font: inherit; font-weight: 700; box-shadow: var(--soft-shadow); }
+  .seg { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--soft-line); border-radius: 10px; overflow: hidden; }
+  .seg span { min-height: 48px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; border-right: 1px solid var(--soft-line); background: #fff; }
+  .seg span:last-child { border-right: 0; } .seg .on { background: var(--reflect); color: #fff; }
+  .pill { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px 12px; font-size: 14px; font-weight: 700; }
+  .pill.done { background: #0F5239; color: #fff; } .pill.todo { border: 2px solid var(--c-warn-border); background: #FFF6D6; }
+  .tag { display: inline-flex; align-items: center; min-height: 40px; padding: 2px 14px; border: 2px solid var(--teacher); color: var(--teacher); border-radius: 999px; font-weight: 700; background: #fff; }
+  .bar { display: flex; height: 44px; border-radius: 12px; overflow: hidden; border: 1px solid var(--soft-line); font-weight: 700; }
+  .bar span { display: flex; align-items: center; justify-content: center; border-left: 2px solid #fff; } .bar span:first-child { border-left: 0; }
+  .ta { width: 100%; min-height: 56px; border: 1px solid var(--soft-line); border-radius: 10px; padding: 8px 10px; background: #fff; }
+  .meas { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 16px; font-size: 14px; } .meas b { font-family: Consolas, monospace; font-weight: 400; }
+  .rad { display: flex; gap: 10px; align-items: flex-end; } .rad div { width: 64px; height: 44px; background: var(--teacher-band); display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  .no { font-size: 12px; font-weight: 400; margin-left: auto; }
+</style>
+</head>
+<body>
+<div class="board">
+  <h1>授業ログ デザインボード</h1>
+  <p>今の決まりの一覧です（2026-11-15）。直したい所に、番号（A〜H）と項目の名前で指示をください。</p>
+  <div class="grid">
+
+    <section class="panel c7">
+      <h2>A. 3 つの枠の色<small>上の帯・本体・文字。色だけでなく、絵と見出しでも分ける</small></h2>
+      <div class="trio">
+        <div class="box"><div class="band" style="background:var(--teacher-band);color:var(--teacher)"><span class="ic" style="background:var(--teacher)"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4M7 9h6M7 12h3"/></svg></span>先生の資料</div><div class="body" style="background:var(--teacher-bg)">文字・絵 #0B57B0<br>帯 #D6E8FB<br>本体 #F1F7FE</div></div>
+        <div class="box"><div class="band" style="background:var(--mine-band);color:var(--mine)"><span class="ic" style="background:var(--mine)"><svg viewBox="0 0 24 24"><path d="M4 20l1-4L16 5l3 3L8 19l-4 1z"/><path d="M14 7l3 3"/></svg></span>自分の記録</div><div class="body" style="background:var(--mine-bg)">文字・絵 #9A4A08<br>帯 #FBE3CC<br>本体 #FDF4EA</div></div>
+        <div class="box"><div class="band" style="background:var(--reflect-band);color:var(--reflect)"><span class="ic" style="background:var(--reflect)"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H10l-4 4v-4H4z"/><path d="M8 9h8M8 12h5"/></svg></span>振り返り</div><div class="body" style="background:var(--reflect-bg)">文字・絵 #14694B<br>帯 #D5EBDD<br>本体 #EEF7F1</div></div>
+      </div>
+    </section>
+
+    <section class="panel c5">
+      <h2>B. 文字<small>BIZ UDPGothic（読みやすさ重視のゴシック）</small></h2>
+      <div class="type">
+        <p><small>画面の名前 28px 太</small><b style="font-size:28px">授業ログ</b></p>
+        <p><small>枠の見出し 22px 太</small><b style="font-size:22px">自分の記録</b></p>
+        <p><small>小見出し 20px 太</small><b style="font-size:20px">今日の理解度</b></p>
+        <p><small>本文 18px</small><span style="font-size:18px">光は、まっすぐ進む。</span></p>
+        <p><small>説明 15px</small><span style="font-size:15px">授業の終わりに書きます。</span></p>
+        <p><small>小さい文字 14px</small><span style="font-size:14px">11/14（土）</span></p>
+      </div>
+    </section>
+
+    <section class="panel c7">
+      <h2>C. 土台の色<small>文字・背景・線・先生の画面の帯</small></h2>
+      <div class="sw">
+        <div><i style="background:#1F2A6B"></i><b>文字・先生の帯</b><span>#1F2A6B</span></div>
+        <div><i style="background:#3F63F6"></i><b>主なボタン</b><span>#3F63F6</span></div>
+        <div><i style="background:#FAF7F2"></i><b>生徒の背景</b><span>#FAF7F2</span></div>
+        <div><i style="background:#F6F8FF"></i><b>先生の背景</b><span>#F6F8FF</span></div>
+        <div><i style="background:#FFFFFF"></i><b>入れ物</b><span>#FFFFFF</span></div>
+        <div><i style="background:#C9CFDD"></i><b>細い線</b><span>#C9CFDD</span></div>
+        <div><i style="background:#6B79B3"></i><b>部品の枠</b><span>#6B79B3</span></div>
+      </div>
+    </section>
+
+    <section class="panel c5">
+      <h2>D. 知らせの色<small>文字と記号をいつも添える</small></h2>
+      <div class="sw">
+        <div><i style="background:#0F5239"></i><b>記入済み</b><span>#0F5239</span></div>
+        <div><i style="background:#2E8B57"></i><b>できた（枠）</b><span>#2E8B57</span></div>
+        <div><i style="background:#FFF6D6;border-bottom:3px solid #8F6F00"></i><b>注意・未記入</b><span>#FFF6D6 / #8F6F00</span></div>
+        <div><i style="background:#B3243A"></i><b>失敗・消す</b><span>#B3243A</span></div>
+      </div>
+    </section>
+
+    <section class="panel c6">
+      <h2>E. 部品<small>ボタンは高さ 44px 以上</small></h2>
+      <div class="rowx"><button class="wbtn">‹ 一覧へ</button><button class="wbtn">＋ 写真・PDF</button><button class="btn btn-primary">作る</button><button class="btn btn-danger">消す</button></div>
+      <div class="rowx"><span class="pill todo">！ 未記入</span><span class="pill done">✓ 記入済み</span><span class="chip chip-ok">✓ 保存しました</span><span class="chip chip-warn">！ 振り返りがまだ</span></div>
+      <div class="rowx"><span class="tag">光の反射</span><span class="tag">入射角</span><span class="tag">鏡の実験 ×</span><span class="no">重要用語のタグ（これから作る）</span></div>
+      <div class="seg"><span class="on">✓ よく分かった</span><span>分かった</span><span>あまり分からなかった</span><span>全然分からなかった</span></div>
+      <div class="ta" style="margin-top:10px">入力欄（線 1px・角の丸み 10px）</div>
+    </section>
+
+    <section class="panel c6">
+      <h2>F. 理解度の色<small>先生のグラフ・一覧の行の左の線（これから作る）</small></h2>
+      <div class="bar">
+        <span style="flex:9;background:#14694B;color:#fff">30%</span><span style="flex:11;background:#7CC0A0;color:#0E3B2A">37%</span><span style="flex:3;background:#E9B44C;color:#3A2A00">10%</span><span style="flex:1.7;background:#C8402F;color:#fff">3%</span><span style="flex:6;background:#C5CAD6;color:#2B2F3A">20%</span>
+      </div>
+      <div class="sw" style="margin-top:10px">
+        <div><i style="background:#14694B"></i><b>よく分かった</b><span>#14694B</span></div>
+        <div><i style="background:#7CC0A0"></i><b>分かった</b><span>#7CC0A0</span></div>
+        <div><i style="background:#E9B44C"></i><b>あまり</b><span>#E9B44C</span></div>
+        <div><i style="background:#C8402F"></i><b>全然</b><span>#C8402F</span></div>
+        <div><i style="background:#C5CAD6"></i><b>入力なし</b><span>#C5CAD6</span></div>
+      </div>
+    </section>
+
+    <section class="panel c6">
+      <h2>G. 形<small>角の丸み・影</small></h2>
+      <div class="rad">
+        <div style="border-radius:10px">10px<br>入力欄</div><div style="border-radius:12px">12px<br>ボタン</div><div style="border-radius:14px">14px<br>枠</div><div style="border-radius:16px">16px<br>入れ物</div><div style="border-radius:999px">丸<br>印・タグ</div>
+        <div style="border-radius:12px;background:#fff;box-shadow:var(--soft-shadow);width:110px">影<br>0 2px 6px</div>
+      </div>
+    </section>
+
+    <section class="panel c6">
+      <h2>H. 大きさと余白<small>iPad（横 1180×820・縦 820×1180）が基準</small></h2>
+      <div class="meas">
+        <span>ボタンの高さ <b>44px 以上</b></span><span>理解度のボタン <b>48px 以上</b></span>
+        <span>余白の基準 <b>8 / 16 / 24 / 32px</b></span><span>枠の中の余白 <b>16px</b></span>
+        <span>絵の四角 <b>38px</b>（角 10px）</span><span>一覧のタイル <b>横 4 枚・縦 3 枚</b></span>
+      </div>
+    </section>
+
+  </div>
+</div>
+</body>
+</html>
