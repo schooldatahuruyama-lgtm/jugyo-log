@@ -20,6 +20,13 @@ export const CONFIG = {
   lessonTitleMax: 60,
   unitNameMax: 40,
   materialNameMax: 80,
+  // 自分の記録の文字数と、残り文字数を出し始める位置
+  recordTextMax: 2000,
+  recordCountFrom: 1800,
+  // 自動保存までの待ち時間と、失敗したときにやり直す間隔
+  save: { delayMs: 2000, retryMs: [2000, 5000, 15000] },
+  // タイルを軽く押した動きと、横にすべらせた動きの境界
+  swipe: { tapMax: 10, swipeMin: 30 },
   // 画像と一覧用の小さい画像の長辺・データ URL の文字数
   image: { maxEdge: 1600, maxChars: 400000 },
   thumb: { maxEdge: 320, maxChars: 20000 },

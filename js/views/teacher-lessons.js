@@ -3,17 +3,9 @@ import { el, confirmDialog, toast, statusChip } from '../ui.js';
 import { CONFIG } from '../config.js';
 import { newId } from '../ids.js';
 import { schoolYear } from '../roster-logic.js';
-import { checkLesson, sortLessons, sortUnits, materialList, todayString } from '../lesson-logic.js';
+import { checkLesson, sortLessons, sortUnits, materialList, todayString, dateLabel } from '../lesson-logic.js';
 import { deleteLessonFlow } from '../lesson-flow.js';
 import { teacherNav } from './parts/teacher-nav.js';
-
-function dateLabel(value) {
-  if (checkLesson({ date: value, title: '授業' }, { titleMax: CONFIG.lessonTitleMax }) === 'bad-date') return '日付なし';
-  const [year, month, day] = value.split('-').map(Number);
-  const date = new Date(0);
-  date.setFullYear(year, month - 1, day);
-  return `${month}/${day}（${'日月火水木金土'[date.getDay()]}）`;
-}
 
 function lessonError(code) {
   if (code === 'bad-date') return '日付を正しく入れてください。';
