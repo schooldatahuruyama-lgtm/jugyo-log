@@ -102,3 +102,59 @@ test('全消去の前に始めた取得が遅れて終わっても、取り置�
   await loading;
   assert.equal(await cache.get('file-m1'), null);
 });
+
+test('uploadStudent: 指定した項目だけを送り、元の名前と生徒 ID は送らない', async () => {
+  const { files, calls } = make(() => ({ ok: true, id: 'student-file', bytes: 3, existed: true }));
+  const payload = { key: 'student-key', classId: 'c1', lessonId: 'l1', mime: 'image/jpeg', dataB64: 'AQID' };
+  for (let i = 0; i < 2; i++) {
+    assert.deepEqual(await files.uploadStudent({ ...payload, name: '保存しない名前', studentId: 's26-002' }), { fileId: 'student-file', bytes: 3 });
+  }
+  assert.deepEqual(calls, [0, 1].map(() => ({ op: 'putStudentFile', payload })));
+});
+
+test('loadStudentFile: ファイル ID で取得し、取り置きがあれば GAS を呼ばない', async () => {
+  const { files, calls, cache } = make(() => ({ ok: true, ...encoded }));
+  const blob = await files.loadStudentFile('student-file');
+  assert.equal(blob.type, 'image/jpeg');
+  assert.deepEqual([...new Uint8Array(await blob.arrayBuffer())], [0, 255, 128]);
+  assert.equal(await cache.get('student-file'), blob);
+  assert.equal(await files.loadStudentFile('student-file'), blob);
+  assert.deepEqual(calls, [{ op: 'getStudentFile', payload: { fileId: 'student-file' } }]);
+});
+
+test('trashStudent: 応答のあと取り置きを消し、trashed が false でも消す', async () => {
+  for (const trashed of [true, false]) {
+    const { files, calls, cache } = make(async () => {
+      assert.ok(await cache.get('student-file'));
+      return { ok: true, trashed };
+    });
+    await cache.put('student-file', new Blob(['写真']));
+    assert.equal(await files.trashStudent('student-file'), trashed);
+    assert.equal(await cache.get('student-file'), null);
+    assert.deepEqual(calls, [{ op: 'trashStudentFile', payload: { fileId: 'student-file' } }]);
+  }
+});
+
+test('生徒のファイル: 通信の例外を変えず、削除に失敗した取り置きは残す', async () => {
+  for (const code of ['toobig', 'denied', 'notfound', 'network']) {
+    const error = new NetError(code);
+    const { files, cache } = make(() => { throw error; });
+    await assert.rejects(files.uploadStudent({}), (e) => e === error);
+    await assert.rejects(files.loadStudentFile('student-file'), (e) => e === error);
+    await cache.put('student-file', new Blob(['写真']));
+    await assert.rejects(files.trashStudent('student-file'), (e) => e === error);
+    assert.ok(await cache.get('student-file'));
+  }
+});
+
+test('生徒のファイル: 全消去前の取得が遅れて終わっても取り置きを戻さない', async () => {
+  let reply;
+  const pending = new Promise((resolve) => { reply = resolve; });
+  const { files, cache } = make(() => pending);
+  const loading = files.loadStudentFile('student-file');
+  await new Promise((resolve) => setImmediate(resolve));
+  await files.clearCache();
+  reply({ ok: true, ...encoded });
+  await loading;
+  assert.equal(await cache.get('student-file'), null);
+});

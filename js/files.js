@@ -1,4 +1,4 @@
-// 先生の資料を GAS から取り出し、同じファイルは端末の取り置きから返す。
+// 先生の資料と生徒の添付を GAS から取り出し、同じファイルは端末の取り置きから返す。
 import { NetError } from './errors.js';
 
 export function createFiles({ gas, cache, atob = globalThis.atob, Blob = globalThis.Blob }) {
@@ -56,6 +56,24 @@ export function createFiles({ gas, cache, atob = globalThis.atob, Blob = globalT
     async trash(fileId) {
       await gas.call('trashFile', { fileId });
       await cache.remove(fileId);
+    },
+    async uploadStudent({ key, classId, lessonId, mime, dataB64 }) {
+      const result = await gas.call('putStudentFile', { key, classId, lessonId, mime, dataB64 });
+      return { fileId: result.id, bytes: result.bytes };
+    },
+    async loadStudentFile(fileId) {
+      const current = generation;
+      const cached = await cache.get(fileId);
+      if (cached) return cached;
+      const response = await gas.call('getStudentFile', { fileId });
+      const blob = toBlob(response);
+      if (current === generation) await cache.put(fileId, blob);
+      return blob;
+    },
+    async trashStudent(fileId) {
+      const result = await gas.call('trashStudentFile', { fileId });
+      await cache.remove(fileId);
+      return result.trashed;
     },
     async clearCache() {
       // 消去前に始めた取得は、遅れて返ってきても取り置きに戻さない

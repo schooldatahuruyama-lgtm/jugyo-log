@@ -31,7 +31,7 @@ test('最上位の場所が決まりどおり', () => {
   const keys = Object.keys(rules).filter((k) => !k.startsWith('.')).sort();
   assert.deepEqual(keys, [
     'check', 'teacherList', 'gen', 'accounts', 'students', 'counters', 'initialPw',
-    'classes', 'members', 'memberOf', 'units', 'lessons', 'thumbs', 'records', 'marks',
+    'classes', 'members', 'memberOf', 'units', 'lessons', 'thumbs', 'records', 'recThumbs', 'marks',
   ].sort());
 });
 
@@ -92,8 +92,34 @@ test('先生は生徒の記録を書けない（records/$sid の .write に teac
 test('records の中身は決まった項目だけ', () => {
   const sid = rules.records.$classId.$lessonId.$sid;
   const fields = Object.keys(sid).filter((k) => !k.startsWith('.')).sort();
-  assert.deepEqual(fields, ['$other', 'learned', 'level', 'memo', 'question', 'updatedAt']);
+  assert.deepEqual(fields, ['$other', 'attachments', 'learned', 'level', 'memo', 'question', 'updatedAt']);
   assert.equal(sid.$other['.validate'], false);
+});
+
+test('添付は a1〜a6 の置き場所に、決まった 4 項目だけを保存する', () => {
+  const attachments = rules.records.$classId.$lessonId.$sid.attachments;
+  assert.equal(attachments['.validate'], 'newData.hasChildren()');
+  const aid = attachments.$aid;
+  assert.equal(aid['.validate'], "$aid.matches(/^a[1-6]$/) && newData.hasChildren(['type', 'fileId', 'bytes', 'addedAt'])");
+  assert.deepEqual(Object.keys(aid).filter((k) => !k.startsWith('.')).sort(), ['$other', 'addedAt', 'bytes', 'fileId', 'type']);
+  assert.equal(aid.type['.validate'], "newData.isString() && (newData.val() === 'image' || newData.val() === 'pdf')");
+  assert.equal(aid.fileId['.validate'], 'newData.isString() && newData.val().length >= 1 && newData.val().length <= 200');
+  assert.equal(aid.bytes['.validate'], 'newData.isNumber() && newData.val() >= 0');
+  assert.equal(aid.addedAt['.validate'], 'newData.isNumber()');
+  assert.equal(aid.$other['.validate'], false);
+});
+
+test('recThumbs は先生と本人だけが読み、所属と授業を確かめて本人だけが書く', () => {
+  const records = rules.records.$classId.$lessonId.$sid;
+  assert.equal(rules.recThumbs['.read'], undefined);
+  assert.equal(rules.recThumbs.$classId['.read'], "auth != null && root.child('teacherList').child(auth.uid).val() === true");
+  const sid = rules.recThumbs.$classId.$lessonId.$sid;
+  assert.equal(sid['.read'], records['.read']);
+  assert.equal(sid['.write'], records['.write']);
+  assert.equal(sid['.validate'], 'newData.hasChildren()');
+  for (const name of ['accounts', 'memberOf', 'lessons']) assert.ok(sid['.write'].includes(name));
+  assert.equal(sid.$aid['.validate'], '$aid.matches(/^a[1-6]$/) && newData.isString() && newData.val().length <= 20000');
+  assert.deepEqual(rulesIn(rules.recThumbs).filter(([, k]) => k === '.write'), [['$classId/$lessonId/$sid', '.write', records['.write']]]);
 });
 
 test('理解度（records の level と marks）は 1〜4 の整数だけ（小数を受けつけない）', () => {

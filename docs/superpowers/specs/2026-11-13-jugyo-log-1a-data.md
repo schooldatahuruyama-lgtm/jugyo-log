@@ -46,7 +46,9 @@ memberOf/<studentId>/<classId>: true         members の逆引き（規則と、
 units/<unitId>: { year, name, order }                                              … 1a-2
 lessons/<classId>/<lessonId>: { date, title, unitId, materials, createdAt, updatedAt } … 1a-2
 thumbs/<classId>/<lessonId>/<materialId>: "<data URL>"   一覧用の小さい画像          … 1a-2
-records/<classId>/<lessonId>/<studentId>: { memo, level, learned, question, updatedAt } … 1a-3
+records/<classId>/<lessonId>/<studentId>: { memo, level, learned, question, updatedAt, attachments } … 1a-3・1b-1
+records/<classId>/<lessonId>/<studentId>/attachments/<a1〜a6>: { type, fileId, bytes, addedAt } … 1b-1
+recThumbs/<classId>/<lessonId>/<studentId>/<a1〜a6>: "<data URL>"   添付の小さい画像 … 1b-1
 marks/<studentId>/<classId>/<lessonId>: number   理解度（1〜4）。一覧の印に使う       … 1a-3
 check/…                                      段階 0 の確認用（そのまま残す）
 ```
@@ -55,7 +57,10 @@ check/…                                      段階 0 の確認用（そのま
 - `date` は `'YYYY-MM-DD'`。
 - 理解度の数: 4 よく分かった／3 分かった／2 あまり分からなかった／1 全然分からなかった。選んでいなければ項目を置かない。
 - `members` と `memberOf` は、必ず 1 回の書きこみ（ルートへの複数パスの update）で一緒に変える。
-- `records` と `marks` も、1 回の書きこみで一緒に変える。
+- 文字の記録の保存は、`records` の `memo`・`learned`・`question`・`updatedAt`・`level` と `marks` を、1 回のルートへの複数パスの update で一緒に変える。`level` が未選択なら `level` と `marks` を `null` で消す。記録全体は置きかえず、`attachments` を残す。
+- 生徒の添付（1b-1）は、置き場所を `a1`〜`a6` に固定し、1 回の授業につき 6 個まで。目録は `{ type: 'image'|'pdf', fileId, bytes, addedAt }`。元のファイル名は保存しない。足した日時（`addedAt`）の古い順、同じ日時なら置き場所順に並べ、写真と PDF をそれぞれ 1 から数えて「写真 1」「PDF 1」と出す。
+- 添付の追加は、目録の置き場所 1 つと、文字の小さい画像があれば `recThumbs` の同じ置き場所を、1 回の update で書く。削除は目録と小さい画像を 1 回の update で消す。どちらも文字の記録と `updatedAt`・`marks` は変えない。
+- 小さい画像を `recThumbs` に分けて置き、一覧を並べるだけでは GAS を呼ばない。本体は押したときに取り出して端末に取っておく。
 - 一覧用の画像を `lessons` と分けるのは、授業の一覧（文字だけ・軽い）を 1 回で読み、画像は見えるタイルの分だけ読むため。
 - 本名・学校のメールアドレスは、どこにも置かない。
 
@@ -82,11 +87,14 @@ check/…                                      段階 0 の確認用（そのま
 | `lessons/$classId` | 先生と、その組の一員。`lessons` は先生が全体を読める | 先生（授業 1 つの場所から下）。記録がある授業は、まるごとは消せない |
 | `thumbs/$classId` | 先生と、その組の一員 | 先生 |
 | `records/$classId` | 先生。`$lessonId/$sid` は本人も | 本人だけ（その組の一員で、その授業があるとき）。先生は書けない |
+| `recThumbs/$classId` | 先生。`$lessonId/$sid` は本人も | 本人だけ（その組の一員で、その授業があるとき）。`records` と同じ式。先生は書けない |
 | `marks/$sid` | 先生と本人 | 本人だけ（その組の一員）。1〜4 の数 |
 | `check` | 段階 0 のまま | 段階 0 のまま |
 
-- `records` の中身は、`memo`・`learned`・`question` が 2000 文字までの文字、`level` が 1〜4 の数、`updatedAt` が数。ほかの項目は受けつけない（1b で項目を足す）。
-- 生徒が自分で書きかえられるのは、`records`・`marks` の自分の分と、`initialPw` の自分の分を消すことだけ。`accounts`・`memberOf`・`lessons` は先生しか書けないので、規則と GAS の判断の根拠にしてよい。
+- `records` の中身は、`memo`・`learned`・`question` が 2000 文字までの文字、`level` が 1〜4 の整数、`updatedAt` が数。1b-1 で `attachments` を追加する。それ以外の項目は、今までどおり `$other: false` で受けつけない。
+- `attachments` は子を持つ目録。`$aid` は `/^a[1-6]$/` に合うものだけで、7 個目の置き場所は受けつけない。各項目には `type`（`'image'` または `'pdf'`）・`fileId`（1〜200 文字の文字）・`bytes`（0 以上の数）・`addedAt`（数）の 4 つを必須とし、ほかの項目は受けつけない。同じ置き場所への再送は置きかえになる。呼ぶ側は、保存済みと送信中の置き場所を数え、空きだけを使う。
+- `recThumbs` の `$aid` も `/^a[1-6]$/` に合うものだけ。値は 20000 文字までの文字。`$classId` の読み取りは `teacherList` で先生を確かめ、`$lessonId/$sid` の読み取りは `accounts` で本人を確かめる。書きこみは本人に限り、`memberOf` の所属と `lessons` の授業の存在も確かめる。
+- 生徒が自分で書きかえられるのは、`records`・`recThumbs`・`marks` の自分の分と、`initialPw` の自分の分を消すことだけ。`accounts`・`memberOf`・`lessons` は先生しか書けないので、規則と GAS の判断の根拠にしてよい。添付の `fileId` は本人が書きかえられるため、ファイルを開けるかどうかの根拠にしない。GAS が保存時に付けた持ち主と、認証した本人で判断する。
 - パスワードを出し直すと、古いアカウントの `accounts/<uid>` が消えるので、古いアカウントは何も読めなくなる。
 - メール／パスワードのアカウントは、公開している API キーでだれでも作れる。作っただけのアカウントには `accounts` の対応がないので、`gen` と `check` のほかは何も読めない。
 

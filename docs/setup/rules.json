@@ -118,8 +118,44 @@
             "updatedAt": {
               ".validate": "newData.isNumber()"
             },
+            "attachments": {
+              ".validate": "newData.hasChildren()",
+              "$aid": {
+                ".validate": "$aid.matches(/^a[1-6]$/) && newData.hasChildren(['type', 'fileId', 'bytes', 'addedAt'])",
+                "type": {
+                  ".validate": "newData.isString() && (newData.val() === 'image' || newData.val() === 'pdf')"
+                },
+                "fileId": {
+                  ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200"
+                },
+                "bytes": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0"
+                },
+                "addedAt": {
+                  ".validate": "newData.isNumber()"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            },
             "$other": {
               ".validate": false
+            }
+          }
+        }
+      }
+    },
+    "recThumbs": {
+      "$classId": {
+        ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+        "$lessonId": {
+          "$sid": {
+            ".read": "auth != null && root.child('accounts').child(auth.uid).val() === $sid",
+            ".write": "auth != null && root.child('accounts').child(auth.uid).val() === $sid && root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true && root.child('lessons').child($classId).child($lessonId).exists()",
+            ".validate": "newData.hasChildren()",
+            "$aid": {
+              ".validate": "$aid.matches(/^a[1-6]$/) && newData.isString() && newData.val().length <= 20000"
             }
           }
         }

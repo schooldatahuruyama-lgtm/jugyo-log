@@ -60,8 +60,8 @@ test('listRecords: 2 人分を 1 回で読み、getRecord と同じ形で返す�
   const before = mem.dump();
   const result = await repo.listRecords('c1', 'l1');
   assert.deepEqual(result, {
-    's26-001': first,
-    's26-002': { memo: '', level: null, learned: 'あ'.repeat(2000), question: '', updatedAt: 0 },
+    's26-001': { ...first, attachments: [] },
+    's26-002': { memo: '', level: null, learned: 'あ'.repeat(2000), question: '', updatedAt: 0, attachments: [] },
   });
   assert.deepEqual(calls.get, [['records/c1/l1']]);
   assert.equal(calls.getPublic.length, 0);
@@ -78,7 +78,7 @@ test('listRecords: 無ければ空。オブジェクトでない 1 人分は入�
   }
   const all = { 's26-001': {}, 's26-002': 'x', 's26-003': null, 's26-004': [], 's26-005': 1 };
   assert.deepEqual(await createRepo({ get: async () => all }).listRecords('c1', 'l1'), {
-    's26-001': { memo: '', level: null, learned: '', question: '', updatedAt: 0 },
+    's26-001': { memo: '', level: null, learned: '', question: '', updatedAt: 0, attachments: [] },
   });
   for (const updatedAt of [undefined, null, NaN, Infinity]) {
     const direct = createRepo({ get: async () => ({ 's26-001': { updatedAt } }) });
@@ -92,13 +92,15 @@ test('saveRecord: 理解度なしは level を置かず、1 回の update で記
   await repo.saveRecord('c1', 'l1', 's26-001', record, 5000);
   assert.equal(writes(calls), 1);
   assert.deepEqual(calls.update, [['', {
-    'records/c1/l1/s26-001': { memo: 'm', learned: '', question: '', updatedAt: 5000 },
+    'records/c1/l1/s26-001/memo': 'm', 'records/c1/l1/s26-001/learned': '',
+    'records/c1/l1/s26-001/question': '', 'records/c1/l1/s26-001/updatedAt': 5000,
+    'records/c1/l1/s26-001/level': null,
     'marks/s26-001/c1/l1': null,
   }]]);
   assert.equal(Object.hasOwn(await mem.get('records/c1/l1/s26-001'), 'level'), false);
   assert.equal(await mem.get('marks/s26-001/c1/l1'), null);
   assert.equal(await mem.get('marks/s26-001/c1/l2'), 4);
-  assert.deepEqual(await repo.getRecord('c1', 'l1', 's26-001'), { ...record, updatedAt: 5000 });
+  assert.deepEqual(await repo.getRecord('c1', 'l1', 's26-001'), { ...record, updatedAt: 5000, attachments: [] });
 });
 
 test('saveRecord: 理解度を記録と印に 1 回で置き、余分な項目を保存しない', async () => {
@@ -109,7 +111,9 @@ test('saveRecord: 理解度を記録と印に 1 回で置き、余分な項目�
     await repo.saveRecord('c1', 'l1', 's26-001', record, 5000);
     assert.equal(writes(calls), 1);
     assert.deepEqual(calls.update, [['', {
-      'records/c1/l1/s26-001': { memo: 'm', level, learned: 'l', question: 'q', updatedAt: 5000 },
+      'records/c1/l1/s26-001/memo': 'm', 'records/c1/l1/s26-001/learned': 'l',
+      'records/c1/l1/s26-001/question': 'q', 'records/c1/l1/s26-001/updatedAt': 5000,
+      'records/c1/l1/s26-001/level': level,
       'marks/s26-001/c1/l1': level,
     }]]);
     assert.equal(await mem.get('records/c1/l1/s26-001/level'), level);
@@ -123,7 +127,7 @@ test('saveRecord・getRecord: 欠けた項目・型の違い・上限をそろ�
   assert.equal(await repo.getRecord('c1', 'l1', 's26-001'), null);
   const bad = { memo: 5, level: '3', learned: 'あ'.repeat(2001), question: null, updatedAt: '5000' };
   await mem.set('records/c1/l1/s26-001', bad);
-  assert.deepEqual(await repo.getRecord('c1', 'l1', 's26-001'), { memo: '', level: null, learned: 'あ'.repeat(2000), question: '', updatedAt: 0 });
+  assert.deepEqual(await repo.getRecord('c1', 'l1', 's26-001'), { memo: '', level: null, learned: 'あ'.repeat(2000), question: '', updatedAt: 0, attachments: [] });
   await repo.saveRecord('c1', 'l1', 's26-001', bad, 5000);
   assert.deepEqual(await mem.get('records/c1/l1/s26-001'), { memo: '', learned: 'あ'.repeat(2000), question: '', updatedAt: 5000 });
   for (const updatedAt of [undefined, null, NaN, Infinity]) {
@@ -138,6 +142,107 @@ test('getMarks: 1〜4 の整数だけを返し、数字のキーの配列にも�
   assert.deepEqual(await repo.getMarks('s26-001', 'missing'), {});
   assert.deepEqual(calls.get, [['marks/s26-001/c1'], ['marks/s26-001/missing']]);
   assert.deepEqual(await createRepo({ get: async () => [null, 1, 4, '3', NaN, Infinity] }).getMarks('s26-001', 'c1'), { 1: 1, 2: 4 });
+});
+
+test('saveRecord: 添付を残して項目ごとに 1 回で書き、理解度を消しても添付は残る', async () => {
+  const { repo, mem, calls } = setup();
+  const item = { type: 'image', fileId: 'file-a', bytes: 3 };
+  await repo.addAttachment('c1', 'l1', 's26-001', 'a1', item, '画像', 100);
+  const saved = { a1: { ...item, addedAt: 100 } };
+  for (const level of [3, null]) {
+    const before = writes(calls);
+    await repo.saveRecord('c1', 'l1', 's26-001', { memo: 'メモ', level, attachments: {} }, 200);
+    assert.equal(writes(calls), before + 1);
+    assert.deepEqual(calls.update.at(-1), ['', {
+      'records/c1/l1/s26-001/memo': 'メモ', 'records/c1/l1/s26-001/learned': '',
+      'records/c1/l1/s26-001/question': '', 'records/c1/l1/s26-001/updatedAt': 200,
+      'records/c1/l1/s26-001/level': level, 'marks/s26-001/c1/l1': level,
+    }]);
+    assert.deepEqual(await mem.get('records/c1/l1/s26-001/attachments'), saved);
+    assert.equal(await mem.get('records/c1/l1/s26-001/level'), level);
+    assert.equal(await mem.get('marks/s26-001/c1/l1'), level);
+    assert.equal(await mem.get('recThumbs/c1/l1/s26-001/a1'), '画像');
+  }
+});
+
+test('addAttachment: 目録と画像だけを 1 回で書き、文字と更新日時と印を変えない', async () => {
+  const record = { memo: 'メモ', level: 4, learned: '分かった', question: '疑問', updatedAt: 10 };
+  const { repo, mem, calls } = setup({ records: { c1: { l1: { 's26-001': record } } }, marks: { 's26-001': { c1: { l1: 4 } } } });
+  const item = { type: 'image', fileId: 'file-a', bytes: 3 };
+  await repo.addAttachment('c1', 'l1', 's26-001', 'a1', { ...item, name: '保存しない名前' }, '画像', 100);
+  assert.equal(writes(calls), 1);
+  assert.deepEqual(calls.update, [['', {
+    'records/c1/l1/s26-001/attachments/a1': { ...item, addedAt: 100 }, 'recThumbs/c1/l1/s26-001/a1': '画像',
+  }]]);
+  assert.deepEqual(await mem.get('records/c1/l1/s26-001'), { ...record, attachments: { a1: { ...item, addedAt: 100 } } });
+  assert.equal(await mem.get('marks/s26-001/c1/l1'), 4);
+});
+
+test('addAttachment: 文字以外の thumb は書かず、同じ置き場所はあとの 1 個が残る', async () => {
+  const { repo, mem, calls } = setup();
+  for (const thumb of [null, undefined, 3, {}]) {
+    const before = writes(calls);
+    const item = { type: 'pdf', fileId: `file-${before}`, bytes: 100 };
+    await repo.addAttachment('c1', 'l1', 's26-001', 'a1', item, thumb, before);
+    assert.equal(writes(calls), before + 1);
+    assert.deepEqual(calls.update.at(-1), ['', { 'records/c1/l1/s26-001/attachments/a1': { ...item, addedAt: before } }]);
+    assert.deepEqual(await mem.get('records/c1/l1/s26-001/attachments'), { a1: { ...item, addedAt: before } });
+  }
+  assert.equal(await mem.get('recThumbs'), null);
+});
+
+test('removeAttachment: 目録と画像を 1 回で消し、文字・日時・ほかの置き場所を残す', async () => {
+  const record = { memo: 'メモ', updatedAt: 10 };
+  const item = { type: 'image', fileId: 'file-a', bytes: 3, addedAt: 100 };
+  const { repo, mem, calls } = setup({ records: { c1: { l1: { 's26-001': { ...record, attachments: { a1: item, a2: item } } } } },
+    recThumbs: { c1: { l1: { 's26-001': { a1: '画像1', a2: '画像2' } } } } });
+  await repo.removeAttachment('c1', 'l1', 's26-001', 'a1');
+  assert.equal(writes(calls), 1);
+  assert.deepEqual(calls.update, [['', { 'records/c1/l1/s26-001/attachments/a1': null, 'recThumbs/c1/l1/s26-001/a1': null }]]);
+  assert.deepEqual(await mem.get('records/c1/l1/s26-001'), { ...record, attachments: { a2: item } });
+  assert.deepEqual(await repo.getRecThumbs('c1', 'l1', 's26-001'), { a2: '画像2' });
+});
+
+test('getRecord・listRecords: 添付を選別して足した順に返す', async () => {
+  const item = { type: 'image', fileId: 'file-a', bytes: 3, addedAt: 100 };
+  const { repo } = setup({ records: { c1: { l1: { 's26-001': { attachments: { a1: item, a2: { ...item, addedAt: 50 }, a7: item, a3: '不正' } } } } } });
+  const result = await repo.getRecord('c1', 'l1', 's26-001');
+  assert.deepEqual(result.attachments, [{ slot: 'a2', ...item, addedAt: 50 }, { slot: 'a1', ...item }]);
+  assert.deepEqual((await repo.listRecords('c1', 'l1'))['s26-001'], result);
+});
+
+test('getRecThumbs: 文字だけを読み、無ければ空で書きこまない', async () => {
+  const { repo, calls } = setup({ recThumbs: { c1: { l1: { 's26-001': { a1: 'data:image/jpeg;base64,AQID', a2: 3, a3: {} } } } } });
+  assert.deepEqual(await repo.getRecThumbs('c1', 'l1', 's26-001'), { a1: 'data:image/jpeg;base64,AQID' });
+  assert.deepEqual(await repo.getRecThumbs('c1', 'l2', 's26-001'), {});
+  assert.deepEqual(calls.get, [['recThumbs/c1/l1/s26-001'], ['recThumbs/c1/l2/s26-001']]);
+  assert.equal(writes(calls), 0);
+});
+
+test('添付: 不正な置き場所と ID は通信の前に断る', async () => {
+  const { repo, calls } = setup();
+  for (const slot of ['a7', 'a0', 'a1\n', 'a1/x', '', null, 1]) {
+    await assert.rejects(repo.addAttachment('c1', 'l1', 's26-001', slot, {}, null, 100), TypeError);
+    await assert.rejects(repo.removeAttachment('c1', 'l1', 's26-001', slot), TypeError);
+  }
+  for (let i = 0; i < 3; i++) {
+    const ids = ['c1', 'l1', 's26-001'];
+    ids[i] = 'bad/key';
+    await assert.rejects(repo.addAttachment(...ids, 'a1', {}, null, 100), TypeError);
+    await assert.rejects(repo.removeAttachment(...ids, 'a1'), TypeError);
+    await assert.rejects(repo.getRecThumbs(...ids), TypeError);
+  }
+  assert.equal(writes(calls), 0);
+  assert.equal(calls.get.length, 0);
+});
+
+test('添付: 通信の例外をそのまま伝える', async () => {
+  const error = new NetError('denied');
+  const fail = async () => { throw error; };
+  const repo = createRepo({ get: fail, update: fail });
+  await assert.rejects(repo.addAttachment('c1', 'l1', 's26-001', 'a1', {}, null, 100), (e) => e === error);
+  await assert.rejects(repo.removeAttachment('c1', 'l1', 's26-001', 'a1'), (e) => e === error);
+  await assert.rejects(repo.getRecThumbs('c1', 'l1', 's26-001'), (e) => e === error);
 });
 
 test('記録のメソッド: 不正な ID は通信の前に例外にする', async () => {
