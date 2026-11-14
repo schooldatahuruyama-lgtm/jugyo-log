@@ -193,9 +193,9 @@ export function materialPane({ ctx, classId, lessonId, lesson }) {
       const message = el('div', { class: 'student-material-message', role: 'status' });
       materialViews.set(material.id, { material, preview, message, blob: null, url: null, image: null, thumb: null, loading: false });
     }
-    materialsArea.replaceChildren(frame,
+    materialsArea.replaceChildren(...[frame,
       el('div', { class: 'student-material-caption' }, summary, materials.length > 1 ? counter : null),
-      materials.length > 1 ? controls : null, messages);
+      materials.length > 1 ? controls : null, messages].filter(Boolean));
     showCurrent();
     void loadThumbs();
     void loadImages(materials.filter((material) => material.type === 'image'));
