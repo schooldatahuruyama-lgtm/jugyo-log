@@ -4,6 +4,8 @@
 // 読んだデータは形を確かめてから返す（欠けや型の違いがあっても落ちない）。
 import { formatStudentId } from './ids.js';
 import { sortLessons, sortUnits } from './lesson-logic.js';
+import { normalizeRecord, tileMark } from './record-logic.js';
+import { CONFIG } from './config.js';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -161,6 +163,31 @@ export function createRepo(net) {
         [`${path}/unitId`]: unitId || null,
         [`${path}/updatedAt`]: now,
       });
+    },
+
+    async getRecord(classId, lessonId, studentId) {
+      const value = await net.get(`records/${key(classId)}/${key(lessonId)}/${key(studentId)}`);
+      if (value === null || value === undefined) return null;
+      return { ...normalizeRecord(value, { max: CONFIG.recordTextMax }), updatedAt: isNum(value.updatedAt) ? value.updatedAt : 0 };
+    },
+
+    // 記録と一覧の印を、1 回のルート update で一緒に変える
+    async saveRecord(classId, lessonId, studentId, record, now) {
+      const cid = key(classId);
+      const lid = key(lessonId);
+      const sid = key(studentId);
+      const { memo, level, learned, question } = normalizeRecord(record, { max: CONFIG.recordTextMax });
+      const value = { memo, learned, question, updatedAt: now };
+      if (level !== null) value.level = level;
+      await net.update('', {
+        [`records/${cid}/${lid}/${sid}`]: value,
+        [`marks/${sid}/${cid}/${lid}`]: level,
+      });
+    },
+
+    async getMarks(studentId, classId) {
+      return Object.fromEntries(entriesOf(await net.get(`marks/${key(studentId)}/${key(classId)}`))
+        .filter(([, level]) => tileMark(level) === 'done'));
     },
 
     // 記録の本文を受け取らず、生徒 ID の数だけを数える

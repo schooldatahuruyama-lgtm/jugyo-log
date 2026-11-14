@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { createRepo } from '../js/repo.js';
 import { createMemoryNet } from '../js/dev/memory-net.js';
 import { fileRefs } from '../js/lesson-logic.js';
+import { NetError } from '../js/errors.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const at = (p) => join(root, p);
@@ -51,6 +52,90 @@ function setup(initial = null) {
 }
 
 const writes = (calls) => calls.set.length + calls.update.length + calls.remove.length;
+
+test('saveRecord: 理解度なしは level を置かず、1 回の update で記録を保存し印を消す', async () => {
+  const { repo, mem, calls } = setup({ marks: { 's26-001': { c1: { l1: 3, l2: 4 } } } });
+  const record = { memo: 'm', level: null, learned: '', question: '' };
+  await repo.saveRecord('c1', 'l1', 's26-001', record, 5000);
+  assert.equal(writes(calls), 1);
+  assert.deepEqual(calls.update, [['', {
+    'records/c1/l1/s26-001': { memo: 'm', learned: '', question: '', updatedAt: 5000 },
+    'marks/s26-001/c1/l1': null,
+  }]]);
+  assert.equal(Object.hasOwn(await mem.get('records/c1/l1/s26-001'), 'level'), false);
+  assert.equal(await mem.get('marks/s26-001/c1/l1'), null);
+  assert.equal(await mem.get('marks/s26-001/c1/l2'), 4);
+  assert.deepEqual(await repo.getRecord('c1', 'l1', 's26-001'), { ...record, updatedAt: 5000 });
+});
+
+test('saveRecord: 理解度を記録と印に 1 回で置き、余分な項目を保存しない', async () => {
+  for (const level of [1, 3, 4]) {
+    const { repo, mem, calls } = setup();
+    const record = { memo: 'm', level, learned: 'l', question: 'q', extra: true };
+    const before = structuredClone(record);
+    await repo.saveRecord('c1', 'l1', 's26-001', record, 5000);
+    assert.equal(writes(calls), 1);
+    assert.deepEqual(calls.update, [['', {
+      'records/c1/l1/s26-001': { memo: 'm', level, learned: 'l', question: 'q', updatedAt: 5000 },
+      'marks/s26-001/c1/l1': level,
+    }]]);
+    assert.equal(await mem.get('records/c1/l1/s26-001/level'), level);
+    assert.equal(await mem.get('marks/s26-001/c1/l1'), level);
+    assert.deepEqual(record, before);
+  }
+});
+
+test('saveRecord・getRecord: 欠けた項目・型の違い・上限をそろえる', async () => {
+  const { repo, mem } = setup();
+  assert.equal(await repo.getRecord('c1', 'l1', 's26-001'), null);
+  const bad = { memo: 5, level: '3', learned: 'あ'.repeat(2001), question: null, updatedAt: '5000' };
+  await mem.set('records/c1/l1/s26-001', bad);
+  assert.deepEqual(await repo.getRecord('c1', 'l1', 's26-001'), { memo: '', level: null, learned: 'あ'.repeat(2000), question: '', updatedAt: 0 });
+  await repo.saveRecord('c1', 'l1', 's26-001', bad, 5000);
+  assert.deepEqual(await mem.get('records/c1/l1/s26-001'), { memo: '', learned: 'あ'.repeat(2000), question: '', updatedAt: 5000 });
+  for (const updatedAt of [undefined, null, NaN, Infinity]) {
+    const direct = createRepo({ get: async () => ({ memo: 'm', updatedAt }) });
+    assert.equal((await direct.getRecord('c1', 'l1', 's26-001')).updatedAt, 0);
+  }
+});
+
+test('getMarks: 1〜4 の整数だけを返し、数字のキーの配列にも対応する', async () => {
+  const { repo, calls } = setup({ marks: { 's26-001': { c1: { l1: 3, l2: 'x', l3: 9, l4: 1, l5: 4, l6: 2.5, l7: 0 } } } });
+  assert.deepEqual(await repo.getMarks('s26-001', 'c1'), { l1: 3, l4: 1, l5: 4 });
+  assert.deepEqual(await repo.getMarks('s26-001', 'missing'), {});
+  assert.deepEqual(calls.get, [['marks/s26-001/c1'], ['marks/s26-001/missing']]);
+  assert.deepEqual(await createRepo({ get: async () => [null, 1, 4, '3', NaN, Infinity] }).getMarks('s26-001', 'c1'), { 1: 1, 2: 4 });
+});
+
+test('記録のメソッド: 不正な ID は通信の前に例外にする', async () => {
+  const { repo, calls } = setup();
+  for (const bad of ['', 'a/b', 'a.b', '#', '$', '[x]', null]) {
+    for (let i = 0; i < 3; i++) {
+      const ids = ['c1', 'l1', 's26-001'];
+      ids[i] = bad;
+      await assert.rejects(repo.getRecord(...ids), TypeError);
+      await assert.rejects(repo.saveRecord(...ids, { memo: '' }, 1000), TypeError);
+    }
+    await assert.rejects(repo.getMarks(bad, 'c1'), TypeError);
+    await assert.rejects(repo.getMarks('s26-001', bad), TypeError);
+  }
+  assert.equal(calls.get.length, 0);
+  assert.equal(writes(calls), 0);
+});
+
+test('記録のメソッド: 通信エラーをそのまま伝え、保存の失敗は両方に反映しない', async () => {
+  for (const code of ['network', 'denied']) {
+    const error = new NetError(code);
+    const fail = async () => { throw error; };
+    const repo = createRepo({ get: fail, update: fail });
+    await assert.rejects(repo.getRecord('c1', 'l1', 's26-001'), (e) => e === error);
+    await assert.rejects(repo.getMarks('s26-001', 'c1'), (e) => e === error);
+    await assert.rejects(repo.saveRecord('c1', 'l1', 's26-001', { level: 3 }, 1000), (e) => e === error);
+  }
+  const mem = createMemoryNet({ deny: (op) => op === 'update' });
+  await assert.rejects(createRepo(mem).saveRecord('c1', 'l1', 's26-001', { level: 3 }, 1000), (e) => e.code === 'denied');
+  assert.equal(mem.dump(), null);
+});
 
 test('memory-net: ルートへの複数パスの update は、それぞれのパスに置き、null は消す', async () => {
   const mem = createMemoryNet({ initial: { a: { b: 1, x: 2 }, c: { d: 3 } } });

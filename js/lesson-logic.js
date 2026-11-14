@@ -1,4 +1,6 @@
 // 単元・授業・資料の計算。通信や現在時刻の取得はしない。
+import { CONFIG } from './config.js';
+
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const entriesOf = (v) => (isObj(v) ? Object.entries(v) : []);
@@ -86,4 +88,12 @@ export function todayString(dateMs) {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+export function dateLabel(value) {
+  if (checkLesson({ date: value, title: '授業' }, { titleMax: CONFIG.lessonTitleMax }) === 'bad-date') return '日付なし';
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(0);
+  date.setFullYear(year, month - 1, day);
+  return `${month}/${day}（${'日月火水木金土'[date.getDay()]}）`;
 }

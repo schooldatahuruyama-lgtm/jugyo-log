@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   checkLesson, checkUnitName, sortLessons, sortUnits, moveInOrder,
-  materialList, thumbOrder, nextOrder, fileRefs, todayString,
+  materialList, thumbOrder, nextOrder, fileRefs, todayString, dateLabel,
 } from '../js/lesson-logic.js';
 
 test('checkLesson: 実在する日付と、空でない上限以内の授業名', () => {
@@ -115,4 +115,13 @@ test('fileRefs: 同じファイルを指している授業を全部返す', () =
 test('todayString: 端末の時刻の日付を YYYY-MM-DD で返す', () => {
   assert.equal(todayString(new Date(2026, 0, 2, 0, 1).getTime()), '2026-01-02');
   assert.equal(todayString(new Date(2026, 10, 12, 23, 59).getTime()), '2026-11-12');
+});
+
+test('dateLabel: 日付と曜日を表示し、不正な日付は日付なし', () => {
+  assert.equal(dateLabel('2026-11-12'), '11/12（木）');
+  assert.equal(dateLabel('2024-02-29'), '2/29（木）');
+  assert.equal(dateLabel('0099-01-01'), '1/1（木）');
+  for (const value of ['', null, undefined, [], 5, '2026/11/12', '2026-2-03', '2026-02-29', '2026-04-31', '0000-01-01']) {
+    assert.equal(dateLabel(value), '日付なし');
+  }
 });
