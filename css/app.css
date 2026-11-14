@@ -75,7 +75,7 @@
   .lesson-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* 生徒の授業。資料と記録を同じ幅で並べ、縦向きでは資料を上に置く。 */
+/* 生徒の授業。資料と記録を同じ幅で並べ、下に振り返りを置く。縦向きでは一列にする。 */
 .student-lesson-page { max-width: 1400px; margin: 0 auto; padding: var(--s-2); }
 .student-lesson-header { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1) var(--s-2); margin-bottom: var(--s-2); }
 .student-lesson-title { flex: 1; min-width: 180px; overflow-wrap: anywhere; }
@@ -87,20 +87,26 @@
 .student-lesson-status .chip { max-width: 100%; overflow-wrap: anywhere; }
 .student-lesson-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: var(--s-2); }
 .student-lesson-columns[hidden] { display: none; }
-.student-lesson-side { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--s-2); }
-.student-lesson-teacher, .student-lesson-mine { min-width: 0; padding: var(--s-2); border: 2px solid; border-radius: var(--r-1); }
+.student-lesson-teacher, .student-lesson-mine, .student-lesson-reflection { min-width: 0; padding: var(--s-2); border: 2px solid; border-radius: var(--r-1); }
 .student-lesson-teacher { border-color: var(--teacher); background: var(--teacher-bg); max-height: calc(100vh - 160px); max-height: calc(100dvh - 160px); overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .student-lesson-mine { border-color: var(--mine); background: var(--mine-bg); }
+.student-lesson-reflection { grid-column: 1 / -1; border-color: var(--reflect); background: var(--reflect-bg); overflow-wrap: anywhere; }
 .student-lesson-teacher > h2 { color: var(--teacher); }
 .student-lesson-mine > h2, .student-lesson-mine > h3 { color: var(--mine); }
-.student-lesson-teacher > h2, .student-lesson-mine > h2 { font-size: 22px; }
+.student-lesson-reflection > h2 { color: var(--reflect); }
+.student-lesson-teacher > h2, .student-lesson-mine > h2, .student-lesson-reflection > h2 { font-size: 22px; }
 .student-lesson-mine > h3 { margin-top: var(--s-3); font-size: 20px; }
-.student-lesson-mine textarea { display: block; width: 100%; min-height: 120px; resize: vertical; }
+.student-lesson-mine textarea, .student-lesson-reflection textarea { display: block; width: 100%; min-height: 120px; resize: vertical; }
+.student-reflection-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-2); }
+.student-reflection-fields > * { min-width: 0; }
 .student-record-count { margin: 4px 0 0; text-align: right; }
 .student-record-levels { min-width: 0; margin: 0 0 var(--s-2); padding: 0; border: 0; }
-.student-record-level-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-1); }
-.student-record-level-buttons .btn { white-space: normal; overflow-wrap: anywhere; }
-.student-record-level-buttons .btn[aria-pressed='true'] { background: var(--mine); border-color: var(--mine); color: #FFFFFF; }
+.student-record-level-buttons { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; border: 2px solid var(--reflect); border-radius: var(--r-1); overflow: hidden; }
+.student-record-level-buttons .btn { min-width: 44px; min-height: 48px; border: 0; border-radius: 0; background: #FFFFFF; white-space: normal; overflow-wrap: anywhere; }
+.student-record-level-buttons .btn + .btn { border-left: 1px solid var(--reflect); }
+.student-record-level-buttons .btn[aria-pressed='true'] { background: var(--reflect); color: #FFFFFF; }
+.student-record-level-buttons .btn:focus-visible { outline-offset: -6px; box-shadow: none; }
+.student-record-level-buttons .btn[aria-pressed='true']:focus-visible { outline-color: #FFFFFF; }
 .student-lesson-page button { min-width: 44px; min-height: 44px; }
 .student-material-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
 .student-material-open { display: flex; flex-direction: column; width: 100%; padding: var(--s-1); border: 2px solid var(--teacher); border-radius: var(--r-1); background: var(--c-card); color: var(--c-navy); font: inherit; text-align: left; cursor: pointer; touch-action: manipulation; }
@@ -114,8 +120,15 @@
 .student-material-summary > .small { color: var(--teacher); font-weight: 700; }
 .student-material-message { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1); margin-top: var(--s-1); }
 
-@media (orientation: portrait) {
+@media (orientation: portrait), (max-width: 899px) {
   .student-lesson-columns { grid-template-columns: minmax(0, 1fr); }
+  .student-reflection-fields { grid-template-columns: minmax(0, 1fr); }
+  .student-record-level-buttons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .student-record-level-buttons .btn:nth-child(odd) { border-left: 0; }
+  .student-record-level-buttons .btn:nth-child(n+3) { border-top: 1px solid var(--reflect); }
+}
+
+@media (orientation: portrait) {
   .student-lesson-teacher { max-height: none; overflow-y: visible; }
 }
 
@@ -328,6 +341,7 @@ dialog.material-viewer[open] { display: flex; flex-direction: column; gap: var(-
 .record-heading p:last-child { margin-bottom: 0; }
 .record-values { margin: 0; }
 .record-values dt { margin-bottom: var(--s-1); color: var(--mine); font-weight: 700; }
+.student-lesson-reflection .record-values dt { color: var(--reflect); }
 .record-values dd { margin: 0 0 var(--s-3); padding: var(--s-2); border: 1px solid var(--c-line); border-radius: var(--r-1); background: var(--c-card); }
 
 /* 生徒の添付。送信中も文字の入力欄はそのまま使える。 */
