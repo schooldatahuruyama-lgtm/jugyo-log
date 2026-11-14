@@ -9,6 +9,9 @@ import { GAS } from './gas-config.js';
 import { createGas } from './gas.js';
 import { createFileCache } from './file-cache.js';
 import { createFiles } from './files.js';
+import { createDrafts } from './drafts.js';
+import { createRecordQueue } from './record-queue.js';
+import { createThumbStore } from './thumb-store.js';
 import { parseRoute, routeHash, viewFile, roleFor } from './router.js';
 import { resolveSession } from './session.js';
 import { isDemoAllowed, createDemoBackend } from './dev/demo.js';
@@ -37,7 +40,7 @@ function showMessage(text, { retry = null } = {}) {
     retry ? el('p', {}, el('button', { type: 'button', class: 'btn btn-primary', text: 'もう一度ためす', onclick: retry })) : null));
 }
 
-// メモリだけの storage（規則の確認用の生徒のログインを、端末に残さない）
+// メモリだけの storage（端末の保存が使えないときと、規則の確認用のログインに使う）
 function memoryStorage() {
   const m = new Map();
   return {
@@ -48,14 +51,15 @@ function memoryStorage() {
 }
 
 // 練習モードか、本物の Firebase か、設定が空か（空なら null）
-function createBackend() {
+function createBackend(storage) {
+  const backendStorage = storage || memoryStorage();
   if (isDemoAllowed(location.hostname, location.search)) {
-    const demo = createDemoBackend({ storage: window.localStorage, now, random });
+    const demo = createDemoBackend({ storage: backendStorage, now, random });
     return { demo, net: demo.net, auth: demo.auth, gas: demo.gas, makeProbeStudent: null };
   }
   if (!FIREBASE.databaseURL || !FIREBASE.apiKey) return null;
   const fetchFn = window.fetch.bind(window);
-  const auth = createAuth({ apiKey: FIREBASE.apiKey, fetch: fetchFn, storage: window.localStorage, now });
+  const auth = createAuth({ apiKey: FIREBASE.apiKey, fetch: fetchFn, storage: backendStorage, now });
   const net = createNet({ databaseURL: FIREBASE.databaseURL, auth, fetch: fetchFn });
   const gas = createGas({
     url: GAS.appUrl, auth, fetch: fetchFn, random,
@@ -99,9 +103,11 @@ function showDemoBanner(demo) {
 }
 
 function start() {
+  let storage = null;
+  try { storage = window.localStorage; } catch { /* 端末の保存が使えないときも続ける */ }
   let backend;
   try {
-    backend = createBackend();
+    backend = createBackend(storage);
   } catch (e) {
     console.error(e);
     showMessage('このブラウザでは、授業ログを始められませんでした。');
@@ -117,9 +123,16 @@ function start() {
   if (!backend.demo) {
     try { cacheStorage = window.caches; } catch { /* 使えないときはメモリで続ける */ }
   }
-  const files = createFiles({ gas: backend.gas, cache: createFileCache({ caches: cacheStorage }) });
+  const cache = createFileCache({ caches: cacheStorage });
+  const files = createFiles({ gas: backend.gas, cache });
+  const drafts = createDrafts({ storage });
+  const recordQueue = createRecordQueue();
+  const thumbs = createThumbStore({ repo, cache });
+  const timers = { setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window) };
   async function signOutAll() {
+    try { thumbs.clear(); } catch { /* 小さい画像の片付けに失敗してもログアウトする */ }
     try { await files.clearCache(); } catch { /* 片付けに失敗してもログアウトする */ }
+    try { drafts.clear(); } catch { /* 下書きの片付けに失敗してもログアウトする */ }
     await auth.signOut();
   }
   let session = null; // resolveSession の結果。まだ決めていなければ null
@@ -225,7 +238,7 @@ function start() {
       return;
     }
     const ctx = {
-      auth, repo, files, signOutAll, session, navigate, now, random, demo: Boolean(backend.demo), params: route.params,
+      auth, repo, files, drafts, recordQueue, thumbs, timers, signOutAll, session, navigate, now, random, demo: Boolean(backend.demo), params: route.params,
       net: backend.net, makeProbeStudent: backend.makeProbeStudent,
       // 離れてよいかをたずねる関数を置く（null で外す）。古くなった画面からの呼び出しは無視する
       setLeaveGuard: (fn) => { if (!stale()) leave.set(fn); },

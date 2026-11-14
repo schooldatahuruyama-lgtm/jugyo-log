@@ -3,6 +3,7 @@
 const ROUTES = {
   login: ['#/login', 'login', 'public'],
   home: ['#/', 'student-home', 'student'],
+  lesson: [null, 'student-lesson', 'student'],
   password: ['#/password', 'password', 'student'],
   't-classes': ['#/t', 'teacher-classes', 'teacher'],
   't-units': ['#/t/units', 'teacher-units', 'teacher'],
@@ -32,9 +33,16 @@ const CLASS_ID = /^[A-Za-z0-9]+$/;
 export function parseRoute(hash) {
   const h = String(hash ?? '');
   if (h === '' || h === '#' || h === '#/') return { name: 'home', params: {} };
+  if (h.startsWith('#/?c=') && CLASS_ID.test(h.slice(5))) {
+    return { name: 'home', params: { classId: h.slice(5) } };
+  }
   if (SIMPLE[h]) return { name: SIMPLE[h], params: {} };
   // #/t/class/<classId> と #/t/class/<classId>/sheet
   const parts = h.split('/');
+  if (parts.length === 4 && parts[0] === '#' && parts[1] === 'lesson'
+      && CLASS_ID.test(parts[2]) && CLASS_ID.test(parts[3])) {
+    return { name: 'lesson', params: { classId: parts[2], lessonId: parts[3] } };
+  }
   if (parts.length === 5 && parts[0] === '#' && parts[1] === 't' && parts[2] === 'lesson'
       && CLASS_ID.test(parts[3]) && CLASS_ID.test(parts[4])) {
     return { name: 't-lesson', params: { classId: parts[3], lessonId: parts[4] } };
@@ -47,6 +55,8 @@ export function parseRoute(hash) {
 }
 
 export function routeHash(name, params = {}) {
+  if (name === 'home' && params.classId) return `#/?c=${encodeURIComponent(params.classId)}`;
+  if (name === 'lesson') return `#/lesson/${encodeURIComponent(params.classId)}/${encodeURIComponent(params.lessonId)}`;
   if (name === 't-lesson') return `#/t/lesson/${encodeURIComponent(params.classId)}/${encodeURIComponent(params.lessonId)}`;
   if (name === 't-roster') return `#/t/class/${encodeURIComponent(params.classId)}`;
   if (name === 't-sheet') return `#/t/class/${encodeURIComponent(params.classId)}/sheet`;

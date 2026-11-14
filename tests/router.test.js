@@ -7,6 +7,8 @@ import { parseRoute, routeHash, viewFile, roleFor } from '../js/router.js';
 const TABLE = [
   ['login', {}, '#/login', 'login', 'public'],
   ['home', {}, '#/', 'student-home', 'student'],
+  ['home', { classId: 'abc' }, '#/?c=abc', 'student-home', 'student'],
+  ['lesson', { classId: 'a', lessonId: 'b' }, '#/lesson/a/b', 'student-lesson', 'student'],
   ['password', {}, '#/password', 'password', 'student'],
   ['t-classes', {}, '#/t', 'teacher-classes', 'teacher'],
   ['t-units', {}, '#/t/units', 'teacher-units', 'teacher'],
@@ -72,4 +74,35 @@ test('授業の classId と lessonId は英数字だけを受けつける', () =
   assert.deepEqual(parseRoute('#/t/lesson/a/B2'), {
     name: 't-lesson', params: { classId: 'a', lessonId: 'B2' },
   });
+});
+
+test('生徒の授業は classId と lessonId がそろったときだけ開く', () => {
+  for (const hash of [
+    '#/lesson', '#/lesson/a', '#/lesson/a/b/c', '#/lesson/a%2Fb/c',
+    '#/lesson//b', '#/lesson/a/', '#/lesson/a/b/',
+  ]) {
+    assert.deepEqual(parseRoute(hash), { name: 'not-found', params: {} }, hash);
+  }
+  for (const id of ['a-b', 'a_b', 'a.b', 'a%20b', 'a%2Fb', 'あ', 'a?b=1', '%E0%A4%A']) {
+    assert.equal(parseRoute(`#/lesson/${id}/b`).name, 'not-found', id);
+    assert.equal(parseRoute(`#/lesson/a/${id}`).name, 'not-found', id);
+  }
+  assert.equal(roleFor('lesson'), 'student');
+});
+
+test('ホームのクラス指定は英数字の c 一つだけを受けつける', () => {
+  for (const hash of [
+    '#/?c=', '#/?c=a/b', '#/?x=1', '#/?c=a-b', '#/?c=a_b', '#/?c=あ',
+    '#/?c=a%2Fb', '#/?c=%61', '#/?c=a&c=b', '#/?c=a&x=1', '#/?c=a#', '#/?',
+  ]) {
+    assert.deepEqual(parseRoute(hash), { name: 'not-found', params: {} }, hash);
+  }
+  assert.deepEqual(parseRoute('#/?c=A1b2'), { name: 'home', params: { classId: 'A1b2' } });
+  assert.equal(routeHash('home'), '#/');
+  assert.equal(routeHash('home', { classId: '' }), '#/');
+});
+
+test('生徒の routeHash は ID の余計な区切りをそのまま入れない', () => {
+  assert.equal(routeHash('home', { classId: 'a/b' }), '#/?c=a%2Fb');
+  assert.equal(routeHash('lesson', { classId: 'a/b', lessonId: 'c/d' }), '#/lesson/a%2Fb/c%2Fd');
 });

@@ -38,6 +38,85 @@
 
 /* 生徒のホーム */
 .home-empty { padding: var(--s-4) var(--s-3); text-align: center; font-size: 20px; }
+.student-filters { display: flex; align-items: flex-end; flex-wrap: wrap; gap: var(--s-2); margin-bottom: var(--s-3); }
+.student-filters .field { flex: 0 1 360px; max-width: 100%; margin-bottom: 0; }
+.student-order { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+.student-order .btn[aria-pressed='true'] { background: var(--c-navy); border-color: var(--c-navy); color: #FFFFFF; text-decoration: underline; text-underline-offset: 4px; }
+.lesson-group + .lesson-group { margin-top: var(--s-4); }
+.lesson-group h2 { font-size: 24px; }
+.lesson-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-2); }
+.lesson-tile { min-width: 0; display: flex; flex-direction: column; background: var(--c-card); border: 1px solid var(--c-line); border-radius: var(--r-1); box-shadow: var(--shadow); }
+.lesson-tile-materials { border-top: 3px solid var(--teacher); border-radius: var(--r-1) var(--r-1) 0 0; background: var(--teacher-bg); }
+.lesson-tile-label { display: block; padding: 4px var(--s-1); color: var(--teacher); font-weight: 700; }
+.lesson-tile-frame { position: relative; display: flex; align-items: center; justify-content: center; aspect-ratio: 4 / 3; background: #E2E7F1; overflow: hidden; touch-action: pan-y; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.lesson-tile-frame img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+.lesson-tile-placeholder { max-height: 100%; padding: var(--s-2); text-align: center; overflow: hidden; overflow-wrap: anywhere; }
+.lesson-tile-controls { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 4px; }
+.lesson-tile-arrow { flex: none; width: 44px; height: 44px; min-width: 44px; min-height: 44px; padding: 0; font-size: 28px; }
+.lesson-tile-dots { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.lesson-tile-dot { display: block; flex: none; width: 7px; height: 7px; border: 1px solid var(--teacher); border-radius: 50%; background: var(--c-card); }
+.lesson-tile-dot.is-current { width: 16px; border-radius: 3px; background: var(--teacher); }
+.lesson-tile-open { display: flex; flex-direction: column; gap: 4px; min-width: 44px; min-height: 64px; padding: var(--s-1); border: 0; background: var(--c-card); color: var(--c-navy); font: inherit; text-align: left; cursor: pointer; touch-action: manipulation; overflow-wrap: anywhere; }
+.lesson-tile-open:hover { background: var(--c-bg); }
+.lesson-tile-open .lesson-date { font-size: 16px; }
+.lesson-tile-open .lesson-title { font-size: 18px; }
+.lesson-tile-record { margin-top: auto; padding: var(--s-1); border-top: 2px solid var(--mine); border-radius: 0 0 var(--r-1) var(--r-1); background: var(--mine-bg); }
+.lesson-tile-record > .small { display: block; margin-bottom: 4px; color: var(--mine); font-weight: 700; }
+.lesson-tile-marks { display: flex; flex-wrap: wrap; gap: 4px; }
+.lesson-tile-marks .chip { max-width: 100%; font-size: 14px; overflow-wrap: anywhere; }
+
+@media (orientation: portrait), (max-width: 899px) {
+  .lesson-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 599px) {
+  .lesson-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-1); }
+}
+@media (max-width: 359px) {
+  .lesson-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* 生徒の授業。資料と記録を同じ幅で並べ、縦向きでは資料を上に置く。 */
+.student-lesson-page { max-width: 1400px; margin: 0 auto; padding: var(--s-2); }
+.student-lesson-header { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1) var(--s-2); margin-bottom: var(--s-2); }
+.student-lesson-title { flex: 1; min-width: 180px; overflow-wrap: anywhere; }
+.student-lesson-title h1 { margin: 0; font-size: 24px; }
+.student-lesson-date { margin: 0; }
+.student-lesson-states { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+.student-lesson-status { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1); }
+.student-lesson-status:empty, .student-material-message:empty, .student-record-count:empty { display: none; }
+.student-lesson-status .chip { max-width: 100%; overflow-wrap: anywhere; }
+.student-lesson-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: var(--s-2); }
+.student-lesson-columns[hidden] { display: none; }
+.student-lesson-teacher, .student-lesson-mine { min-width: 0; padding: var(--s-2); border: 2px solid; border-radius: var(--r-1); }
+.student-lesson-teacher { border-color: var(--teacher); background: var(--teacher-bg); max-height: calc(100vh - 160px); max-height: calc(100dvh - 160px); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.student-lesson-mine { border-color: var(--mine); background: var(--mine-bg); }
+.student-lesson-teacher > h2 { color: var(--teacher); }
+.student-lesson-mine > h2, .student-lesson-mine > h3 { color: var(--mine); }
+.student-lesson-teacher > h2, .student-lesson-mine > h2 { font-size: 22px; }
+.student-lesson-mine > h3 { margin-top: var(--s-3); font-size: 20px; }
+.student-lesson-mine textarea { display: block; width: 100%; min-height: 120px; resize: vertical; }
+.student-record-count { margin: 4px 0 0; text-align: right; }
+.student-record-levels { min-width: 0; margin: 0 0 var(--s-2); padding: 0; border: 0; }
+.student-record-level-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-1); }
+.student-record-level-buttons .btn { white-space: normal; overflow-wrap: anywhere; }
+.student-record-level-buttons .btn[aria-pressed='true'] { background: var(--mine); border-color: var(--mine); color: #FFFFFF; }
+.student-lesson-page button { min-width: 44px; min-height: 44px; }
+.student-material-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
+.student-material-open { display: flex; flex-direction: column; width: 100%; padding: var(--s-1); border: 2px solid var(--teacher); border-radius: var(--r-1); background: var(--c-card); color: var(--c-navy); font: inherit; text-align: left; cursor: pointer; touch-action: manipulation; }
+.student-material-open:disabled { cursor: default; }
+.student-material-open:hover:not(:disabled) { background: var(--teacher-bg); }
+.student-material-preview { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 90px; background: var(--teacher-bg); }
+.student-material-preview img { display: block; width: 100%; height: auto; object-fit: contain; }
+.student-material-pdf { height: 160px; }
+.student-material-pdf img { width: 100%; height: 100%; }
+.student-material-summary { display: flex; flex-direction: column; gap: 4px; padding-top: var(--s-1); overflow-wrap: anywhere; }
+.student-material-summary > .small { color: var(--teacher); font-weight: 700; }
+.student-material-message { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1); margin-top: var(--s-1); }
+
+@media (orientation: portrait) {
+  .student-lesson-columns { grid-template-columns: minmax(0, 1fr); }
+  .student-lesson-teacher { max-height: none; overflow-y: visible; }
+}
 
 /* 先生の画面の共通: ボタンの並び、画面の中の入力の form */
 .page-actions { display: flex; flex-wrap: wrap; gap: var(--s-1); margin-bottom: var(--s-2); }
