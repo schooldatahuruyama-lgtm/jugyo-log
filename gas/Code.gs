@@ -2,13 +2,15 @@
  * 授業ログ 本番用の GAS ウェブアプリ
  *
  * 先生の資料を Drive に保存し、呼んだ人が読める授業の資料だけを取り出す。
+ * 生徒の添付は別のフォルダに保存し、持ち主と先生だけが取り出す。
  * 本人確認と授業の読み取りには、呼んだ人の Firebase ID トークンを使う。
  * ファイルの共有の設定は変えない。公開の手順は docs/setup/gas.md にある。
  * スクリプト プロパティ DATABASE_URL に、データベースの URL を入れておくこと。
  */
 
-var VERSION = 'app-1';
+var VERSION = 'app-2';
 var FOLDER_NAME = '授業ログ_資料';
+var STUDENT_FOLDER_NAME = '授業ログ_生徒';
 var IMAGE_MAX_B64 = 1400000;
 var PDF_MAX_B64 = 14000000;
 var TOTAL_MAX_B64 = 6000000;
@@ -61,13 +63,14 @@ function handle_(e) {
 
   var op = req.op;
   if (op === 'ping') return { ok: true, version: VERSION };
-  if (op !== 'whoami' && op !== 'putMaterial' && op !== 'getMaterials' && op !== 'getFile' && op !== 'trashFile') {
+  if (op !== 'whoami' && op !== 'putMaterial' && op !== 'getMaterials' && op !== 'getFile' && op !== 'trashFile' &&
+      op !== 'putStudentFile' && op !== 'getStudentFile' && op !== 'getStudentFiles' && op !== 'trashStudentFile') {
     return fail_('bad');
   }
 
   var base = databaseUrl_();
   if (!base) return fail_('config');
-  var user = verify_(req.token, base);
+  var user = verify_(req.token, base, op === 'putStudentFile');
   if (!user) return fail_('auth');
 
   if (op === 'whoami') {
@@ -78,6 +81,12 @@ function handle_(e) {
     if (user.role !== 'teacher') return fail_('denied');
     return op === 'putMaterial' ? putMaterial_(req) : trashFile_(req);
   }
+  if (op === 'putStudentFile' || op === 'trashStudentFile') {
+    if (user.role !== 'student') return fail_('denied');
+    return op === 'putStudentFile' ? putStudentFile_(req, base, user) : trashStudentFile_(req, user);
+  }
+  if (op === 'getStudentFile') return getStudentFile_(req, user);
+  if (op === 'getStudentFiles') return getStudentFiles_(req, user);
   return op === 'getMaterials' ? getMaterials_(req, base) : getFile_(req, base);
 }
 
@@ -89,7 +98,7 @@ function databaseUrl_() {
   return String(base).trim().replace(/\/+$/, '');
 }
 
-function verify_(token, base) {
+function verify_(token, base, allowUnknown) {
   if (typeof token !== 'string' || token.length > 4096 || !matches_(token, TOKEN_RE)) return null;
   var uid = uidFromToken_(token);
   if (!uid) return null;
@@ -110,7 +119,8 @@ function verify_(token, base) {
   res = UrlFetchApp.fetch(base + '/accounts/' + uid + '.json?auth=' + token, { muteHttpExceptions: true });
   if (res.getResponseCode() !== 200) return null;
   var studentId = JSON.parse(res.getContentText());
-  if (!matches_(studentId, STUDENT_ID_RE)) return null;
+  // 生徒の保存では、有効なトークンでも対応のないアカウントを denied にする
+  if (!matches_(studentId, STUDENT_ID_RE)) return allowUnknown ? { role: 'unknown' } : null;
   cache.put(cacheKey, 's:' + studentId, AUTH_CACHE_SECONDS);
   return { role: 'student', studentId: studentId };
 }
@@ -131,23 +141,24 @@ function uidFromToken_(token) {
 
 // ---- Drive ----
 
-function folder_() {
-  var found = findFolder_();
+function folder_(name) {
+  name = name || FOLDER_NAME;
+  var found = findFolder_(name);
   if (found) return found;
   var lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
-    found = findFolder_();
+    found = findFolder_(name);
     if (found) return found;
-    return DriveApp.getRootFolder().createFolder(FOLDER_NAME);
+    return DriveApp.getRootFolder().createFolder(name);
   } finally {
     lock.releaseLock();
   }
 }
 
 // 共有された同じ名前のフォルダを使わないよう、Drive の直下だけを探す
-function findFolder_() {
-  var it = DriveApp.getRootFolder().getFoldersByName(FOLDER_NAME);
+function findFolder_(name) {
+  var it = DriveApp.getRootFolder().getFoldersByName(name || FOLDER_NAME);
   return it.hasNext() ? it.next() : null;
 }
 
@@ -287,6 +298,130 @@ function getFile_(req, base) {
 function trashFile_(req) {
   if (!matches_(req.fileId, ID_RE)) return fail_('bad');
   var file = findFile_(req.fileId, findFolder_());
+  if (!file) return { ok: true, trashed: false };
+  file.setTrashed(true);
+  return { ok: true, trashed: true };
+}
+
+// ---- 生徒の添付 ----
+
+function putStudentFile_(req, base, user) {
+  if (!matches_(req.key, KEY_RE) || !validLesson_(req)) return fail_('bad');
+  if (req.mime !== 'image/jpeg' && req.mime !== 'application/pdf') return fail_('bad');
+  if (typeof req.dataB64 !== 'string' || req.dataB64.length === 0) return fail_('bad');
+  var max = req.mime === 'image/jpeg' ? IMAGE_MAX_B64 : PDF_MAX_B64;
+  if (req.dataB64.length > max) return fail_('toobig');
+
+  var bytes;
+  try {
+    bytes = Utilities.base64Decode(req.dataB64);
+  } catch (err) {
+    return fail_('bad');
+  }
+  if (!bytes || bytes.length === 0) return fail_('bad');
+
+  // 保存のたびに本人のトークンで所属と授業を確かめ、通るまでは Drive に何も作らない
+  var path = '/lessons/' + req.classId + '/' + req.lessonId + '/createdAt.json?auth=' + req.token;
+  var res = UrlFetchApp.fetch(base + path, { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200 || JSON.parse(res.getContentText()) === null) return fail_('notfound');
+
+  // フォルダの作成でもロックを使うので、保存のロックと重ねない
+  var folder = folder_(STUDENT_FOLDER_NAME);
+  var name = 's_' + req.key;
+  var description = 'student:' + user.studentId + ':' + req.classId + ':' + req.lessonId;
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var it = folder.getFilesByName(name);
+    var existing = null;
+    while (it.hasNext()) {
+      var f = it.next();
+      if (f.isTrashed()) continue;
+      if (f.getDescription() !== description) return fail_('denied');
+      existing = f;
+    }
+    if (existing) return { ok: true, id: existing.getId(), existed: true, bytes: existing.getSize() };
+
+    var file = folder.createFile(Utilities.newBlob(bytes, req.mime, name));
+    try {
+      file.setDescription(description);
+    } catch (err) {
+      // 説明のないファイルを残さない
+      try {
+        file.setTrashed(true);
+      } catch (ignored) {}
+      throw err;
+    }
+    return { ok: true, id: file.getId(), existed: false, bytes: bytes.length };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// 持ち主は、呼んだ人が書きかえられる目録でなく GAS が付けた説明から読む
+function studentOwner_(file) {
+  var description = file.getDescription();
+  if (typeof description !== 'string') return null;
+  var parts = description.split(':');
+  if (parts.length !== 4 || parts[0] !== 'student' || !matches_(parts[1], STUDENT_ID_RE) ||
+      !matches_(parts[2], MATERIAL_ID_RE) || !matches_(parts[3], MATERIAL_ID_RE)) return null;
+  return parts[1];
+}
+
+function findStudentFile_(fileId, folder, user) {
+  if (!folder || !matches_(fileId, ID_RE)) return null;
+  var file;
+  try {
+    file = DriveApp.getFileById(fileId);
+  } catch (err) {
+    return null;
+  }
+  if (!isInFolder_(file, folder) || file.isTrashed()) return null;
+  var owner = studentOwner_(file);
+  if (!owner || (user.role !== 'teacher' && owner !== user.studentId)) return null;
+  return file;
+}
+
+function getStudentFile_(req, user) {
+  if (!matches_(req.fileId, ID_RE)) return fail_('bad');
+  var file = findStudentFile_(req.fileId, findFolder_(STUDENT_FOLDER_NAME), user);
+  if (!file) return fail_('notfound');
+  var blob = file.getBlob();
+  return { ok: true, mime: blob.getContentType(), dataB64: Utilities.base64Encode(blob.getBytes()) };
+}
+
+function getStudentFiles_(req, user) {
+  if (!Array.isArray(req.fileIds) || req.fileIds.length < 1 || req.fileIds.length > 6) return fail_('bad');
+  for (var i = 0; i < req.fileIds.length; i++) {
+    if (!matches_(req.fileIds[i], ID_RE)) return fail_('bad');
+  }
+
+  var folder = findFolder_(STUDENT_FOLDER_NAME);
+  var files = Object.create(null);
+  var missing = [];
+  var total = 0;
+  for (var j = 0; j < req.fileIds.length; j++) {
+    var id = req.fileIds[j];
+    var file = findStudentFile_(id, folder, user);
+    if (!file || file.getMimeType() !== 'image/jpeg') {
+      missing.push(id);
+      continue;
+    }
+    var blob = file.getBlob();
+    var dataB64 = Utilities.base64Encode(blob.getBytes());
+    if (total + dataB64.length > TOTAL_MAX_B64) {
+      missing = missing.concat(req.fileIds.slice(j));
+      break;
+    }
+    files[id] = { mime: blob.getContentType(), dataB64: dataB64 };
+    total += dataB64.length;
+  }
+  return { ok: true, files: files, missing: missing };
+}
+
+function trashStudentFile_(req, user) {
+  if (!matches_(req.fileId, ID_RE)) return fail_('bad');
+  var file = findStudentFile_(req.fileId, findFolder_(STUDENT_FOLDER_NAME), user);
   if (!file) return { ok: true, trashed: false };
   file.setTrashed(true);
   return { ok: true, trashed: true };

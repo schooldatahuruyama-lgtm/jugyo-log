@@ -11,6 +11,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CODE = join(root, 'gas/Code.gs');
 const DATABASE_URL = 'https://db.example';
 const FOLDER_NAME = '授業ログ_資料';
+const STUDENT_FOLDER_NAME = '授業ログ_生徒';
 const b64url = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
 const jwt = (payload) => `${b64url({ alg: 'RS256' })}.${b64url(payload)}.c2lnbmF0dXJl`;
 const tokT = jwt({ user_id: 'uidT' });
@@ -27,8 +28,9 @@ function setup(options = {}) {
   const state = {
     teacherList: { uidT: true },
     accounts: { uidS: 's26-001', uidOther: 's26-002' },
-    memberOf: { 's26-001': { classA: true }, 's26-002': { classB: true } },
+    memberOf: { 's26-001': { classA: true, c1: true }, 's26-002': { classB: true, c1: true } },
     materials: {},
+    createdAt: { 'lessons/c1/l1/createdAt': 1, 'lessons/c1/l2/createdAt': 2 },
   };
   const reads = [];
   const db = {
@@ -39,10 +41,10 @@ function setup(options = {}) {
         if (parts[1] !== uid) return { status: 401, body: { error: 'Permission denied' } };
         return { status: 200, body: state[parts[0]][uid] ?? null };
       }
-      if (parts.length === 4 && parts[0] === 'lessons' && parts[3] === 'materials') {
+      if (parts.length === 4 && parts[0] === 'lessons' && ['materials', 'createdAt'].includes(parts[3])) {
         const studentId = state.accounts[uid];
         if (state.teacherList[uid] === true || state.memberOf[studentId]?.[parts[1]] === true) {
-          return { status: 200, body: state.materials[path] ?? null };
+          return { status: 200, body: state[parts[3]][path] ?? null };
         }
       }
       return { status: 401, body: { error: 'Permission denied' } };
@@ -69,12 +71,16 @@ function setup(options = {}) {
   const getFile = (overrides = {}) => call({
     op: 'getFile', token: tokS, classId: 'classA', lessonId: 'lessonA', materialId: 'imageA', ...overrides,
   });
+  const putStudent = (overrides = {}) => call({
+    op: 'putStudentFile', token: tokS, key: 'student-0001', classId: 'c1', lessonId: 'l1',
+    mime: 'image/jpeg', dataB64: PHOTO, ...overrides,
+  });
   const link = (id, fileId, extra = {}) => {
     const path = 'lessons/classA/lessonA/materials';
     state.materials[path] ??= {};
     state.materials[path][id] = { type: 'image', fileId, name: '資料の名前', ...extra };
   };
-  return { state, reads, fakes, gas, call, put, get, getFile, link };
+  return { state, reads, fakes, gas, call, put, get, getFile, putStudent, link };
 }
 
 function countDriveReads(fakes) {
@@ -87,12 +93,12 @@ function countDriveReads(fakes) {
   return ids;
 }
 
-test('本番の ping と doGet は app-1 を JSON で返す', () => {
+test('本番の ping と doGet は app-2 を JSON で返す', () => {
   const { call, gas, fakes } = setup();
-  assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-1' });
+  assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-2' });
   const out = gas.doGet();
   assert.equal(out.getMimeType(), fakes.ContentService.MimeType.JSON);
-  assert.deepEqual(JSON.parse(out.getContent()), { ok: true, version: 'app-1' });
+  assert.deepEqual(JSON.parse(out.getContent()), { ok: true, version: 'app-2' });
   assert.equal(fakes.fetched.length, 0);
 });
 
@@ -497,8 +503,8 @@ test('DATABASE_URL が空なら ping と doGet のほかは config', () => {
     for (const op of ['whoami', 'putMaterial', 'getMaterials', 'getFile', 'trashFile']) {
       assert.deepEqual(call({ op, token: tokT }), { ok: false, error: 'config' });
     }
-    assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-1' });
-    assert.deepEqual(JSON.parse(gas.doGet().getContent()), { ok: true, version: 'app-1' });
+    assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-2' });
+    assert.deepEqual(JSON.parse(gas.doGet().getContent()), { ok: true, version: 'app-2' });
     assert.equal(fakes.fetched.length, 0);
     assert.equal(fakes.files.length, 0);
   }
@@ -524,4 +530,394 @@ test('本番用 Code.gs はモジュール読み込みと共有設定とログ�
   assert.doesNotMatch(src, /\brequire\s*\(/);
   assert.doesNotMatch(src, /setSharing|addViewer|addEditor|setAccess/);
   assert.doesNotMatch(src, /\b(console|Logger)\s*\./);
+});
+
+test('生徒の保存先は直下の生徒フォルダ、名前は s_key、説明は本人と組と授業', () => {
+  const { putStudent, reads, fakes } = setup();
+  const result = putStudent({ name: '保存しない名前.jpg', studentId: 's26-999' });
+  assert.equal(result.ok, true);
+  assert.equal(fakes.files.length, 1);
+  const file = fakes.files[0];
+  assert.deepEqual(result, { ok: true, id: file.getId(), existed: false, bytes: 8 });
+  assert.equal(file.getName(), 's_student-0001');
+  assert.equal(file.getDescription(), 'student:s26-001:c1:l1');
+  assert.equal(file.getMimeType(), 'image/jpeg');
+  assert.equal(file.getParents().next().getName(), STUDENT_FOLDER_NAME);
+  assert.equal(file.getParents().next().getParents().next(), fakes.DriveApp.getRootFolder());
+  assert.deepEqual(reads.at(-1), { path: 'lessons/c1/l1/createdAt', uid: 'uidS' });
+  assert.equal(fakes.fetched.includes(`${DATABASE_URL}/lessons/c1/l1/createdAt.json?auth=${tokS}`), true);
+  assert.equal(fakes.DriveApp.getRootFolder().getFoldersByName(FOLDER_NAME).hasNext(), false);
+});
+
+test('生徒の保存の応答を失って再送しても、同じ ID と保存済みのバイト数が返る', () => {
+  const { putStudent, fakes } = setup();
+  const first = putStudent();
+  assert.equal(first.ok, true);
+  assert.deepEqual(putStudent({ dataB64: PDF }), { ...first, existed: true });
+  assert.equal(fakes.files.length, 1);
+  assert.equal(fakes.Utilities.base64Encode(fakes.files[0].getBlob().getBytes()), PHOTO);
+});
+
+test('別の生徒や別の授業で同じ key を送っても denied で、元のファイルは変えない', () => {
+  const { putStudent, fakes } = setup();
+  assert.equal(putStudent().ok, true);
+  for (const overrides of [{ token: tokOther }, { lessonId: 'l2' }]) {
+    assert.deepEqual(putStudent(overrides), { ok: false, error: 'denied' });
+  }
+  assert.equal(fakes.files.length, 1);
+  assert.equal(fakes.files[0].getDescription(), 'student:s26-001:c1:l1');
+  assert.equal(fakes.files[0].isTrashed(), false);
+});
+
+test('同名のファイルに違う説明があれば denied で、同じ説明のファイルがあっても返さない', () => {
+  const { putStudent, fakes } = setup();
+  assert.equal(putStudent().ok, true);
+  const folder = fakes.files[0].getParents().next();
+  const other = folder.createFile(fakes.Utilities.newBlob([1], 'image/jpeg', 's_student-0001'));
+  other.setDescription('student:s26-002:c1:l1');
+  assert.deepEqual(putStudent(), { ok: false, error: 'denied' });
+  assert.equal(fakes.files.length, 2);
+  assert.equal(fakes.files.every((file) => !file.isTrashed()), true);
+});
+
+test('putStudentFile は先生と対応のないアカウントを denied にし、Drive を作らない', () => {
+  for (const token of [tokT, tokU]) {
+    const { putStudent, fakes, reads } = setup();
+    assert.deepEqual(putStudent({ token }), { ok: false, error: 'denied' });
+    assert.equal(fakes.files.length, 0);
+    assert.equal(fakes.DriveApp.getRootFolder().getFoldersByName(STUDENT_FOLDER_NAME).hasNext(), false);
+    assert.equal(reads.some(({ path }) => path.startsWith('lessons/')), false);
+  }
+});
+
+test('入っていない組と無い授業では notfound で、Drive にフォルダもファイルも作らない', () => {
+  for (const overrides of [{ classId: 'classB' }, { lessonId: 'unknown' }]) {
+    const { putStudent, fakes } = setup();
+    assert.deepEqual(putStudent(overrides), notfound);
+    assert.equal(fakes.files.length, 0);
+    assert.equal(fakes.DriveApp.getRootFolder().getFoldersByName(STUDENT_FOLDER_NAME).hasNext(), false);
+  }
+});
+
+test('生徒の保存は本人確認を覚えていても毎回授業を読み、所属や授業が無くなれば断る', () => {
+  for (const remove of [
+    (state) => { delete state.memberOf['s26-001'].c1; },
+    (state) => { delete state.createdAt['lessons/c1/l1/createdAt']; },
+  ]) {
+    const { putStudent, state, reads, fakes } = setup();
+    assert.equal(putStudent().ok, true);
+    const count = fakes.fetched.length;
+    assert.equal(putStudent().existed, true);
+    assert.equal(fakes.fetched.length, count + 1);
+    remove(state);
+    assert.deepEqual(putStudent(), notfound);
+    assert.deepEqual(putStudent({ key: 'student-0002' }), notfound);
+    assert.deepEqual(reads.at(-1), { path: 'lessons/c1/l1/createdAt', uid: 'uidS' });
+    assert.equal(fakes.files.length, 1);
+  }
+});
+
+test('生徒の保存で授業の HTTP が 200 でなければ notfound', () => {
+  const { call, putStudent, fakes } = setup();
+  call({ op: 'whoami', token: tokS });
+  for (const status of [401, 403, 404, 500]) {
+    fakes.UrlFetchApp.fetch = () => ({ getResponseCode: () => status, getContentText: () => '1' });
+    assert.deepEqual(putStudent(), notfound);
+  }
+  assert.equal(fakes.files.length, 0);
+  assert.equal(fakes.DriveApp.getRootFolder().getFoldersByName(STUDENT_FOLDER_NAME).hasNext(), false);
+});
+
+test('生徒の保存は key・組・授業・mime・base64 の不正を bad にする', () => {
+  const { putStudent, fakes, reads } = setup();
+  const invalid = [
+    ...['a', 'a'.repeat(65), 'abc_defgh', 'abcdefgh\n', 123, undefined].map((key) => ({ key })),
+    ...['classId', 'lessonId'].flatMap((field) =>
+      ['', '../x', 'a_b', 'a'.repeat(41), 'c1\n', 123, undefined].map((value) => ({ [field]: value }))),
+    ...['image/png', '', 123, undefined].map((mime) => ({ mime })),
+    ...['', '***', 'A', 123, {}, undefined].map((dataB64) => ({ dataB64 })),
+  ];
+  for (const value of invalid) assert.deepEqual(putStudent(value), bad);
+  assert.equal(fakes.files.length, 0);
+  assert.equal(reads.some(({ path }) => path.startsWith('lessons/')), false);
+  assert.equal(fakes.DriveApp.getRootFolder().getFoldersByName(STUDENT_FOLDER_NAME).hasNext(), false);
+  assert.equal(putStudent({ key: 'a'.repeat(64) }).ok, true);
+});
+
+test('生徒の画像と PDF の大きさは先生の資料と同じ上限で、こえたら toobig', () => {
+  const { putStudent, fakes } = setup();
+  for (const [mime, max] of [['image/jpeg', 1400000], ['application/pdf', 14000000]]) {
+    assert.deepEqual(putStudent({ mime, dataB64: 'A'.repeat(max + 1) }), { ok: false, error: 'toobig' });
+  }
+  assert.equal(fakes.files.length, 0);
+  assert.equal(fakes.DriveApp.getRootFolder().getFoldersByName(STUDENT_FOLDER_NAME).hasNext(), false);
+  assert.equal(putStudent({ dataB64: 'A'.repeat(1400000) }).bytes, 1050000);
+  assert.equal(putStudent({ key: 'student-pdf1', mime: 'application/pdf', dataB64: 'A'.repeat(14000000) }).bytes, 10500000);
+});
+
+test('生徒フォルダは直下だけで探し、無ければロックの中で 1 つ作る', () => {
+  const { putStudent, fakes } = setup();
+  const rootFolder = fakes.DriveApp.getRootFolder();
+  const other = rootFolder.createFolder('ほかの人から').createFolder(STUDENT_FOLDER_NAME);
+  const lock = fakes.LockService.getScriptLock();
+  let locked = false;
+  let creates = 0;
+  lock.waitLock = () => { assert.equal(locked, false); locked = true; };
+  lock.releaseLock = () => { assert.equal(locked, true); locked = false; };
+  const original = rootFolder.createFolder;
+  rootFolder.createFolder = (name) => {
+    assert.equal(locked, true);
+    creates++;
+    return original(name);
+  };
+  assert.equal(putStudent().ok, true);
+  assert.equal(putStudent({ key: 'student-0002' }).ok, true);
+  assert.equal(creates, 1);
+  assert.equal(locked, false);
+  assert.notEqual(fakes.files[0].getParents().next(), other);
+});
+
+test('生徒フォルダがロックを待つ間に作られたときは、同じフォルダを使う', () => {
+  const { putStudent, fakes } = setup();
+  const rootFolder = fakes.DriveApp.getRootFolder();
+  let folder;
+  fakes.LockService.getScriptLock().waitLock = () => {
+    folder ??= rootFolder.createFolder(STUDENT_FOLDER_NAME);
+  };
+  assert.equal(putStudent().ok, true);
+  assert.equal(fakes.files[0].getParents().next(), folder);
+  const found = rootFolder.getFoldersByName(STUDENT_FOLDER_NAME);
+  assert.equal(found.next(), folder);
+  assert.equal(found.hasNext(), false);
+});
+
+test('生徒の検索・作成・説明の設定は同じロックの中で行い、再送や拒否でも外す', () => {
+  const { putStudent, fakes } = setup();
+  const folder = fakes.DriveApp.getRootFolder().createFolder(STUDENT_FOLDER_NAME);
+  const lock = fakes.LockService.getScriptLock();
+  const events = [];
+  const wrap = (obj, name, fn) => {
+    const original = obj[name];
+    obj[name] = (...args) => {
+      events.push(name);
+      const result = original(...args);
+      return fn ? fn(result) : result;
+    };
+  };
+  wrap(lock, 'waitLock');
+  wrap(lock, 'releaseLock');
+  wrap(folder, 'getFilesByName');
+  wrap(folder, 'createFile', (file) => { wrap(file, 'setDescription'); return file; });
+  assert.equal(putStudent().ok, true);
+  assert.deepEqual(events, ['waitLock', 'getFilesByName', 'createFile', 'setDescription', 'releaseLock']);
+  events.length = 0;
+  assert.equal(putStudent().existed, true);
+  assert.deepEqual(events, ['waitLock', 'getFilesByName', 'releaseLock']);
+  events.length = 0;
+  assert.deepEqual(putStudent({ token: tokOther }), { ok: false, error: 'denied' });
+  assert.deepEqual(events, ['waitLock', 'getFilesByName', 'releaseLock']);
+});
+
+test('生徒の保存でロックを取れなければ server で、ファイルを作らない', () => {
+  for (const existingFolder of [false, true]) {
+    const { putStudent, fakes } = setup();
+    if (existingFolder) fakes.DriveApp.getRootFolder().createFolder(STUDENT_FOLDER_NAME);
+    fakes.LockService.getScriptLock().waitLock = () => { throw new Error('ロックを取れない'); };
+    assert.deepEqual(putStudent(), { ok: false, error: 'server' });
+    assert.equal(fakes.files.length, 0);
+  }
+});
+
+test('生徒の説明の設定に失敗したらゴミ箱に入れ、ロックを外して server', () => {
+  const { putStudent, fakes } = setup();
+  const folder = fakes.DriveApp.getRootFolder().createFolder(STUDENT_FOLDER_NAME);
+  const original = folder.createFile;
+  folder.createFile = (blob) => {
+    const file = original(blob);
+    file.setDescription = () => { throw new Error('外へ出さないエラーの詳細'); };
+    return file;
+  };
+  let releases = 0;
+  fakes.LockService.getScriptLock().releaseLock = () => { releases++; };
+  assert.deepEqual(putStudent(), { ok: false, error: 'server' });
+  assert.equal(fakes.files.length, 1);
+  assert.equal(fakes.files[0].isTrashed(), true);
+  assert.equal(releases, 1);
+});
+
+test('生徒のファイルは持ち主と先生だけが取り出せて、他人には中身を返さない', () => {
+  for (const [mime, dataB64] of [['image/jpeg', PHOTO], ['application/pdf', PDF]]) {
+    const { putStudent, call } = setup();
+    const { id: fileId } = putStudent({ mime, dataB64 });
+    for (const token of [tokS, tokT]) {
+      assert.deepEqual(call({ op: 'getStudentFile', token, fileId }), { ok: true, mime, dataB64 });
+    }
+    assert.deepEqual(call({ op: 'getStudentFile', token: tokOther, fileId, studentId: 's26-001' }), notfound);
+  }
+});
+
+test('生徒のファイルの権限は説明で決め、呼んだ人が渡した持ち主や目録を使わない', () => {
+  const { putStudent, call, fakes, reads } = setup();
+  const { id: fileId } = putStudent({ token: tokOther });
+  const count = reads.length;
+  assert.deepEqual(call({ op: 'getStudentFile', token: tokS, fileId, studentId: 's26-001',
+    attachments: { a1: { fileId } } }), notfound);
+  assert.equal(reads.slice(count).some(({ path }) => path.startsWith('records/')), false);
+  assert.equal(fakes.files[0].getDescription(), 'student:s26-002:c1:l1');
+});
+
+test('生徒の取り出しと削除はフォルダ外・ゴミ箱・説明の不正・無いファイルを対象にしない', () => {
+  const { putStudent, call, fakes } = setup();
+  const { id: fileId } = putStudent();
+  const file = fakes.files[0];
+  const checkMissing = (id) => {
+    for (const token of [tokS, tokT]) {
+      assert.deepEqual(call({ op: 'getStudentFile', token, fileId: id }), notfound);
+      assert.deepEqual(call({ op: 'getStudentFiles', token, fileIds: [id] }), { ok: true, files: {}, missing: [id] });
+    }
+    assert.deepEqual(call({ op: 'trashStudentFile', token: tokS, fileId: id }), { ok: true, trashed: false });
+  };
+  for (const description of ['', 'teacher', 'student', 'student:s26-001', 'student:s26-01:c1:l1',
+    'student:s26-001::l1', 'student:s26-001:c1:l1:extra', 'student:s26-001:c1:l1\n']) {
+    file.setDescription(description);
+    checkMissing(fileId);
+    assert.equal(file.isTrashed(), false);
+  }
+  file.setDescription('student:s26-001:c1:l1');
+  file.setTrashed(true);
+  checkMissing(fileId);
+  const outside = fakes.DriveApp.createFile(fakes.Utilities.newBlob([1], 'image/jpeg', '外の写真'));
+  outside.setDescription('student:s26-001:c1:l1');
+  checkMissing(outside.getId());
+  checkMissing('missing-file');
+  assert.equal(outside.isTrashed(), false);
+});
+
+test('生徒の読み取りと削除だけでは保存先フォルダを作らない', () => {
+  const { call, fakes } = setup();
+  assert.deepEqual(call({ op: 'getStudentFile', token: tokS, fileId: 'missing-file' }), notfound);
+  assert.deepEqual(call({ op: 'getStudentFiles', token: tokT, fileIds: ['missing-file'] }), {
+    ok: true, files: {}, missing: ['missing-file'],
+  });
+  assert.deepEqual(call({ op: 'trashStudentFile', token: tokS, fileId: 'missing-file' }), { ok: true, trashed: false });
+  assert.equal(fakes.DriveApp.getRootFolder().getFoldersByName(STUDENT_FOLDER_NAME).hasNext(), false);
+});
+
+test('getStudentFiles は本人の画像だけを返し、他人の画像と PDF は missing にする', () => {
+  const { putStudent, call } = setup();
+  const own = [putStudent().id, putStudent({ key: 'student-0002' }).id];
+  const other = putStudent({ key: 'student-other', token: tokOther }).id;
+  const pdf = putStudent({ key: 'student-pdf1', mime: 'application/pdf', dataB64: PDF }).id;
+  const fileIds = [...own, other, pdf];
+  const photo = { mime: 'image/jpeg', dataB64: PHOTO };
+  assert.deepEqual(call({ op: 'getStudentFiles', token: tokS, fileIds }), {
+    ok: true, files: Object.fromEntries(own.map((id) => [id, photo])), missing: [other, pdf],
+  });
+  assert.deepEqual(call({ op: 'getStudentFiles', token: tokT, fileIds }), {
+    ok: true, files: Object.fromEntries([...own, other].map((id) => [id, photo])), missing: [pdf],
+  });
+});
+
+test('生徒の取り出しと削除は不正な fileId と配列を bad にし、Drive を読まない', () => {
+  const { call, fakes } = setup();
+  const reads = countDriveReads(fakes);
+  for (const fileId of ['', '../x', 'a'.repeat(201), 'file\n', 123, undefined]) {
+    for (const op of ['getStudentFile', 'trashStudentFile']) {
+      assert.deepEqual(call({ op, token: tokS, fileId }), bad);
+    }
+    assert.deepEqual(call({ op: 'getStudentFiles', token: tokS, fileIds: ['valid-file', fileId] }), bad);
+  }
+  for (const fileIds of [undefined, null, 'file-id', {}, [], Array(7).fill('valid-file')]) {
+    assert.deepEqual(call({ op: 'getStudentFiles', token: tokS, fileIds }), bad);
+  }
+  assert.deepEqual(reads, []);
+});
+
+test('getStudentFiles は 6 個と合計 6000000 文字ちょうどを返せる', () => {
+  const { putStudent, call } = setup();
+  const dataB64 = 'A'.repeat(1000000);
+  const fileIds = Array.from({ length: 6 }, (_, i) => putStudent({ key: `student-000${i}`, dataB64 }).id);
+  const result = call({ op: 'getStudentFiles', token: tokS, fileIds });
+  assert.equal(result.ok, true);
+  assert.deepEqual(Object.keys(result.files), fileIds);
+  assert.deepEqual(result.missing, []);
+  assert.equal(Object.values(result.files).reduce((sum, file) => sum + file.dataB64.length, 0), 6000000);
+});
+
+test('getStudentFiles は合計の上限をこえる画像と残りを missing にする', () => {
+  const { putStudent, call, fakes } = setup();
+  const fileIds = Array.from({ length: 5 }, (_, i) =>
+    putStudent({ key: `student-000${i}`, dataB64: 'A'.repeat(1400000) }).id);
+  const small = putStudent({ key: 'student-small' }).id;
+  const reads = countDriveReads(fakes);
+  const result = call({ op: 'getStudentFiles', token: tokS, fileIds: [...fileIds, small] });
+  assert.equal(result.ok, true);
+  assert.deepEqual(Object.keys(result.files), fileIds.slice(0, 4));
+  assert.deepEqual(result.missing, [fileIds[4], small]);
+  assert.equal(reads.includes(small), false);
+});
+
+test('trashStudentFile は持ち主だけが消せて、再送は false、先生は denied', () => {
+  const { putStudent, call, fakes } = setup();
+  const { id: fileId } = putStudent();
+  const body = { op: 'trashStudentFile', token: tokS, fileId };
+  assert.deepEqual(call({ ...body, token: tokOther }), { ok: true, trashed: false });
+  assert.deepEqual(call({ ...body, token: tokT }), { ok: false, error: 'denied' });
+  assert.equal(fakes.files[0].isTrashed(), false);
+  assert.deepEqual(call(body), { ok: true, trashed: true });
+  assert.equal(fakes.files[0].isTrashed(), true);
+  assert.deepEqual(call(body), { ok: true, trashed: false });
+});
+
+test('先生用の op に生徒の ID を渡しても返らず、消えない', () => {
+  const { putStudent, call, get, getFile, link, fakes } = setup();
+  const { id: fileId } = putStudent();
+  link('imageA', fileId);
+  for (const token of [tokS, tokT]) {
+    assert.deepEqual(getFile({ token }), notfound);
+    assert.deepEqual(get({ token }), { ok: true, files: {}, missing: ['imageA'] });
+  }
+  assert.deepEqual(call({ op: 'trashFile', token: tokT, fileId }), { ok: true, trashed: false });
+  assert.equal(fakes.files[0].isTrashed(), false);
+});
+
+test('生徒用の op に先生の ID を渡しても返らず、消えない', () => {
+  const { put, call, fakes } = setup();
+  const { id: fileId } = put();
+  for (const token of [tokS, tokT]) {
+    assert.deepEqual(call({ op: 'getStudentFile', token, fileId }), notfound);
+    assert.deepEqual(call({ op: 'getStudentFiles', token, fileIds: [fileId] }), {
+      ok: true, files: {}, missing: [fileId],
+    });
+  }
+  assert.deepEqual(call({ op: 'trashStudentFile', token: tokS, fileId }), { ok: true, trashed: false });
+  assert.equal(fakes.files[0].isTrashed(), false);
+});
+
+test('生徒用の各 op はにせのトークンを auth、設定が無ければ config にする', () => {
+  const ops = ['putStudentFile', 'getStudentFile', 'getStudentFiles', 'trashStudentFile'];
+  const { call, fakes } = setup();
+  for (const op of ops) {
+    for (const token of [undefined, 'invalid-token', jwt({ user_id: 'uidS', fake: true })]) {
+      assert.deepEqual(call({ op, token }), auth);
+    }
+  }
+  assert.equal(fakes.files.length, 0);
+  for (const databaseURL of [undefined, '', '   ']) {
+    const { call, fakes } = setup({ databaseURL });
+    for (const op of ops) assert.deepEqual(call({ op, token: tokS }), { ok: false, error: 'config' });
+    assert.equal(fakes.fetched.length, 0);
+    assert.equal(fakes.files.length, 0);
+  }
+});
+
+test('生徒の取り出しと削除の例外は server にし、エラーの詳細を返さない', () => {
+  const { putStudent, call, fakes } = setup();
+  const { id: fileId } = putStudent();
+  const fail = () => { throw new Error('外へ出さないエラーの詳細'); };
+  fakes.files[0].getBlob = fail;
+  fakes.files[0].setTrashed = fail;
+  for (const op of ['getStudentFile', 'getStudentFiles', 'trashStudentFile']) {
+    assert.deepEqual(call({ op, token: tokS, fileId, fileIds: [fileId] }), { ok: false, error: 'server' });
+  }
 });
