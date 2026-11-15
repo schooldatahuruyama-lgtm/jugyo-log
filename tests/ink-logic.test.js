@@ -4,11 +4,48 @@ import assert from 'node:assert/strict';
 import { CONFIG } from '../js/config.js';
 import { emptyInk, round1, cleanStroke, cleanInk, parseInk, serializeInk, inkBytes, isEmptyInk,
   simplify, makeStroke, snapLine, hitStroke, eraseAt, addStroke, addPage, canAddPage,
-  strokePath, inkBounds, createHistory, emptyPictureInk, inkPlaceKind, pictureIndex } from '../js/ink-logic.js';
+  strokePath, inkBounds, createHistory, emptyPictureInk, inkPlaceKind, pictureIndex, inkPagePlace, splitInkPlace, hasPageInk } from '../js/ink-logic.js';
 
 const stroke = (change = {}) => ({ c: 0, w: 0, p: [10, 20, 30, 40], ...change });
 const ink = (s = [], h = 400) => ({ v: 1, h, s });
 const draw = (points, change = {}, height = 400) => makeStroke({ points, color: 0, width: 0, ruler: false, ...change }, height);
+
+test('PDF の場所: 添付・資料の 1〜999 ページを作り、元の場所と番号に分ける', () => {
+  for (const [place, kind] of [['a1', 'attachment-page'], ['a6', 'attachment-page'], ['Abc123Def456', 'material-page']]) {
+    for (const page of [1, 3, 12, 999]) {
+      const name = inkPagePlace(place, page);
+      assert.equal(name, `${place}#p${page}`);
+      assert.equal(inkPlaceKind(name), kind);
+      assert.deepEqual(splitInkPlace(name), { place, page });
+    }
+    for (const page of [0, -1, 1.5, 1000, '1', '01', NaN, Infinity, null, undefined, {}, []]) {
+      assert.throws(() => inkPagePlace(place, page), TypeError);
+    }
+  }
+  for (const name of ['a1#p0', 'a1#p-1', 'a1#p1.5', 'a1#p1000', 'a1#p01', 'a1#px', 'a1#p1\n',
+    'a1#p1#p2', 'memo#p1', 'a7#p1', 'other#p1', 'a1#1', 'a1#p', null, undefined, 1]) {
+    assert.equal(inkPlaceKind(name), null);
+    assert.equal(splitInkPlace(name), null);
+  }
+  for (const place of ['memo', 'a7', 'other', 'a1#p1', null, 1]) assert.throws(() => inkPagePlace(place, 1), TypeError);
+  for (const place of ['memo', 'a1', 'Abc123Def456', '']) assert.equal(splitInkPlace(place), null);
+});
+
+test('hasPageInk: 同じ場所・同じ PDF の有効なページの目録だけを見つける', () => {
+  const index = { on: 'pdf', fileId: 'ink' };
+  const record = { ink: { 'a1#p1': index, 'a1#p999': index, 'Abc123Def456#p12': index,
+    a2: index, 'a2#p01': index, 'a2#p0': index, 'a2#p1': null } };
+  for (const place of ['a1', 'Abc123Def456']) {
+    assert.equal(hasPageInk(record, place, 'pdf'), true);
+    assert.equal(hasPageInk(record, place, 'other-pdf'), false);
+  }
+  assert.equal(hasPageInk(record, 'a2', 'pdf'), false);
+  for (const place of [undefined, null, '', 'memo', 'a1#p1']) assert.equal(hasPageInk(record, place, 'pdf'), false);
+  for (const value of [null, {}, { ink: {} }, { ink: { 'a1#p1': {} } }]) {
+    assert.equal(hasPageInk(value, 'a1', 'pdf'), false);
+    assert.equal(hasPageInk(value, 'a1', undefined), false);
+  }
+});
 
 test('写真の手書き: 高さは整数で 100〜4000。線を確かめ、種類と高さを保存して読める', () => {
   for (const [height, expected] of [[601.4, 601], [601.5, 602], [-1, 100], [99.9, 100], [1e300, 4000],

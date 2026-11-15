@@ -46,6 +46,7 @@ export function materialPane({ ctx, classId, lessonId, lesson, studentId, ink, i
     const { material } = item;
     viewer = openViewer({ title: material.name, kind: material.type,
       pictureInk: () => inks.get(photoFor(material)),
+      pageInk: (page) => inks.getPage(photoFor(material), page),
       load: () => material.type === 'pdf' ? ctx.files.loadFile(classId, lessonId, material) : item.blob });
   }
 

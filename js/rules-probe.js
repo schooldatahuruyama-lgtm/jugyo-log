@@ -45,6 +45,8 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
   const materialId = newId(random, CONFIG.idLength);
   let missingMaterialId = newId(random, CONFIG.idLength);
   while (missingMaterialId === materialId) missingMaterialId = newId(random, CONFIG.idLength);
+  let pdfMaterialId = newId(random, CONFIG.idLength);
+  while ([materialId, missingMaterialId].includes(pdfMaterialId)) pdfMaterialId = newId(random, CONFIG.idLength);
   const unitId = newId(random, CONFIG.idLength);
   let missingLessonId = newId(random, CONFIG.idLength);
   while (missingLessonId === inLessonId) missingLessonId = newId(random, CONFIG.idLength);
@@ -98,6 +100,9 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
     await teacherRepo.addMaterial(targets, materialId, {
       kind: 'board', type: 'image', fileId: 'probe', name: PROBE_CLASS_NAME, bytes: 42,
     }, PROBE_THUMB, now());
+    await teacherRepo.addMaterial(targets, pdfMaterialId, {
+      kind: 'handout', type: 'pdf', fileId: 'probe-pdf', name: PROBE_CLASS_NAME, bytes: 42,
+    }, null, now());
 
     // 2. 表を順に試す。記録の確認は、accounts・memberOf の書きかえより前に行う
     const net = studentNet;
@@ -119,6 +124,10 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
     const ink = { fileId: 'probe-ink', bytes: 42, strokes: 1, updatedAt: now() };
     const writeInk = (field, value, studentId = sid) => {
       const path = `records/${inId}/${inLessonId}/${studentId}/ink/${field}`;
+      return trackWrite({ [path]: null }, () => net.set(path, value));
+    };
+    const writePageInk = (place, page, value) => {
+      const path = `${ownRecord}/inkPages/${place}/${page}`;
       return trackWrite({ [path]: null }, () => net.set(path, value));
     };
     const inkThumbs = `inkThumbs/${inId}/${inLessonId}`;
@@ -219,6 +228,16 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       ['on を付けて ink/memo を書く', 'denied', () => writeInk('memo', { ...ink, on: attachment.fileId, updatedAt: ink.updatedAt + 4 })],
       ['授業の写真の資料と同じ on で ink/（資料）を書く', 'ok', () => writeInk(materialId, { ...ink, on: 'probe' })],
       ['授業にない資料の ink を書く', 'denied', () => writeInk(missingMaterialId, { ...ink, on: 'probe' })],
+      ['自分の PDF と同じ on で inkPages/a2/p1 を書く', 'ok', async () => {
+        await writeAttachment('a2', { ...attachment, type: 'pdf', fileId: 'probe-pdf' });
+        await writePageInk('a2', 'p1', { ...ink, on: 'probe-pdf' });
+      }],
+      ['自分の PDF と違う on で inkPages/a2/p1 を書く', 'denied', () => writePageInk('a2', 'p1', { ...ink, on: 'probe-other', updatedAt: ink.updatedAt + 1 })],
+      ['ページ名が不正な inkPages/a2/p0 を書く', 'denied', () => writePageInk('a2', 'p0', { ...ink, on: 'probe-pdf' })],
+      ['写真の置き場所に inkPages/a1/p1 を書く', 'denied', () => writePageInk('a1', 'p1', { ...ink, on: attachment.fileId })],
+      ['PDF の置き場所に写真の ink/a2 を書く', 'denied', () => writeInk('a2', { ...ink, on: 'probe-pdf', updatedAt: ink.updatedAt + 1 })],
+      ['自分の inkPages/a2/p1 を前より古い時刻で書く', 'denied', () => writePageInk('a2', 'p1', { ...ink, on: 'probe-pdf', updatedAt: ink.updatedAt - 1 })],
+      ['授業の PDF の資料と同じ on で inkPages/（資料）/p1 を書く', 'ok', () => writePageInk(pdfMaterialId, 'p1', { ...ink, on: 'probe-pdf' })],
     ];
     for (const [label, expect, fn] of checks) {
       const got = await attempt(fn);

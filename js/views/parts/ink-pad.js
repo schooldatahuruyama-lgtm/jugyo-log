@@ -22,7 +22,7 @@ function inkPath(stroke) {
     'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
 }
 
-export function inkPad({ ink, readOnly = false, picture = false, label = '手書き', onChange }) {
+export function inkPad({ ink, readOnly = false, picture = false, pdf = false, label = '手書き', onChange }) {
   let current = cleanInk(ink);
   let history = createHistory(CONFIG.ink.undoMax);
   let alive = true;
@@ -143,7 +143,8 @@ export function inkPad({ ink, readOnly = false, picture = false, label = '手書
     syncControls();
     try {
       const ok = await confirmDialog({ title: picture ? '書きこみを全部消しますか？' : '手書きを全部消しますか？',
-        body: picture ? 'この写真への書きこみを全部消します。「1 つ戻す」で戻せます。'
+        body: pdf ? 'このページへの書きこみを全部消します。「1 つ戻す」で戻せます。'
+          : picture ? 'この写真への書きこみを全部消します。「1 つ戻す」で戻せます。'
           : 'この欄の手書きを全部消します。「1 つ戻す」で戻せます。',
         okLabel: '全部消す', danger: true, signal: request.signal });
       if (!alive || confirmation !== request || locked) return;
@@ -319,6 +320,17 @@ export function inkPad({ ink, readOnly = false, picture = false, label = '手書
   render();
   return {
     node, paper, tools,
+    getToolState() { return { mode, color, width, ruler, erasing }; },
+    setToolState(value) {
+      if (!alive || !value) return;
+      cancelActive();
+      mode = value.mode === 'write' ? 'write' : 'move';
+      if (Number.isInteger(value.color) && value.color >= 0 && value.color < CONFIG.ink.colors.length) color = value.color;
+      if (Number.isInteger(value.width) && value.width >= 0 && value.width < CONFIG.ink.widths.length) width = value.width;
+      ruler = !!value.ruler;
+      erasing = !!value.erasing && !ruler;
+      syncControls();
+    },
     getInk() { return cleanInk(current); },
     setInk(value) {
       if (!alive) return;

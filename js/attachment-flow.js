@@ -1,6 +1,6 @@
 // 添付の保存・削除の順番。画面や通信の中身は、引数で受け取る部品に任せる。
 import { NetError } from './errors.js';
-import { serverInkTime } from './ink-logic.js';
+import { serverInkTime, splitInkPlace } from './ink-logic.js';
 
 export async function addAttachmentFlow({ repo, files, classId, lessonId, studentId, slot, key, type, mime, dataB64, thumb, now,
   isCancelled = () => false }) {
@@ -35,7 +35,13 @@ export async function removeAttachmentFlow({ repo, files, classId, lessonId, stu
   const record = await repo.getRecord(classId, lessonId, studentId);
   const ink = record?.ink?.[attachment.slot];
   const cleared = record?.inkCleared?.[attachment.slot];
-  if (ink || cleared !== undefined) {
+  const pageNames = [...new Set([...Object.keys(record?.ink ?? {}), ...Object.keys(record?.inkCleared ?? {})])]
+    .filter((name) => splitInkPlace(name)?.place === attachment.slot);
+  if (pageNames.length) {
+    const clearedAt = Math.max(now, ...[attachment.slot, ...pageNames].map((name) => serverInkTime(record, name) + 1));
+    const pages = pageNames.filter((name) => record?.ink?.[name]).map((name) => splitInkPlace(name).page);
+    await repo.removeAttachment(classId, lessonId, studentId, attachment.slot, clearedAt, pages);
+  } else if (ink || cleared !== undefined) {
     await repo.removeAttachment(classId, lessonId, studentId, attachment.slot,
       Math.max(now, serverInkTime(record, attachment.slot) + 1));
   } else {
@@ -49,6 +55,12 @@ export async function removeAttachmentFlow({ repo, files, classId, lessonId, stu
   }
   if (ink) {
     try { await files.trashStudent(ink.fileId); } catch { /* 書きこみの片付けの失敗は取り消さない */ }
+  }
+  for (const name of pageNames) {
+    const index = record?.ink?.[name];
+    if (index) {
+      try { await files.trashStudent(index.fileId); } catch { /* 書きこみの片付けの失敗は取り消さない */ }
+    }
   }
   return { trashed };
 }

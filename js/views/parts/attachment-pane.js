@@ -62,6 +62,7 @@ export function attachmentPane({ ctx, classId, lessonId, studentId, attachments,
     viewedItem = item;
     viewer = openViewer({ title: labels()[items.indexOf(item)], kind: item.type,
       pictureInk: () => inks.get(photoFor(item)),
+      pageInk: (page) => inks.getPage(photoFor(item), page),
       load: () => ctx.files.loadStudentFile(item.attachment.fileId) });
   }
 
@@ -319,7 +320,8 @@ export function attachmentPane({ ctx, classId, lessonId, studentId, attachments,
       item.error = '';
       render();
       const ok = await confirmDialog({ title: item.type === 'pdf' ? 'この PDF を消しますか？' : 'この写真を消しますか？',
-        body: '消すと元にもどせません。' + (inks.has(photoFor(item)) ? 'この写真への書きこみも消えます。' : ''),
+        body: '消すと元にもどせません。' + (inks.has(photoFor(item))
+          ? item.type === 'pdf' ? 'この PDF への書きこみも消えます。' : 'この写真への書きこみも消えます。' : ''),
         okLabel: '消す', danger: true, signal: dialogs.signal });
       if (!ok || !alive) return;
       item.confirming = false;

@@ -145,6 +145,38 @@
                 ".validate": "($field === 'memo' || $field === 'learned' || $field === 'question' || $field.matches(/^a[1-6]$/) || root.child('lessons').child($classId).child($lessonId).child('materials').child($field).exists()) && newData.isNumber() && (!data.exists() || newData.val() > data.val()) && (!data.parent().parent().child('ink').child($field).exists() || newData.val() > data.parent().parent().child('ink').child($field).child('updatedAt').val())"
               }
             },
+            "inkPagesCleared": {
+              ".validate": "newData.hasChildren()",
+              "$place": {
+                ".validate": "newData.hasChildren()",
+                "$page": {
+                  ".validate": "$page.matches(/^p([1-9]|[1-9][0-9]|[1-9][0-9][0-9])$/) && ($place.matches(/^a[1-6]$/) || root.child('lessons').child($classId).child($lessonId).child('materials').child($place).exists()) && newData.isNumber() && (!data.exists() || newData.val() > data.val()) && (!data.parent().parent().parent().child('inkPages').child($place).child($page).exists() || newData.val() > data.parent().parent().parent().child('inkPages').child($place).child($page).child('updatedAt').val())"
+                }
+              }
+            },
+            "inkPages": {
+              ".validate": "newData.hasChildren()",
+              "$place": {
+                ".validate": "newData.hasChildren()",
+                "$page": {
+                  ".validate": "$page.matches(/^p([1-9]|[1-9][0-9]|[1-9][0-9][0-9])$/) && (($place.matches(/^a[1-6]$/) && newData.parent().parent().parent().child('attachments').child($place).child('type').val() === 'pdf' && newData.child('on').val() === newData.parent().parent().parent().child('attachments').child($place).child('fileId').val()) || (root.child('lessons').child($classId).child($lessonId).child('materials').child($place).child('type').val() === 'pdf' && newData.child('on').val() === root.child('lessons').child($classId).child($lessonId).child('materials').child($place).child('fileId').val())) && newData.hasChildren(['fileId', 'bytes', 'strokes', 'updatedAt', 'on']) && (!data.exists() || newData.child('updatedAt').val() > data.child('updatedAt').val()) && (!data.parent().parent().parent().child('inkPagesCleared').child($place).child($page).exists() || newData.child('updatedAt').val() > data.parent().parent().parent().child('inkPagesCleared').child($place).child($page).val())",
+                  "on": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200" },
+                  "fileId": {
+                    ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200"
+                  },
+                  "bytes": {
+                    ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 400000"
+                  },
+                  "strokes": {
+                    ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 2000 && newData.val() % 1 === 0"
+                  },
+                  "updatedAt": {
+                    ".validate": "newData.isNumber()"
+                  },
+                  "$other": { ".validate": false }
+                }
+              }
+            },
             "ink": {
               ".validate": "newData.hasChildren()",
               "$field": {

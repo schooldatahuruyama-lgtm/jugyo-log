@@ -32,6 +32,74 @@ function evaluateInkRule(rule, field, newData, data, root = snapshot({})) {
     field, newData, data, root, 'c1', 'l1');
 }
 
+function evaluatePageRule(rule, place, page, newData, data, root = snapshot({})) {
+  const expression = rule.replaceAll('$place.matches(/^a[1-6]$/)', '/^a[1-6]$/.test($place)')
+    .replaceAll('$page.matches(/^p([1-9]|[1-9][0-9]|[1-9][0-9][0-9])$/)', '/^p([1-9]|[1-9][0-9]|[1-9][0-9][0-9])$/.test($page)');
+  return new Function('$place', '$page', 'newData', 'data', 'root', '$classId', '$lessonId', `return (${expression});`)(
+    place, page, newData, data, root, 'c1', 'l1');
+}
+
+test('PDF の規則: PDF・on・正しいページ名が必要。写真の規則と子の値・権限は同じ', () => {
+  const sid = rules.records.$classId.$lessonId.$sid;
+  const rule = sid.inkPages.$place.$page;
+  for (const kind of ['inkPages', 'inkPagesCleared']) {
+    assert.equal(sid[kind]['.validate'], 'newData.hasChildren()');
+    assert.equal(sid[kind].$place['.validate'], 'newData.hasChildren()');
+    assert.deepEqual(rulesIn(sid[kind]).filter(([, k]) => ['.read', '.write'].includes(k)), []);
+  }
+  assert.deepEqual(Object.keys(rule).sort(), ['.validate', '$other', 'on', 'fileId', 'bytes', 'strokes', 'updatedAt'].sort());
+  for (const key of ['on', 'fileId', 'bytes', 'strokes', 'updatedAt', '$other']) assert.deepEqual(rule[key], sid.ink.$field[key]);
+  const index = { fileId: 'page-ink', bytes: 42, strokes: 1, updatedAt: 20 };
+  for (const place of ['a1', 'a6', 'Abc123Def456', 'a7', 'memo']) {
+    for (const page of ['p1', 'p999', 'p0', 'p-1', 'p1.5', 'p1000', 'p01', '1', 'px']) {
+      for (const pdf of [null, { type: 'pdf', fileId: 'pdf' }, { type: 'image', fileId: 'pdf' }, { type: 'pdf', fileId: 'other' }]) {
+        for (const on of ['pdf', undefined, '', 1]) {
+          const root = snapshot({ lessons: { c1: { l1: { materials: { Abc123Def456: pdf } } } } });
+          const record = { attachments: { a1: pdf, a6: pdf }, inkPages: { [place]: { [page]: { ...index, ...(on === undefined ? {} : { on }) } } } };
+          const next = snapshot(record).child('inkPages').child(place).child(page);
+          const before = snapshot({}).child('inkPages').child(place).child(page);
+          assert.equal(evaluatePageRule(rule['.validate'], place, page, next, before, root),
+            ['a1', 'a6', 'Abc123Def456'].includes(place) && ['p1', 'p999'].includes(page) && pdf?.type === 'pdf' && pdf.fileId === on);
+        }
+      }
+    }
+  }
+  const before = snapshot({ attachments: { a1: { type: 'pdf', fileId: 'pdf' } } }).child('inkPages').child('a1').child('p1');
+  const next = snapshot({ inkPages: { a1: { p1: { ...index, on: 'pdf' } } } }).child('inkPages').child('a1').child('p1');
+  assert.equal(evaluatePageRule(rule['.validate'], 'a1', 'p1', next, before), false);
+});
+
+test('PDF の規則: 同じページの目録・削除時刻の両方より新しい値だけが通る', () => {
+  const sid = rules.records.$classId.$lessonId.$sid;
+  const pdf = { type: 'pdf', fileId: 'pdf' };
+  const root = snapshot({ lessons: { c1: { l1: { materials: { Abc123Def456: pdf } } } } });
+  for (const place of ['a1', 'Abc123Def456']) {
+    for (const [inkTime, clearedTime] of [[undefined, undefined], [20, undefined], [undefined, 20], [20, 30], [30, 20]]) {
+      const record = { attachments: { a1: pdf }, inkPages: { [place]: { p2: { updatedAt: 1000 },
+        ...(inkTime === undefined ? {} : { p1: { updatedAt: inkTime } }) } },
+      inkPagesCleared: { [place]: { p2: 1000, ...(clearedTime === undefined ? {} : { p1: clearedTime }) } } };
+      for (const time of [19, 20, 29, 30, 31]) {
+        for (const kind of ['inkPages', 'inkPagesCleared']) {
+          const value = kind === 'inkPages' ? { fileId: 'ink', bytes: 42, strokes: 1, updatedAt: time, on: 'pdf' } : time;
+          const next = snapshot({ ...record, [kind]: { [place]: { p1: value } } }).child(kind).child(place).child('p1');
+          assert.equal(evaluatePageRule(sid[kind].$place.$page['.validate'], place, 'p1', next,
+            snapshot(record).child(kind).child(place).child('p1'), root),
+          (inkTime === undefined || time > inkTime) && (clearedTime === undefined || time > clearedTime));
+        }
+      }
+    }
+  }
+  for (const place of ['a1', 'a6', 'Abc123Def456', 'a7', 'memo', 'Missing00001']) {
+    for (const page of ['p1', 'p999', 'p0', 'p01', 'p1000', '1']) {
+      for (const time of [30, '30', Infinity, null]) {
+        assert.equal(evaluatePageRule(sid.inkPagesCleared.$place.$page['.validate'], place, page, snapshot(time),
+          snapshot({}).child('inkPagesCleared').child(place).child(page), root),
+        ['a1', 'a6', 'Abc123Def456'].includes(place) && ['p1', 'p999'].includes(page) && time === 30);
+      }
+    }
+  }
+});
+
 test('写真の手書き規則: 写真・on・所属する授業の資料を確かめ、同時削除後の写真では保存できない', () => {
   const sid = rules.records.$classId.$lessonId.$sid;
   const index = { fileId: 'ink-file', bytes: 42, strokes: 1, updatedAt: 20 };
@@ -186,7 +254,7 @@ test('先生は生徒の記録を書けない（records/$sid の .write に teac
 test('records の中身は決まった項目だけ', () => {
   const sid = rules.records.$classId.$lessonId.$sid;
   const fields = Object.keys(sid).filter((k) => !k.startsWith('.')).sort();
-  assert.deepEqual(fields, ['$other', 'attachments', 'ink', 'inkCleared', 'learned', 'level', 'memo', 'question', 'updatedAt']);
+  assert.deepEqual(fields, ['$other', 'attachments', 'ink', 'inkCleared', 'inkPages', 'inkPagesCleared', 'learned', 'level', 'memo', 'question', 'updatedAt']);
   assert.equal(sid.$other['.validate'], false);
 });
 

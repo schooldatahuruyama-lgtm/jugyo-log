@@ -1,6 +1,6 @@
 // ファイルを保存してから目録を書き、古いファイルを片付ける。画面の操作はしない。
 import { CONFIG } from './config.js';
-import { isEmptyInk, serializeInk, parseInk, serverInkTime, inkPlaceKind, pictureIndex } from './ink-logic.js';
+import { isEmptyInk, serializeInk, parseInk, serverInkTime, inkPlaceKind, pictureIndex, splitInkPlace } from './ink-logic.js';
 import { NetError } from './errors.js';
 
 async function trash(files, fileId) {
@@ -12,13 +12,16 @@ export async function saveInkFlow({ repo, files, classId, lessonId, studentId, f
   if (kind === null) throw new TypeError('手書きの場所が正しくありません。');
   const picture = kind !== 'field';
   if (picture && typeof on !== 'string') throw new TypeError('書きこみ先の写真が正しくありません。');
+  const page = splitInkPlace(field);
+  if (page && (on.length < 1 || on.length > 200)) throw new TypeError('書きこみ先の PDF が正しくありません。');
   const currentIndex = (record) => picture ? pictureIndex(record, field, on) : record?.ink?.[field] ?? null;
   const pictureExists = async (record) => {
     if (!picture) return true;
-    const photo = kind === 'attachment'
-      ? record?.attachments?.find((item) => item.slot === field)
-      : (await repo.getLesson(classId, lessonId))?.materials?.[field];
-    return photo?.type === 'image' && photo.fileId === on;
+    const place = page?.place ?? field;
+    const photo = kind === 'attachment' || kind === 'attachment-page'
+      ? record?.attachments?.find((item) => item.slot === place)
+      : (await repo.getLesson(classId, lessonId))?.materials?.[place];
+    return photo?.type === (page ? 'pdf' : 'image') && photo.fileId === on;
   };
   const record = await repo.getRecord(classId, lessonId, studentId);
   const previous = record?.ink?.[field] ?? null;

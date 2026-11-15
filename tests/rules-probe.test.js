@@ -135,11 +135,16 @@ function correctAnswer(method, path, repo, value) {
       && typeof value === 'string' && value.length >= 1 && value.length <= 20) return 'ok';
     if (path === `records/${inId}/${lesson?.id}/s00-999/attachments/a1`
       && value.type === 'image' && value.fileId === 'probe') return 'ok';
+    if (path === `records/${inId}/${lesson?.id}/s00-999/attachments/a2`
+      && value.type === 'pdf' && value.fileId === 'probe-pdf') return 'ok';
     if (path === `recThumbs/${inId}/${lesson?.id}/s00-999/a1`) return 'ok';
     if (path === `records/${inId}/${lesson?.id}/s00-999/ink/memo` && !('on' in value) && value.strokes === 1 && value.updatedAt >= 1000) return 'ok';
     const material = repo.state.materials.find((m) => m.classId === inId);
     if ([`records/${inId}/${lesson?.id}/s00-999/ink/a1`, `records/${inId}/${lesson?.id}/s00-999/ink/${material?.materialId}`].includes(path)
       && value.on === 'probe' && value.strokes === 1) return 'ok';
+    const pdf = repo.state.materials.find((m) => m.classId === inId && m.material.type === 'pdf');
+    if ([`records/${inId}/${lesson?.id}/s00-999/inkPages/a2/p1`, `records/${inId}/${lesson?.id}/s00-999/inkPages/${pdf?.materialId}/p1`].includes(path)
+      && value.on === 'probe-pdf' && value.strokes === 1 && value.updatedAt >= 1000) return 'ok';
     if (path === `inkThumbs/${inId}/${lesson?.id}/learned/s00-999`) return 'ok';
     if (path === `records/${inId}/${lesson?.id}/s00-999/inkCleared/memo` && Number.isFinite(value) && value > 1000) return 'ok';
   }
@@ -339,7 +344,63 @@ function pictureChecks(repo) {
   ];
 }
 
-const LABEL_COUNT = 83;
+function pageChecks(repo) {
+  const cid = repo.state.members[0].classId;
+  const lid = repo.state.lessons.find((l) => l.classId === cid).id;
+  const mid = repo.state.materials.find((m) => m.classId === cid && m.material.type === 'pdf').materialId;
+  const own = `records/${cid}/${lid}/s00-999`;
+  return [
+    ['set', `${own}/inkPages/a2/p1`, 'ok', (v) => v.on === 'probe-pdf' && v.updatedAt === 1000],
+    ['set', `${own}/inkPages/a2/p1`, 'denied', (v) => v.on === 'probe-other' && v.updatedAt > 1000],
+    ['set', `${own}/inkPages/a2/p0`, 'denied', (v) => v.on === 'probe-pdf'],
+    ['set', `${own}/inkPages/a1/p1`, 'denied', (v) => v.on === 'probe'],
+    ['set', `${own}/ink/a2`, 'denied', (v) => v.on === 'probe-pdf' && v.updatedAt > 1000],
+    ['set', `${own}/inkPages/a2/p1`, 'denied', (v) => v.on === 'probe-pdf' && v.updatedAt === 999],
+    ['set', `${own}/inkPages/${mid}/p1`, 'ok', (v) => v.on === 'probe-pdf'],
+  ];
+}
+
+const LABEL_COUNT = 90;
+
+test('runRulesProbe: PDF の 7 行は PDF・on・ページ・時刻を確かめ、逆の答えと通信失敗を検出する', async () => {
+  for (let i = 0; i < 7; i++) {
+    for (const failure of [null, '逆の答え', '通信失敗']) {
+      let called = 0;
+      const s = setup({ override: (m, p, repo, v) => {
+        if (!repo.state.materials.some((item) => item.material.type === 'pdf')) return undefined;
+        const check = pageChecks(repo)[i];
+        if (!matchesRecordCheck(check, m, p, v)) return undefined;
+        called += 1;
+        return failure === '通信失敗' ? new NetError('network')
+          : failure === '逆の答え' ? (check[2] === 'ok' ? 'denied' : 'ok') : undefined;
+      } });
+      const rows = await runRulesProbe(s.args);
+      assert.equal(rows.length, LABEL_COUNT);
+      assert.equal(called, 1);
+      assert.equal(rows[83 + i].expect, pageChecks(s.teacherRepo)[i][2]);
+      assert.equal(rows[83 + i].pass, failure === null);
+      assert.equal(rows.filter((row) => !row.pass).length, failure ? 1 : 0);
+      const [, path, expect] = pageChecks(s.teacherRepo)[i];
+      const cleanup = s.studentNet().calls.some(([m, , v]) => m === 'update' && v[path] === null);
+      if (failure === '通信失敗' || expect === 'ok' && !failure || expect === 'denied' && failure === '逆の答え') {
+        assert.equal(cleanup, true);
+      }
+      assertLessonCleanup(s);
+    }
+  }
+});
+
+test('runRulesProbe: PDF の準備とページの応答が失われても生徒の片付け対象に入る', async () => {
+  for (const suffix of ['/attachments/a2', '/inkPages/a2/p1']) {
+    const s = setup({ override: (m, p, repo, v) => m === 'set' && p.endsWith(suffix)
+      && v.type !== 'video' && (v.fileId === 'probe-pdf' || v.on === 'probe-pdf' && v.updatedAt === 1000)
+      ? new NetError('network') : undefined });
+    const rows = await runRulesProbe(s.args);
+    assert.equal(rows[83].got, 'error');
+    assert.equal(rows.some((row) => row.label === '片付け'), false);
+    assert.ok(s.studentNet().calls.some(([m, , v]) => m === 'update' && Object.keys(v).some((p) => p.endsWith(suffix) && v[p] === null)));
+  }
+});
 
 test('runRulesProbe: 写真の 6 行は on・写真・資料の対応を確かめ、逆の答えと通信失敗を検出する', async () => {
   for (let i = 0; i < 6; i++) {
@@ -650,7 +711,7 @@ test('runRulesProbe: 小さい画像を片付けられないときは、片付�
   assert.equal(await s.mem.get('accounts'), null);
 });
 
-test('runRulesProbe: 規則が正しければ、全部の行が pass: true（83 行）', async () => {
+test('runRulesProbe: 規則が正しければ、全部の行が pass: true（90 行）', async () => {
   const s = setup();
   const rows = await runRulesProbe(s.args);
   assert.equal(rows.length, LABEL_COUNT);
@@ -675,6 +736,7 @@ test('runRulesProbe: 規則が正しければ、全部の行が pass: true（83 
     'denied', 'denied',
     'ok', 'denied',
     'ok', 'denied', 'denied', 'denied', 'ok', 'denied',
+    'ok', 'denied', 'denied', 'denied', 'denied', 'denied', 'ok',
   ]);
 });
 
@@ -755,6 +817,9 @@ test('runRulesProbe: メモは 2000 文字・level なし、理解度は records
     ['update', '', { [`${own}/inkCleared/memo`]: null }],
     ['update', '', { [`${own}/ink/a1`]: null }],
     ['update', '', { [`${own}/ink/${s.teacherRepo.state.materials.find((m) => m.classId === cid).materialId}`]: null }],
+    ['update', '', { [`${own}/attachments/a2`]: null }],
+    ['update', '', { [`${own}/inkPages/a2/p1`]: null }],
+    ['update', '', { [`${own}/inkPages/${s.teacherRepo.state.materials.find((m) => m.classId === cid && m.material.type === 'pdf').materialId}/p1`]: null }],
   ], '同じ組は 1 回だけ消し、拒否された場所は足さない');
   for (const [m, p, , accepts = () => true] of recordChecks(s.teacherRepo).slice(7, 14)) {
     assert.ok(s.studentNet().calls.some(([cm, cp, v]) => cm === m && (p === null || cp === p) && accepts(v, cp)));
@@ -805,6 +870,23 @@ function recordCleanupSetup({ initial = {}, failStudentCleanup = false, failTeac
     if (kind === 'marks') return Number.isInteger(value) && value >= 1 && value <= 4;
     if (kind === 'recThumbs') return /^a[1-6]$/.test(parts[4]) && typeof value === 'string';
     if (kind === 'inkThumbs') return ['learned', 'question'].includes(parts[3]) && typeof value === 'string' && value.length <= 20000;
+    if (['inkPages', 'inkPagesCleared'].includes(parts[4])) {
+      const place = parts[5];
+      const page = parts[6];
+      if (!/^p[1-9][0-9]{0,2}$/.test(page)) return false;
+      const record = await mem.get(parts.slice(0, 4).join('/'));
+      const previous = record?.inkPages?.[place]?.[page];
+      const cleared = record?.inkPagesCleared?.[place]?.[page];
+      const time = parts[4] === 'inkPages' ? value.updatedAt : value;
+      if (previous && !(time > previous.updatedAt) || cleared !== undefined && !(time > cleared)) return false;
+      const material = await mem.get(`lessons/${cid}/${lid}/materials/${place}`);
+      if (parts[4] === 'inkPagesCleared') return (/^a[1-6]$/.test(place) || !!material) && Number.isFinite(value);
+      const pdf = /^a[1-6]$/.test(place) ? record?.attachments?.[place] : material;
+      return pdf?.type === 'pdf' && value.on === pdf.fileId && typeof value.on === 'string'
+        && typeof value.fileId === 'string' && value.fileId.length > 0 && value.fileId.length <= 200
+        && Number.isFinite(value.bytes) && value.bytes >= 0 && value.bytes <= 400000
+        && Number.isInteger(value.strokes) && value.strokes >= 1 && value.strokes <= 2000 && Number.isFinite(value.updatedAt);
+    }
     if (['ink', 'inkCleared'].includes(parts[4])) {
       const record = await mem.get(parts.slice(0, 4).join('/'));
       const previous = record?.ink?.[parts[5]];
@@ -1162,7 +1244,7 @@ test('runRulesProbe: 前の回数と古い uid があれば、回数を 1 つ進
     || (v && typeof v === 'object' && 'students/s00-999/createdAt' in v)));
 });
 
-test('runRulesProbe: クラスごとに授業と資料を 1 つ、年度 0 の単元を 1 つ準備する', async () => {
+test('runRulesProbe: クラスごとに授業を 1 つ、写真と PDF の資料、年度 0 の単元を準備する', async () => {
   const s = setup();
   await runRulesProbe(s.args);
   const { units, lessons, materials, classes } = s.teacherRepo.state;
@@ -1172,7 +1254,7 @@ test('runRulesProbe: クラスごとに授業と資料を 1 つ、年度 0 の�
   assert.ok(units[0].name.length > 0);
   assert.match(units[0].id, /^[A-Za-z0-9]{12}$/);
   assert.equal(lessons.length, 2);
-  assert.equal(materials.length, 2);
+  assert.equal(materials.length, 4);
   for (const c of classes) {
     const l = lessons.find((x) => x.classId === c.id);
     assert.ok(l);
@@ -1193,6 +1275,13 @@ test('runRulesProbe: クラスごとに授業と資料を 1 つ、年度 0 の�
     assert.equal(m.now, 1000);
     assert.match(m.thumb, /^data:image\/[^;]+;base64,[A-Za-z0-9+/]+=*$/);
     assert.ok(m.thumb.length < 200);
+    const pdf = materials.find((x) => x.classId === c.id && x.lessonId === l.id && x.material.type === 'pdf');
+    assert.ok(pdf);
+    assert.notEqual(pdf.materialId, m.materialId);
+    assert.match(pdf.materialId, /^[A-Za-z0-9]{12}$/);
+    assert.equal(pdf.material.fileId, 'probe-pdf');
+    assert.equal(pdf.material.kind, 'handout');
+    assert.equal(pdf.thumb, null);
   }
 });
 
@@ -1286,6 +1375,8 @@ test('runRulesProbe: 確認用の生徒としてする読み書き（表の順�
       assert.ok(call);
       return call.slice(0, 2);
     }),
+    ['set', `records/${inId}/${s.teacherRepo.state.lessons.find((l) => l.classId === inId).id}/s00-999/attachments/a2`],
+    ...pageChecks(s.teacherRepo).map(([m, p]) => [m, p]),
   ]);
   const sets = s.studentNet().calls.filter(([m, p]) => m === 'set' && !/^(lessons|thumbs|units|records|marks|recThumbs|inkThumbs|terms)\//.test(p));
   assert.equal(sets[1][2], true);                       // memberOf に true

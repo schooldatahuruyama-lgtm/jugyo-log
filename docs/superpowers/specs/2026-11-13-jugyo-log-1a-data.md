@@ -48,11 +48,13 @@ lessons/<classId>/<lessonId>: { date, title, unitId, materials, terms, createdAt
 lessons/<classId>/<lessonId>/terms/<termId>: "光の反射"   先生の重要用語
 terms/<studentId>/<classId>/<lessonId>/<t1〜t8>: "鏡の実験"   生徒が足した用語
 thumbs/<classId>/<lessonId>/<materialId>: "<data URL>"   一覧用の小さい画像          … 1a-2
-records/<classId>/<lessonId>/<studentId>: { memo, level, learned, question, updatedAt, attachments, ink, inkCleared } … 1a-3・1b-1・1b-2
+records/<classId>/<lessonId>/<studentId>: { memo, level, learned, question, updatedAt, attachments, ink, inkCleared, inkPages, inkPagesCleared } … 1a-3・1b-1・1b-2・PDF への書きこみ
 records/<classId>/<lessonId>/<studentId>/attachments/<a1〜a6>: { type, fileId, bytes, addedAt } … 1b-1
 recThumbs/<classId>/<lessonId>/<studentId>/<a1〜a6>: "<data URL>"   添付の小さい画像 … 1b-1
 records/<classId>/<lessonId>/<studentId>/ink/<place>: { fileId, bytes, strokes, updatedAt, on? } … 1b-2・写真への書きこみ
 records/<classId>/<lessonId>/<studentId>/inkCleared/<place>: 数（空にした時刻） … 1b-2・写真への書きこみ
+records/<classId>/<lessonId>/<studentId>/inkPages/<place>/p<N>: { fileId, bytes, strokes, updatedAt, on } … PDF のページへの書きこみ
+records/<classId>/<lessonId>/<studentId>/inkPagesCleared/<place>/p<N>: 数（空にした時刻） … PDF のページへの書きこみ
 inkThumbs/<classId>/<lessonId>/<learned・question>/<studentId>: "<data URL>" … 1b-2（メモの画像は置かない）
 marks/<studentId>/<classId>/<lessonId>: number   理解度（1〜4）。一覧の印に使う       … 1a-3
 check/…                                      段階 0 の確認用（そのまま残す）
@@ -71,7 +73,11 @@ check/…                                      段階 0 の確認用（そのま
 - 小さい画像を `recThumbs` に分けて置き、一覧を並べるだけでは GAS を呼ばない。本体は押したときに取り出して端末に取っておく。
 - 手書き（1b-2）は、`memo`・`learned`・`question` ごとに線の JSON を Drive へ保存し、`ink` に目録を置く。`learned`・`question` の小さい画像は `inkThumbs` に分け、目録と 1 回の update で書く。文字・理解度・記録全体の `updatedAt`・`marks` は変えない。画像の引数が `undefined` なら維持、`null` なら削除、文字なら保存する。線が 0 本なら目録と画像を消し、同じ update で `inkCleared/<field>` に書いた時刻を残す。新しく手書きを保存するときは、目録と同じ update でその欄の `inkCleared` を消す。`memo` は画像の引数にかかわらず目録と削除時刻だけを変え、画像に触らない。
 - 写真への書きこみでは、`place` を欄（`memo`・`learned`・`question`）、自分の添付（`a1`〜`a6`）、先生の資料 ID の 3 種類に広げる。資料 ID は画面の `newId(random, CONFIG.idLength)` と同じ英数字 12 文字で判定する（GAS の `MATERIAL_ID_RE` は英数字 1〜40 文字を許すが、画面の生成は 12 文字）。写真の目録には対象写真のファイル ID を `on`（1〜200 文字）として持たせ、欄には付けない。`pictureIndex` は `on` が一致するときだけ目録を返し、写真の入れ替え前の書きこみを出さない。写真への書きこみには小さい画像を作らず、先生の一覧・コピーの「手書き N 件」も欄だけを数える。
-- 写真の線の JSON は `{ v: 1, k: 'pic', h, s }`。横 800、高さは `round(800 * naturalHeight / naturalWidth)` を 100〜4000 におさめた整数で、400 の倍数にはしない。寸法が正の有限の数でなければ高さ 600。`cleanInk` も写真の高さを四捨五入して範囲におさめ、不正な高さは 600 にする。写真には紙を足せない。欄の JSON はこれまでどおり `k` を付けず、400 単位の高さにする。PDF への書きこみは対象外。
+- 写真の線の JSON は `{ v: 1, k: 'pic', h, s }`。横 800、高さは `round(800 * naturalHeight / naturalWidth)` を 100〜4000 におさめた整数で、400 の倍数にはしない。寸法が正の有限の数でなければ高さ 600。`cleanInk` も写真の高さを四捨五入して範囲におさめ、不正な高さは 600 にする。写真には紙を足せない。欄の JSON はこれまでどおり `k` を付けず、400 単位の高さにする。PDF の各ページもこの形を使い、`emptyPictureInk` にページの寸法を渡す。
+- PDF への書きこみはページごとに別ファイル・別目録とし、1 ページにつき線 2000 本・250000 文字まで。コードでは `<場所>#p<N>`（例: `a1#p3`、`Abc123Def456#p12`）を使う。元の場所は添付または資料 ID、N は先頭に 0 のない 1〜999 の整数に限り、欄のページ名は認めない。`inkPagePlace` で作り、`splitInkPlace` で分け、`hasPageInk` は同じ場所・同じ `on` の目録の有無を返す。
+- DB は `#` をキーにできないため、PDF の目録を `inkPages/<場所>/p<N>`、削除時刻を `inkPagesCleared/<場所>/p<N>` に置く。`getRecord`・`listRecords` はこれらを `ink`・`inkCleared` の平らなページ名に変換し、不正な場所・ページ・目録・数でない時刻を落とす。ページの `on` は対象 PDF のファイル ID（1〜200 文字）を必須とする。保存は目録と削除時刻の消去、全消去は目録の消去と削除時刻を、それぞれ同じ update で行い、小さい画像は書かない。
+- PDF の保存前と `denied` 後の存在確認は、元の場所の添付・資料が `type === 'pdf'` かつ `fileId === on` であることを確かめる。PDF がない・入れ替わった・写真になった場合は `gone: true`。競合・再送は写真と同じ流れを使う。下書きの保存先も `<場所>#p<N>` を含む名前でよく、`:` での区切りは変わらない。ページの下書きも `on` が必要。
+- 添付のページ目録かページの削除時刻があれば、`removeAttachmentFlow` は写真とその添付の全ページの `serverInkTime` の最大に 1 を足した時刻と `now` の大きいほう、および目録があるページ番号だけを渡す。`removeAttachment` は `inkPages/<slot>` 全体を消し、指定されたページの削除時刻を同じ update で残す。削除時刻だけのページは既存値を維持する。ページ一覧は配列の整数 1〜999 に限り、渡す場合は有限の `clearedAt` が必要。DB の削除後に元の添付・写真の書きこみ・各ページの書きこみのファイルを片付け、片付けの失敗は無視する。画面は Task 2 で追加する。
 - 写真の保存前には、添付なら読んだ記録の同じ置き場所、資料なら `getLesson` の `materials[place]` に、`type === 'image'` かつ `fileId === on` の写真があることを確かめる。なければアップロードせず `{ index: null, superseded: true, gone: true, record }` を返す。時刻の比較は欄と同じ。`denied` 後の成功判定は写真では `on` の一致も必要で、成功でも時刻による `superseded` でもなければ写真の存在をもう一度確かめる。写真がなければ今回のファイルを片付けて `gone` を返す。新しい保存の成功後には `on` が違う前の書きこみファイルも片付ける。
 - 授業から外された資料への書きこみは目録に残るが、表示しない。書きこみの JSON は従来どおり生徒本人と先生だけが読み、Drive のファイルは共有しない。
 - 先生の一覧では `listInkThumbs(classId, lessonId, field)` で、今出している欄の全員分を 1 回で読む。`field` は `learned`・`question` だけで、それ以外は `TypeError`。文字でない値は落とし、`{ [studentId]: データ URL }` を返す。
@@ -110,7 +116,7 @@ check/…                                      段階 0 の確認用（そのま
 | `terms/$sid` | 先生と本人（`marks/$sid` と同じ式） | `$classId` から下に本人だけ（その組の一員。`marks/$sid/$classId` と同じ式）。先生は書けない |
 | `check` | 段階 0 のまま | 段階 0 のまま |
 
-- `records` の中身は、`memo`・`learned`・`question` が 2000 文字までの文字、`level` が 1〜4 の整数、`updatedAt` が数。1b-1 で `attachments`、1b-2 で `ink`・`inkCleared` を追加する。それ以外の項目は、今までどおり `$other: false` で受けつけない。
+- `records` の中身は、`memo`・`learned`・`question` が 2000 文字までの文字、`level` が 1〜4 の整数、`updatedAt` が数。1b-1 で `attachments`、1b-2 で `ink`・`inkCleared`、PDF への書きこみで `inkPages`・`inkPagesCleared` を追加する。それ以外の項目は、今までどおり `$other: false` で受けつけない。
 - `attachments` は子を持つ目録。`$aid` は `/^a[1-6]$/` に合うものだけで、7 個目の置き場所は受けつけない。各項目には `type`（`'image'` または `'pdf'`）・`fileId`（1〜200 文字の文字）・`bytes`（0 以上の数）・`addedAt`（数）の 4 つを必須とし、ほかの項目は受けつけない。同じ置き場所への再送は置きかえになる。呼ぶ側は、保存済みと送信中の置き場所を数え、空きだけを使う。
 - すでに目録がある置き場所への書きこみは、同じ `fileId` のときだけ受けつける（`!data.exists() || newData.child('fileId').val() === data.child('fileId').val()`）。別のファイルに入れかえるには先に消す。`null` による削除は今までどおりできる。
 - `inkCleared` の場所は `memo`・`learned`・`question`、`a1`〜`a6`、その授業にある資料の ID で、値は数。`getRecord`・`listRecords` は 3 種類の場所を残し、不正値・知らない場所を落とし、無ければ `{}` を返す。
@@ -120,7 +126,9 @@ check/…                                      段階 0 の確認用（そのま
 - `inkThumbs` の `$field` は `learned`・`question` だけで、`memo` は置かない。値は 20000 文字までの文字。`$classId/$lessonId/$field` は先生がまとめて読み、その下の `$sid` は本人も読める。書きこみは本人に限り、`memberOf` の所属と `lessons` の授業の存在も確かめる。
 - `terms/$sid/$classId` は `newData.hasChildren()`、その下の `$lessonId` は `newData.hasChildren() && root.child('lessons').child($classId).child($lessonId).exists()` で、実在する授業の用語だけを受けつける。`$tid` は `$tid.matches(/^t[1-8]$/) && newData.isString() && newData.val().length >= 1 && newData.val().length <= 20`。削除は `null` で行う。
 - 先生の用語は既存の `lessons` の規則をそのまま使う。先生だけが書け、その組の一員が読める。先生の用語の個数と文字数は呼ぶ側で確かめる。公開読み取り（`.read: true`）は引き続き `check/ping` と `gen/$sid` だけ。
-- 規則の確認は用語の 6 行と手書きの 14 行を含む 83 行。用語の置き場所 `t9`・21 文字・ほかの生徒の読み取り・先生の用語への書きこみは拒否を確かめる。手書きは自分の正しい目録・`learned` の画像が通り、知らない目録の欄・`strokes` なし・0 本・ほかの生徒への書きこみ・`memo` の画像・生徒による画像の欄全体の読み取りは拒否を確かめる。形の拒否を試す時刻は目録より新しくし、時刻の拒否に隠されないようにする。先生は画像の欄全体を読めることも確かめる。自分の `ink/memo` を前より古い時刻で書く場合と、`inkCleared/memo` に目録より古い時刻を書く場合は拒否される。目録より新しい数の `inkCleared/memo` への書きこみは通り、`inkCleared/other` は拒否され、確認用の削除時刻も片付ける。所属を消す前に生徒として記録・小さい画像・`terms/<自分>/<入っているクラス>` を片付ける。前回の残りの片付けでも、授業ごとに自分の `inkThumbs` の `learned`・`question` を消す。
+- 規則の確認は用語の 6 行・手書きの 14 行・写真の 6 行・PDF の 7 行を含む 90 行。用語の置き場所 `t9`・21 文字・ほかの生徒の読み取り・先生の用語への書きこみは拒否を確かめる。手書きは自分の正しい目録・`learned` の画像が通り、知らない目録の欄・`strokes` なし・0 本・ほかの生徒への書きこみ・`memo` の画像・生徒による画像の欄全体の読み取りは拒否を確かめる。形の拒否を試す時刻は目録より新しくし、時刻の拒否に隠されないようにする。先生は画像の欄全体を読めることも確かめる。自分の `ink/memo` を前より古い時刻で書く場合と、`inkCleared/memo` に目録より古い時刻を書く場合は拒否される。目録より新しい数の `inkCleared/memo` への書きこみは通り、`inkCleared/other` は拒否され、確認用の削除時刻も片付ける。所属を消す前に生徒として記録・小さい画像・`terms/<自分>/<入っているクラス>` を片付ける。前回の残りの片付けでも、授業ごとに自分の `inkThumbs` の `learned`・`question` を消す。
+- PDF の規則は `inkPages`・`inkPagesCleared` に分け、権限を `records` から引き継ぐ。ページ名は `p1`〜`p999`。添付は更新後の記録、資料は授業にある PDF を確かめ、目録の `on` が一致するときだけ通す。目録の子の値の規則は写真と同じで、`on` を必須にする。削除時刻は添付の場所または授業に実在する資料の場所で数だけを認める。目録・削除時刻とも、書きこむ前の同じページの両時刻より新しい場合だけ通し、同じ時刻は拒否する。写真の `ink`・`inkCleared` の規則は変えない。
+- PDF の確認 7 行は、同じ `on` の自分の PDF と授業の PDF 資料のページが通り、違う `on`・`p0`・写真の場所へのページ目録・PDF の場所への写真目録・古い時刻は拒否されることを試す。最初の PDF の行で確認用の `attachments/a2` を用意し、PDF 資料も準備する。Drive に実物は作らず、添付とページ目録は通信の応答が失われた場合も生徒の片付け対象とし、資料は授業と一緒に消す。
 - 写真への書きこみの確認は追加の 6 行。自分の写真と同じ `on` の `ink/a1` と、授業の写真の資料と同じ `on` の目録は通る。違う `on` の `ink/a1`、写真がない `ink/a2`、`on` 付きの `ink/memo`、授業にない資料の目録は拒否される。`on` の拒否を試す時刻は既存の目録・削除時刻より新しくする。確認用の写真は既存の添付・資料の準備を使い、Drive にファイルを作らず、書きこみも既存の片付け処理で消す。
 - 生徒が自分で書きかえられるのは、`records`・`recThumbs`・`inkThumbs`・`marks`・`terms` の自分の分と、`initialPw` の自分の分を消すことだけ。`accounts`・`memberOf`・`lessons` は先生しか書けないので、規則と GAS の判断の根拠にしてよい。添付の `fileId` は本人が書きかえられるため、ファイルを開けるかどうかの根拠にしない。GAS が保存時に付けた持ち主と、認証した本人で判断する。
 - パスワードを出し直すと、古いアカウントの `accounts/<uid>` が消えるので、古いアカウントは何も読めなくなる。

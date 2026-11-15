@@ -53,6 +53,84 @@ function setup(initial = null) {
 
 const writes = (calls) => calls.set.length + calls.update.length + calls.remove.length;
 
+test('PDF の目録: 入れ子へ保存・削除し、平らな場所で読み直す。小さい画像は書かない', async () => {
+  const { repo, mem, calls } = setup();
+  const index = { fileId: 'page-ink', bytes: 42, strokes: 1, on: 'pdf' };
+  const base = 'records/c1/l1/s26-001';
+  for (const place of ['a1', 'Abc123Def456']) {
+    for (const page of [1, 999]) {
+      const field = `${place}#p${page}`;
+      await repo.setInk('c1', 'l1', 's26-001', field, index, 'thumb', 20);
+      assert.deepEqual(calls.update.at(-1), ['', { [`${base}/inkPages/${place}/p${page}`]: { ...index, updatedAt: 20 },
+        [`${base}/inkPagesCleared/${place}/p${page}`]: null }]);
+      for (const record of [await repo.getRecord('c1', 'l1', 's26-001'), (await repo.listRecords('c1', 'l1'))['s26-001']]) {
+        assert.deepEqual(record.ink[field], { ...index, updatedAt: 20 });
+      }
+      await repo.removeInk('c1', 'l1', 's26-001', field, 30);
+      assert.deepEqual(calls.update.at(-1), ['', { [`${base}/inkPages/${place}/p${page}`]: null,
+        [`${base}/inkPagesCleared/${place}/p${page}`]: 30 }]);
+      assert.equal((await repo.getRecord('c1', 'l1', 's26-001')).inkCleared[field], 30);
+      assert.equal((await repo.listRecords('c1', 'l1'))['s26-001'].ink[field], undefined);
+      await repo.setInk('c1', 'l1', 's26-001', field, index, null, 40);
+      assert.equal((await repo.getRecord('c1', 'l1', 's26-001')).inkCleared[field], undefined);
+    }
+  }
+  assert.equal(await mem.get('inkThumbs'), null);
+  assert.equal(await mem.get('recThumbs'), null);
+  assert.equal(await mem.get(`${base}/ink`), null);
+  const before = writes(calls);
+  for (const field of ['a1#p0', 'a1#p-1', 'a1#p1.5', 'a1#p1000', 'a1#px', 'a1#p01', 'a1#p1\n', 'memo#p1']) {
+    await assert.rejects(repo.setInk('c1', 'l1', 's26-001', field, index, null, 50), TypeError);
+    await assert.rejects(repo.removeInk('c1', 'l1', 's26-001', field, 50), TypeError);
+  }
+  for (const on of [undefined, null, 1, {}, [], '', 'x'.repeat(201)]) {
+    await assert.rejects(repo.setInk('c1', 'l1', 's26-001', 'a1#p1', { ...index, on }, null, 50), TypeError);
+  }
+  assert.equal(writes(calls), before);
+});
+
+test('PDF の目録: 不正な場所・ページ・目録・削除時刻を落とし、写真と欄も残す', async () => {
+  const index = { fileId: 'page-ink', bytes: 42, strokes: 1, on: 'pdf', updatedAt: 20 };
+  const bad = [null, [], {}, { ...index, on: undefined }, { ...index, on: 1 }, { ...index, on: '' },
+    { ...index, on: 'x'.repeat(201) }, { ...index, bytes: '42' }, { ...index, updatedAt: Infinity },
+    { ...index, strokes: 0 }, { ...index, fileId: '' }];
+  for (const value of bad) {
+    const pages = { a1: { p1: index, p2: value, p0: index, p01: index, p1000: index, 1: index, 'p1\n': index },
+      Abc123Def456: { p999: index }, memo: { p1: index }, a7: { p1: index }, 'a1#p1': { p1: index }, a2: [], a3: 1 };
+    const record = { ink: { a4: index, memo: index }, inkCleared: { a5: 10 }, inkPages: pages,
+      inkPagesCleared: { a1: { p1: 0, p2: '30', p3: Infinity, p0: 30, p01: 30, p1000: 30, 1: 30 },
+        Abc123Def456: { p999: 30 }, memo: { p1: 30 }, a7: { p1: 30 }, a2: [] } };
+    const repo = createRepo({ get: async (path) => path.endsWith('/s26-001') ? record : { 's26-001': record } });
+    for (const got of [await repo.getRecord('c1', 'l1', 's26-001'), (await repo.listRecords('c1', 'l1'))['s26-001']]) {
+      assert.deepEqual(Object.keys(got.ink).sort(), ['Abc123Def456#p999', 'a1#p1', 'a4', 'memo']);
+      assert.deepEqual(got.ink['a1#p1'], index);
+      assert.deepEqual(got.inkCleared, { a5: 10, 'a1#p1': 0, 'Abc123Def456#p999': 30 });
+    }
+  }
+});
+
+test('PDF の添付削除: 全ページを一緒に消し、指定したページだけに時刻を残す', async () => {
+  const { repo, calls, mem } = setup();
+  const base = 'records/c1/l1/s26-001';
+  await mem.set(base, { inkPages: { a1: { p1: { fileId: 'one' }, p999: { fileId: 'last' } }, a2: { p1: { fileId: 'other' } } },
+    inkPagesCleared: { a1: { p3: 10 } } });
+  await repo.removeAttachment('c1', 'l1', 's26-001', 'a1', 30, [1, 999, 1]);
+  assert.deepEqual(calls.update.at(-1), ['', { [`${base}/attachments/a1`]: null, 'recThumbs/c1/l1/s26-001/a1': null,
+    [`${base}/ink/a1`]: null, [`${base}/inkCleared/a1`]: 30, [`${base}/inkPages/a1`]: null,
+    [`${base}/inkPagesCleared/a1/p1`]: 30, [`${base}/inkPagesCleared/a1/p999`]: 30 }]);
+  assert.equal(await mem.get(`${base}/inkPages/a1`), null);
+  assert.deepEqual(await mem.get(`${base}/inkPages/a2`), { p1: { fileId: 'other' } });
+  assert.equal(await mem.get(`${base}/inkPagesCleared/a1/p3`), 10);
+  await repo.removeAttachment('c1', 'l1', 's26-001', 'a1', 40, []);
+  assert.equal(calls.update.at(-1)[1][`${base}/inkPages/a1`], null);
+  const before = writes(calls);
+  for (const pages of [null, {}, 1, '1', [0], [-1], [1.5], [1000], ['1'], ['01'], [NaN], [undefined], Array(1)]) {
+    await assert.rejects(repo.removeAttachment('c1', 'l1', 's26-001', 'a1', 50, pages), TypeError);
+  }
+  await assert.rejects(repo.removeAttachment('c1', 'l1', 's26-001', 'a1', undefined, [1]), TypeError);
+  assert.equal(writes(calls), before);
+});
+
 test('写真の手書き目録: on を保存・取得し、欄には付けず写真の画像も書かない', async () => {
   const { repo, mem, calls } = setup();
   const index = { fileId: 'ink-file', bytes: 42, strokes: 1, on: 'photo' };

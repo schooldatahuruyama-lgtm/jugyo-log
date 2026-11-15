@@ -17,6 +17,31 @@ function fakeStorage() {
 const path = 'jugyolog:ink:s26-001:c1:l1:memo';
 const draft = { ink: emptyInk(), editedAt: 10, key: 'ink-test-1' };
 
+test('PDF の下書き: # を含む場所を保存・一覧・削除でき、不正なページと on は読まない', () => {
+  const storage = fakeStorage();
+  const drafts = createInkDrafts({ storage });
+  const value = { ...draft, on: 'pdf', ink: { v: 1, k: 'pic', h: 1131, s: [] } };
+  const fields = ['a1#p1', 'a6#p999', 'Abc123Def456#p12'];
+  for (const field of fields) {
+    assert.equal(drafts.put('s26-001', 'c1', 'l1', field, value), true);
+    assert.deepEqual(drafts.get('s26-001', 'c1', 'l1', field), value);
+  }
+  assert.deepEqual(drafts.list('s26-001'), fields.map((field) => ({ classId: 'c1', lessonId: 'l1', field, ...value })));
+  for (const field of fields) drafts.remove('s26-001', 'c1', 'l1', field);
+  assert.equal(storage.length, 0);
+  for (const on of [undefined, null, 1, {}, [], '', 'x'.repeat(201)]) {
+    storage.setItem(path.replace(':memo', ':a1#p1'), JSON.stringify({ ...value, on }));
+    assert.equal(drafts.get('s26-001', 'c1', 'l1', 'a1#p1'), null);
+    assert.equal(drafts.put('s26-001', 'c1', 'l1', 'a1#p1', { ...value, on }), false);
+  }
+  for (const field of ['a1#p0', 'a1#p01', 'a1#p1000', 'a1#p1.5', 'a1#p-1', 'a1#pword', 'memo#p1']) {
+    storage.setItem(path.replace(':memo', `:${field}`), JSON.stringify(value));
+    assert.equal(drafts.get('s26-001', 'c1', 'l1', field), null);
+    assert.equal(drafts.put('s26-001', 'c1', 'l1', field, value), false);
+  }
+  assert.deepEqual(drafts.list('s26-001'), []);
+});
+
 test('写真の下書き: 添付と資料の on・k・整数の高さを保存し、一覧にも返す', () => {
   const drafts = createInkDrafts({ storage: fakeStorage() });
   const picture = { ...draft, on: 'photo', ink: { v: 1, k: 'pic', h: 601, s: [] } };

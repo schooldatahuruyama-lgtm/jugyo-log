@@ -37,6 +37,128 @@ function pictureSetup(field = 'a1', photo = { type: 'image', fileId: 'photo' }) 
   return { ...s, field, on: 'photo', ink: { ...ink, k: 'pic', h: 601 }, record };
 }
 
+function pageSetup(place = 'a1', pdf = { type: 'pdf', fileId: 'photo' }) {
+  const s = pictureSetup(place, pdf);
+  s.field = `${place}#p999`;
+  s.record.ink = { [s.field]: s.record.ink[place] };
+  return s;
+}
+
+test('PDF の保存: 元の添付・資料を確認し、ページの目録を保存・全消去する', async () => {
+  for (const place of ['a1', 'Abc123Def456']) {
+    for (const clear of [false, true]) {
+      const s = pageSetup(place);
+      if (clear) s.ink = { ...s.ink, s: [] };
+      const result = await saveInkFlow(s);
+      assert.equal(result.superseded, false);
+      assert.deepEqual(s.calls.filter(([name]) => name === 'trash'), [['trash', 'old']]);
+      const call = s.calls.find(([name]) => name === (clear ? 'remove' : 'set'));
+      assert.equal(call[4], `${place}#p999`);
+      if (clear) assert.equal(result.index, null);
+      else {
+        assert.equal(call[5].on, 'photo');
+        assert.deepEqual(JSON.parse(s.calls.find(([name]) => name === 'upload')[1].text), s.ink);
+      }
+    }
+  }
+});
+
+test('PDF の保存: 消失・別 PDF・写真は gone。同じ時刻以降の目録・削除時刻はサーバーを残す', async () => {
+  for (const place of ['a1', 'Abc123Def456']) {
+    for (const pdf of [null, { type: 'image', fileId: 'photo' }, { type: 'pdf', fileId: 'other' }]) {
+      const s = pageSetup(place, pdf);
+      assert.deepEqual(await saveInkFlow(s), { index: null, superseded: true, gone: true, record: s.record });
+      assert.equal(s.calls.some(([name]) => ['upload', 'set', 'remove'].includes(name)), false);
+    }
+    for (const time of [20, 30]) {
+      for (const clear of [false, true]) {
+        const s = pageSetup(place);
+        if (clear) { s.record.ink = {}; s.record.inkCleared = { [s.field]: time }; }
+        else Object.assign(s.record.ink[s.field], { on: s.on, updatedAt: time });
+        assert.deepEqual(await saveInkFlow(s), { index: s.record.ink[s.field] ?? null, superseded: true, record: s.record });
+        assert.equal(s.calls.some(([name]) => name === 'upload'), false);
+      }
+    }
+  }
+});
+
+test('PDF の保存: denied 後に読み直し、消失・入れ替え・競合・応答の消失を区別する', async () => {
+  for (const place of ['a1', 'Abc123Def456']) {
+    for (const outcome of ['gone', 'image', 'replaced', 'newer', 'saved', 'wrong-on', 'read-failed']) {
+      const s = pageSetup(place);
+      const index = { fileId: outcome === 'newer' ? 'server' : 'new', bytes: 42, strokes: 1,
+        on: outcome === 'wrong-on' ? 'other' : s.on, updatedAt: outcome === 'newer' ? 30 : 20 };
+      const pdf = outcome === 'gone' ? null : { type: outcome === 'image' ? 'image' : 'pdf',
+        fileId: outcome === 'replaced' ? 'other' : s.on };
+      const latest = { attachments: pdf ? [{ slot: place, ...pdf }] : [], ink: { [s.field]: index } };
+      if (['gone', 'image', 'replaced'].includes(outcome)) latest.ink = {};
+      s.repo.setInk = async () => {
+        s.repo.getRecord = async () => { if (outcome === 'read-failed') throw new NetError('network'); return latest; };
+        s.repo.getLesson = async () => ({ materials: pdf ? { [place]: pdf } : {} });
+        throw new NetError('denied');
+      };
+      if (outcome === 'read-failed') {
+        await assert.rejects(saveInkFlow(s), (e) => e.code === 'network');
+        assert.equal(s.calls.some(([name]) => name === 'trash'), false);
+        continue;
+      }
+      const result = await saveInkFlow(s);
+      if (['gone', 'image', 'replaced'].includes(outcome)) assert.deepEqual(result, { index: null, superseded: true, gone: true, record: latest });
+      else if (outcome === 'saved') assert.deepEqual(result, { index, superseded: false });
+      else assert.deepEqual(result, { index: outcome === 'wrong-on' ? null : index, superseded: true, record: latest });
+      assert.deepEqual(s.calls.filter(([name]) => name === 'trash'), [['trash', outcome === 'saved' ? 'old' : 'new']]);
+    }
+  }
+});
+
+test('練習モード: PDF の複数ページを代役の GAS と DB に保存し、読み直し・消去できる', async () => {
+  const net = createMemoryNet({ initial: { accounts: { 'demo-user': 's26-001' }, memberOf: { 's26-001': { c1: true } },
+    lessons: { c1: { l1: { createdAt: 1, materials: { Abc123Def456: { type: 'pdf', fileId: 'material-pdf' } } } } } } });
+  const repo = createRepo(net);
+  const gas = createDemoGas({ net, getUser: () => ({ uid: 'demo-user' }) });
+  const cache = new Map();
+  const files = createFiles({ gas, cache: { get: (id) => cache.get(id), put: (id, value) => cache.set(id, value), remove: (id) => cache.delete(id) } });
+  await repo.addAttachment('c1', 'l1', 's26-001', 'a1', { type: 'pdf', fileId: 'pdf', bytes: 42 }, null, 1);
+  for (const [place, on] of [['a1', 'pdf'], ['Abc123Def456', 'material-pdf']]) {
+    for (const page of [1, 999]) {
+      const field = `${place}#p${page}`;
+      const value = { ...ink, k: 'pic', h: 1131 };
+      const args = { repo, files, classId: 'c1', lessonId: 'l1', studentId: 's26-001', field, on,
+        ink: value, key: `pdf-${place}-${page}`, editedAt: 20 };
+      const saved = await saveInkFlow(args);
+      assert.equal(saved.superseded, false);
+      assert.deepEqual((await repo.getRecord('c1', 'l1', 's26-001')).ink[field], saved.index);
+      assert.deepEqual((await repo.listRecords('c1', 'l1'))['s26-001'].ink[field], saved.index);
+      assert.deepEqual(await loadInkFlow({ files, fileId: saved.index.fileId }), value);
+      assert.equal((await saveInkFlow(args)).superseded, true);
+      await saveInkFlow({ ...args, ink: { ...value, s: [] }, editedAt: 30 });
+      assert.equal((await repo.getRecord('c1', 'l1', 's26-001')).inkCleared[field], 30);
+    }
+  }
+});
+
+test('PDF の再送: ページと on を送り、PDF 消失なら捨て、失敗なら下書きを残す', async () => {
+  for (const place of ['a1', 'Abc123Def456']) {
+    for (const outcome of ['saved', 'gone', 'failed']) {
+      const s = resendSetup();
+      const page = pageSetup(place, outcome === 'gone' ? null : { type: 'pdf', fileId: 'photo' });
+      s.repo = page.repo;
+      if (outcome === 'failed') s.repo.setInk = async () => { throw new NetError('network'); };
+      s.add('l1', { field: page.field, on: page.on, ink: page.ink });
+      s.makeThumb = () => assert.fail('PDF の小さい画像は作らない');
+      assert.deepEqual(await resendInkDrafts(s), { sent: outcome === 'saved' ? 1 : 0,
+        kept: outcome === 'failed' ? 1 : 0, dropped: outcome === 'gone' ? 1 : 0 });
+      assert.equal(s.pending.size, outcome === 'failed' ? 1 : 0);
+      if (outcome === 'saved') {
+        const set = page.calls.find(([name]) => name === 'set');
+        assert.equal(set[4], page.field);
+        assert.equal(set[5].on, page.on);
+        assert.equal(set[6], undefined);
+      }
+    }
+  }
+});
+
 test('写真の保存: 添付と資料に on を渡し、前の写真の書きこみファイルも片付ける', async () => {
   for (const field of ['a1', 'Abc123Def456']) {
     const s = pictureSetup(field);

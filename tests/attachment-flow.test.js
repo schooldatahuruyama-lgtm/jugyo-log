@@ -200,6 +200,35 @@ test('settleAttachmentFlow: 目録なし・配列でない目録は空の配列�
 
 const removal = () => ({ classId: 'c1', lessonId: 'l1', studentId: 's26-001', attachment: { slot: 'a1', fileId: 'file-a' }, now: 100 });
 
+test('PDF の添付削除: 写真と全ページの最大時刻を越え、目録のあるページと全ファイルを片付ける', async () => {
+  const record = { ink: { a1: { fileId: 'photo-ink', updatedAt: 110 }, 'a1#p1': { fileId: 'page-one', updatedAt: 120 },
+    'a1#p999': { fileId: 'page-last', updatedAt: 130 }, 'a2#p1': { fileId: 'other', updatedAt: 999 } },
+    inkCleared: { a1: 140, 'a1#p1': 150, 'a1#p2': 160, 'a2#p2': 1000 } };
+  for (const now of [100, 200]) {
+    for (const failTrash of [false, true]) {
+      const calls = [];
+      const repo = { getRecord: async () => record, removeAttachment: async (...args) => { calls.push(['remove', ...args]); } };
+      const files = { trashStudent: async (id) => { calls.push(['trash', id]); if (failTrash) throw new NetError('network'); return true; } };
+      assert.deepEqual(await removeAttachmentFlow({ ...removal(), repo, files, now }), { trashed: !failTrash });
+      assert.deepEqual(calls, [['remove', 'c1', 'l1', 's26-001', 'a1', Math.max(now, 161), [1, 999]],
+        ['trash', 'file-a'], ['trash', 'photo-ink'], ['trash', 'page-one'], ['trash', 'page-last']]);
+    }
+  }
+});
+
+test('PDF の添付削除: 削除時刻だけでも空のページ一覧を渡し、目録削除の失敗ではファイルを残す', async () => {
+  for (const fail of [false, true]) {
+    const calls = [];
+    const repo = { getRecord: async () => ({ inkCleared: { 'a1#p999': 100 } }), removeAttachment: async (...args) => {
+      calls.push(args); if (fail) throw new NetError('denied');
+    } };
+    const files = { trashStudent: async (id) => { calls.push(id); return true; } };
+    if (fail) await assert.rejects(removeAttachmentFlow({ ...removal(), repo, files }), (e) => e.code === 'denied');
+    else await removeAttachmentFlow({ ...removal(), repo, files });
+    assert.deepEqual(calls, [['c1', 'l1', 's26-001', 'a1', 101, []], ...(fail ? [] : ['file-a'])]);
+  }
+});
+
 test('removeAttachmentFlow: 目録から外し終わってから、ファイルをゴミ箱に入れる', async () => {
   const calls = [];
   const repo = { async getRecord(...values) { calls.push(['get', ...values]); return null; }, async removeAttachment(...values) {

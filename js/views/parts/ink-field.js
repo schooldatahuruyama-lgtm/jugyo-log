@@ -21,6 +21,7 @@ export function inkField({ ctx, classId, lessonId, studentId, field, label, inde
   const uploaded = new Set();
   let ink = null;
   let pad = null;
+  let toolState = null;
   let pending = null;
   let loadId = 0;
   let loadFailed = false;
@@ -83,7 +84,9 @@ export function inkField({ ctx, classId, lessonId, studentId, field, label, inde
           ink = blankInk();
           area.replaceChildren();
           overlay.replaceChildren();
-          notice.textContent = 'この写真は、もうありません。書きこみは保存されませんでした。';
+          notice.textContent = picture.type === 'pdf'
+            ? 'この PDF は、もうありません。書きこみは保存されませんでした。'
+            : 'この写真は、もうありません。書きこみは保存されませんでした。';
           notice.hidden = false;
           removeDraft();
           notifyChange();
@@ -129,12 +132,13 @@ export function inkField({ ctx, classId, lessonId, studentId, field, label, inde
 
   function showPad() {
     if (!alive || pad) return;
-    pad = inkPad({ ink, picture: !!picture, readOnly, label: `${label}の${picture ? '書きこみ' : '手書き'}`, onChange(value) {
+    pad = inkPad({ ink, picture: !!picture, pdf: picture?.type === 'pdf', readOnly, label: `${label}の${picture ? '書きこみ' : '手書き'}`, onChange(value) {
       if (!alive || locked) return;
       ink = value;
       saver.edit(value);
       notifyChange();
     } });
+    if (toolState) pad.setToolState(toolState);
     pad.setLocked(locked || !editing);
     if (picture) {
       pad.tools.hidden = !editing || readOnly;
@@ -158,6 +162,7 @@ export function inkField({ ctx, classId, lessonId, studentId, field, label, inde
     loadId += 1;
     pending = null;
     loadFailed = false;
+    if (picture?.type === 'pdf') toolState = pad?.getToolState() ?? toolState;
     pad?.destroy();
     pad = null;
     if (picture) { overlay.replaceChildren(); area.replaceChildren(); }
@@ -225,6 +230,8 @@ export function inkField({ ctx, classId, lessonId, studentId, field, label, inde
     node, overlay, readOnly,
     get editable() { return alive && !!pad && !readOnly && !locked && !gone; },
     subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); },
+    getToolState() { return pad?.getToolState() ?? toolState; },
+    setToolState(value) { toolState = value; if (value) pad?.setToolState(value); },
     setEditing(value) {
       editing = !!value && !readOnly && !gone;
       if (!editing) cancelConfirmation();

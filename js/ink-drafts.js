@@ -1,5 +1,5 @@
 // 手書きの下書き。文字の下書きとは別の場所に保存し、保存先の失敗は外へ出さない。
-import { cleanInk, inkPlaceKind } from './ink-logic.js';
+import { cleanInk, inkPlaceKind, splitInkPlace } from './ink-logic.js';
 
 const PREFIX = 'jugyolog:ink:';
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -12,6 +12,7 @@ function clean(value, field) {
     || !isNum(value.ink.h) || !Array.isArray(value.ink.s)
     || !isNum(value.editedAt) || typeof value.key !== 'string' || !value.key) return null;
   if (kind !== 'field' && typeof value.on !== 'string') return null;
+  if (splitInkPlace(field) && (value.on.length < 1 || value.on.length > 200)) return null;
   return { ink: cleanInk(value.ink), editedAt: value.editedAt, key: value.key, ...(kind !== 'field' ? { on: value.on } : {}) };
 }
 

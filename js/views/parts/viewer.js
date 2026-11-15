@@ -2,7 +2,7 @@
 import { el } from '../../ui.js';
 import { openPdf } from '../../pdf.js';
 
-export function openViewer({ title, kind, load, pictureInk = null }) {
+export function openViewer({ title, kind, load, pictureInk = null, pageInk = null }) {
   const opener = document.activeElement;
   let closed = false;
   let generation = 0;
@@ -15,6 +15,7 @@ export function openViewer({ title, kind, load, pictureInk = null }) {
   let busy = false;
   let drag = null;
   let writing = false;
+  let toolState = null;
   let ink = null;
   let unsubscribeInk = null;
 
@@ -42,16 +43,17 @@ export function openViewer({ title, kind, load, pictureInk = null }) {
     } });
   dlg.append(
     el('header', { class: 'viewer-header' }, el('h2', { text: title }), closeBtn),
-    el('div', { class: 'viewer-controls' }, kind === 'pdf' ? [previous, pageLabel, next] : [minus, zoomLabel, plus, writeBtn]),
+    el('div', { class: 'viewer-controls' }, kind === 'pdf'
+      ? [previous, pageLabel, next, pageInk ? writeBtn : null] : [minus, zoomLabel, plus, writeBtn]),
     message, inkArea, viewport);
 
   function syncInk() {
     if (closed) return;
-    if (writing && !ink?.editable) { writing = false; ink?.setEditing(false); }
+    if (kind !== 'pdf' && writing && !ink?.editable) { writing = false; ink?.setEditing(false); }
     writeBtn.hidden = !ink || ink.readOnly;
-    writeBtn.disabled = !ink?.editable;
+    writeBtn.disabled = busy || !ink?.editable;
     writeBtn.setAttribute('aria-pressed', String(writing));
-    viewport.classList.toggle('viewer-can-drag', zoom > 1 && !writing);
+    viewport.classList.toggle('viewer-can-drag', (kind === 'pdf' ? !!pageInk : zoom > 1) && !writing && !busy);
   }
 
   function syncControls() {
@@ -61,6 +63,7 @@ export function openViewer({ title, kind, load, pictureInk = null }) {
     previous.disabled = busy || !pdf || pageNo <= 1;
     next.disabled = busy || !pdf || pageNo >= pdf.pageCount;
     pageLabel.textContent = pdf ? `${pageNo} / ${pdf.pageCount}` : '';
+    syncInk();
   }
 
   function sizePicture() {
@@ -84,19 +87,41 @@ export function openViewer({ title, kind, load, pictureInk = null }) {
     syncControls();
   }
 
-  function clearContent() {
+  function detachInk() {
     unsubscribeInk?.();
     unsubscribeInk = null;
     if (ink) {
+      toolState = ink.getToolState() ?? toolState;
       ink.setEditing(false);
       void ink.flush();
       ink.node.remove();
       ink.overlay.remove();
       ink = null;
     }
-    writing = false;
     inkArea.hidden = true;
     writeBtn.hidden = true;
+    drag = null;
+  }
+
+  function attachInk(field, size, current) {
+    ink = field;
+    if (!ink) return;
+    if (kind === 'pdf') ink.setToolState(toolState);
+    ink.setEditing(writing);
+    inkArea.replaceChildren(ink.node);
+    inkArea.hidden = false;
+    pictureFrame.append(ink.overlay);
+    unsubscribeInk = ink.subscribe(() => {
+      if (!closed && current === generation && ink === field) syncInk();
+    });
+    void ink.show(size);
+    syncInk();
+  }
+
+  function clearContent() {
+    detachInk();
+    writing = false;
+    toolState = null;
     cancelImage?.();
     cancelImage = null;
     if (picture) {
@@ -123,8 +148,10 @@ export function openViewer({ title, kind, load, pictureInk = null }) {
 
   async function showPage(number) {
     if (closed || busy || !pdf || number < 1 || number > pdf.pageCount) return;
-    const current = generation;
+    const current = ++generation;
+    detachInk();
     busy = true;
+    if (pageInk) stage.replaceChildren();
     message.textContent = '読みこんでいます…';
     syncControls();
     try {
@@ -133,11 +160,20 @@ export function openViewer({ title, kind, load, pictureInk = null }) {
       canvas.className = 'viewer-pdf';
       canvas.setAttribute('role', 'img');
       canvas.setAttribute('aria-label', `${title} ${number} ページ`);
-      stage.replaceChildren(canvas);
+      if (pageInk) {
+        pictureFrame.replaceChildren(canvas);
+        pictureFrame.style.width = Number.isFinite(canvas.width) && canvas.width > 0 ? `${canvas.width}px` : '';
+        pictureFrame.style.maxWidth = '100%';
+        stage.replaceChildren(pictureFrame);
+      } else stage.replaceChildren(canvas);
       pageNo = number;
       viewport.scrollTop = 0;
       viewport.scrollLeft = 0;
       message.replaceChildren();
+      if (pageInk && number <= 999 && Number.isFinite(canvas.width) && canvas.width > 0
+        && Number.isFinite(canvas.height) && canvas.height > 0) {
+        attachInk(pageInk(number), { width: canvas.width, height: canvas.height }, current);
+      }
     } catch {
       if (!closed && current === generation) showError();
     } finally {
@@ -184,16 +220,7 @@ export function openViewer({ title, kind, load, pictureInk = null }) {
         message.replaceChildren();
         if (kind === 'image' && pictureInk && Number.isFinite(picture.naturalWidth) && picture.naturalWidth > 0
           && Number.isFinite(picture.naturalHeight) && picture.naturalHeight > 0) {
-          ink = pictureInk();
-          if (ink) {
-            ink.setEditing(false);
-            inkArea.replaceChildren(ink.node);
-            inkArea.hidden = false;
-            pictureFrame.append(ink.overlay);
-            unsubscribeInk = ink.subscribe(syncInk);
-            void ink.show({ width: picture.naturalWidth, height: picture.naturalHeight });
-            syncInk();
-          }
+          attachInk(pictureInk(), { width: picture.naturalWidth, height: picture.naturalHeight }, current);
         }
         sizePicture();
         viewport.scrollTop = 0;
@@ -208,7 +235,8 @@ export function openViewer({ title, kind, load, pictureInk = null }) {
 
   // 指はブラウザのスクロール、マウスとペンはドラッグで動かす。
   viewport.addEventListener('pointerdown', (ev) => {
-    if (!picture || writing || zoom <= 1 || ev.pointerType === 'touch' || ev.button !== 0) return;
+    if (busy || writing || (kind === 'pdf' ? !pdf || !pageInk : !picture || zoom <= 1)
+      || ev.pointerType === 'touch' || ev.button !== 0) return;
     drag = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, left: viewport.scrollLeft, top: viewport.scrollTop };
     viewport.setPointerCapture(ev.pointerId);
     ev.preventDefault();
