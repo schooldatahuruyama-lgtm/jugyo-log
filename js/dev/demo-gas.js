@@ -10,6 +10,7 @@ const STUDENT_ID_RE = /^s\d{2}-\d{3}$/;
 const UID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const IMAGE_MAX_B64 = 1400000;
 const PDF_MAX_B64 = 14000000;
+const INK_MAX_B64 = 400000;
 const TOTAL_MAX_B64 = 6000000;
 
 function matches(value, pattern) {
@@ -24,14 +25,23 @@ function checkLesson(payload) {
   }
 }
 
-function fileBytes(mime, dataB64) {
-  if (!['image/jpeg', 'application/pdf'].includes(mime) || typeof dataB64 !== 'string' || !dataB64.length) {
+function fileBytes(mime, dataB64, allowInk = false) {
+  if (!(['image/jpeg', 'application/pdf'].includes(mime) || (allowInk && mime === 'application/json'))
+    || typeof dataB64 !== 'string' || !dataB64.length) {
     throw new NetError('unknown');
   }
-  if (dataB64.length > (mime === 'image/jpeg' ? IMAGE_MAX_B64 : PDF_MAX_B64)) throw new NetError('toobig');
+  const max = mime === 'application/json' ? INK_MAX_B64 : mime === 'image/jpeg' ? IMAGE_MAX_B64 : PDF_MAX_B64;
+  if (dataB64.length > max) throw new NetError('toobig');
   // 大きな PDF でも、くり返すグループで正規表現のスタックを使い切らない
   if (dataB64.length % 4 !== 0 || !matches(dataB64, /^[A-Za-z0-9+/]+={0,2}$/)) {
     throw new NetError('unknown');
+  }
+  if (mime === 'application/json') {
+    try {
+      const bytes = Uint8Array.from(atob(dataB64), (c) => c.charCodeAt(0));
+      const ink = JSON.parse(new TextDecoder().decode(bytes));
+      if (ink === null || typeof ink !== 'object' || Array.isArray(ink) || ink.v !== 1) throw new Error();
+    } catch { throw new NetError('unknown'); }
   }
   return dataB64.length / 4 * 3 - (dataB64.endsWith('==') ? 2 : dataB64.endsWith('=') ? 1 : 0);
 }
@@ -86,7 +96,7 @@ export function createDemoGas({ net, getUser, random = Math.random }) {
   async function putStudentFile(user, { key, classId, lessonId, mime, dataB64 }) {
     if (!matches(key, KEY_RE)) throw new NetError('unknown');
     checkLesson({ classId, lessonId });
-    const bytes = fileBytes(mime, dataB64);
+    const bytes = fileBytes(mime, dataB64, true);
     try {
       if (await net.get(`memberOf/${user.studentId}/${classId}`) !== true
         || await net.get(`lessons/${classId}/${lessonId}/createdAt`) == null) throw new NetError('notfound');
@@ -134,7 +144,7 @@ export function createDemoGas({ net, getUser, random = Math.random }) {
   }
 
   async function handle(op, payload) {
-    if (op === 'ping') return { ok: true, version: 'app-2' };
+    if (op === 'ping') return { ok: true, version: 'app-3' };
     if (!['whoami', 'putMaterial', 'getMaterials', 'getFile', 'trashFile',
       'putStudentFile', 'getStudentFile', 'getStudentFiles', 'trashStudentFile'].includes(op)) throw new NetError('unknown');
     const user = await identify(op === 'putStudentFile');

@@ -38,6 +38,16 @@ export const CONFIG = {
   pdfMaxBytes: 10485760,
   materialsPerLesson: 12,
   attachmentSlots: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'],
+  inkFields: ['memo', 'learned', 'question'],
+  inkThumbFields: ['learned', 'question'],
   // GAS の待ち時間・試す回数・やり直す間隔の基準
   gas: { timeoutMs: 60000, maxTries: 3, retryBaseMs: 1500 },
+  // 手書き: 紙の幅と 1 枚ぶんの高さ（座標の単位）、上限、保存の待ち時間
+  ink: {
+    width: 800, pageHeight: 400, maxPages: 10,
+    maxStrokes: 2000, maxPoints: 2000, maxBytes: 250000,
+    colors: ['#111111', '#C8402F', '#0B57B0'], widths: [3, 7],
+    eraserRadius: 10, simplifyTolerance: 0.6, snapRatio: 0.0875, undoMax: 30,
+    saveDelayMs: 3000, saveIntervalMs: 30000,
+  },
 };

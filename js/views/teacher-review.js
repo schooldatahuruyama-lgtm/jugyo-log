@@ -28,6 +28,8 @@ export function mount(root, ctx) {
   const fieldButtons = new Map();
   const sortButtons = new Map();
   const levelButtons = new Map();
+  const inkThumbs = new Map();
+  const inkViews = new Map();
   const yearSelect = el('select', { id: 'review-year', onchange: () => changeSelection('year') });
   const classSelect = el('select', { id: 'review-class', onchange: () => changeSelection('class') });
   const lessonSelect = el('select', { id: 'review-lesson', onchange: () => changeSelection('lesson') });
@@ -58,7 +60,10 @@ export function mount(root, ctx) {
       el('h2', { id: 'review-level-heading', text: '理解度' }), chartArea),
     el('section', { class: 'review-records', 'aria-labelledby': 'review-records-heading' },
       el('h2', { id: 'review-records-heading', text: '生徒の記録' }),
-      choices('読む項目', [['question', '疑問'], ['learned', '分かったこと']], fieldButtons, (value) => { field = value; }),
+      choices('読む項目', [['question', '疑問'], ['learned', '分かったこと']], fieldButtons, (value) => {
+        field = value;
+        void loadInkThumbs(field);
+      }),
       choices('並び順', [['level', '理解度が低い順'], ['number', '出席番号順']], sortButtons, (value) => { sort = value; }),
       el('div', { class: 'page-actions' }, copy), copyArea, filterStatus, listArea));
   root.replaceChildren(teacherNav(ctx, 'review'),
@@ -168,8 +173,41 @@ export function mount(root, ctx) {
     copyArea.replaceChildren();
   }
 
+  function showInkThumb(area, studentId) {
+    const thumbs = inkThumbs.get(field)?.thumbs;
+    const thumb = thumbs?.[studentId];
+    const fallback = () => area.replaceChildren(el('span', { class: 'small', text: '（手書きがあります。開くと見られます）' }));
+    if (typeof thumb !== 'string' || !thumb.startsWith('data:image/')) { fallback(); return; }
+    const image = el('img', { class: 'review-ink-thumb', src: thumb, alt: '手書き' });
+    const current = loadId;
+    const currentField = field;
+    image.addEventListener('error', () => {
+      if (!alive || current !== loadId || currentField !== field || inkViews.get(studentId) !== area) return;
+      delete thumbs[studentId];
+      fallback();
+    }, { once: true });
+    area.replaceChildren(image);
+  }
+
+  function loadInkThumbs(name) {
+    if (inkThumbs.has(name)) return inkThumbs.get(name).promise;
+    const current = loadId;
+    const currentClass = classId;
+    const currentLesson = lessonId;
+    const entry = { thumbs: {}, promise: null };
+    inkThumbs.set(name, entry);
+    entry.promise = (async () => {
+      try { entry.thumbs = { ...await ctx.repo.listInkThumbs(currentClass, currentLesson, name) }; }
+      catch { /* 一覧は使えるままにして、手書きを開く案内を出す。 */ }
+      if (!alive || current !== loadId || name !== field || !ready) return;
+      for (const [studentId, area] of inkViews) showInkThumb(area, studentId);
+    })();
+    return entry.promise;
+  }
+
   function renderRows() {
     clearCopy();
+    inkViews.clear();
     const all = reviewRows(people, { field, sort });
     let sorted = filterRows(all, levelKey);
     if (levelKey !== null && sorted.length === 0) {
@@ -187,6 +225,11 @@ export function mount(root, ctx) {
       const label = !row.inRoster ? '名簿にいない' : row.number === null ? '出席番号なし' : `${row.number} 番`;
       const name = !row.inRoster || row.number === null ? `${label} ${row.studentId}` : label;
       const kind = row.level === null ? 'info' : row.level >= 3 ? 'ok' : 'warn';
+      const ink = row.hasInk ? el('span', { class: 'review-ink' }) : null;
+      if (ink) {
+        inkViews.set(row.studentId, ink);
+        showInkThumb(ink, row.studentId);
+      }
       return el('li', {}, el('button', { type: 'button', class: `review-row review-level-${row.level ?? 'none'}`,
         'aria-label': `${name}の記録を開く`,
         onclick: () => ctx.navigate('t-record', { classId, lessonId, studentId: row.studentId }) },
@@ -194,14 +237,18 @@ export function mount(root, ctx) {
         el('span', { class: 'review-person', text: label }), statusChip(kind, levelLabel(row.level)),
         attachmentCounts.get(row.studentId) > 0 ? el('span', { class: 'small', text: `添付 ${attachmentCounts.get(row.studentId)}` }) : null,
         !row.inRoster || row.number === null ? el('span', { class: 'small', text: row.studentId }) : null),
-      el('span', { class: 'review-text', text: row.text.trim() ? row.text : '（まだ書いていません）' })));
+      row.text.trim() || !row.hasInk ? el('span', { class: 'review-text', text: row.text.trim() ? row.text : '（まだ書いていません）' }) : null,
+      ink));
     })));
   }
 
   async function copyAll() {
     if (!alive || loading || !ready || copying) return;
     const result = copyText(rows);
-    if (result.count === 0) { toast('コピーする文章がありません。'); return; }
+    if (result.count === 0) {
+      toast(result.inkCount > 0 ? `コピーできる文章がありません（手書き ${result.inkCount} 件）。` : 'コピーする文章がありません。');
+      return;
+    }
     const current = ++copyId;
     copying = true;
     copyArea.replaceChildren();
@@ -209,7 +256,8 @@ export function mount(root, ctx) {
     try {
       if (typeof navigator.clipboard?.writeText !== 'function') throw new Error('コピーを使えません');
       await navigator.clipboard.writeText(result.text);
-      if (alive && current === copyId) toast(`${result.count} 人分をコピーしました。`);
+      if (alive && current === copyId) toast(`${result.count} 人分をコピーしました。`
+        + (result.inkCount > 0 ? `手書き ${result.inkCount} 件は含まれていません。` : ''));
     } catch {
       if (!alive || current !== copyId) return;
       const text = el('textarea', { id: 'review-copy-text', rows: 8, readonly: true, value: result.text });
@@ -230,6 +278,8 @@ export function mount(root, ctx) {
     const stale = () => !alive || current !== loadId;
     loading = true;
     ready = false;
+    inkThumbs.clear();
+    inkViews.clear();
     content.hidden = true;
     clearCopy();
     pageMessage.textContent = '読みこんでいます…';
@@ -262,6 +312,7 @@ export function mount(root, ctx) {
         return;
       }
       navigatePending = false;
+      void loadInkThumbs(field);
       const [lessonResult, membersResult, recordsResult] = await Promise.allSettled([
         ctx.repo.getLesson(classId, lessonId), ctx.repo.getMembers(classId), ctx.repo.listRecords(classId, lessonId),
       ]);

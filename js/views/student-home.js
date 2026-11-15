@@ -5,7 +5,9 @@ import { sortUnits } from '../lesson-logic.js';
 import { cleanTerm, termKey, matchLessons, frequentTerms } from '../term-logic.js';
 import { classLabel, groupByDate, groupByUnit, todoLessons } from '../student-list-logic.js';
 import { tileMark } from '../record-logic.js';
-import { pendingLessons, resendDrafts } from '../record-flow.js';
+import { pendingLessonCount, pendingLessons, resendDrafts } from '../record-flow.js';
+import { resendInkDrafts } from '../ink-flow.js';
+import { inkThumb } from '../ink-thumb.js';
 import { lessonTile } from './parts/lesson-tile.js';
 
 export function mount(root, ctx) {
@@ -77,7 +79,7 @@ export function mount(root, ctx) {
     signingOut = true;
     syncControls();
     try {
-      const count = ctx.drafts.list(studentId).length;
+      const count = pendingLessonCount(ctx.drafts, studentId, ctx.inkDrafts);
       const ok = await confirmDialog({
         title: 'ログアウトしますか？',
         body: 'もう一度使うときは、ID とパスワードを入れます。'
@@ -182,7 +184,7 @@ export function mount(root, ctx) {
   }
 
   function renderPending() {
-    const count = ctx.drafts.list(studentId).length;
+    const count = pendingLessonCount(ctx.drafts, studentId, ctx.inkDrafts);
     pendingArea.replaceChildren(...(count > 0 ? [el('p', {
       class: 'notice',
       text: `まだ保存できていない記録が ${count} 件あります。`
@@ -214,7 +216,7 @@ export function mount(root, ctx) {
       return;
     }
     const classId = current.id;
-    const pending = pendingLessons(ctx.drafts, studentId, classId);
+    const pending = pendingLessons(ctx.drafts, studentId, classId, ctx.inkDrafts);
     const visible = matchLessons(onlyTodo ? todo : lessons, myTerms, query);
     if (termKey(query)) searchStatus.textContent = visible.length
       ? `『${query}』の授業が ${visible.length} つ見つかりました。`
@@ -240,7 +242,18 @@ export function mount(root, ctx) {
   function startResend() {
     if (resendStarted || leaving) return;
     resendStarted = true;
-    resending = resendDrafts({ repo: ctx.repo, drafts: ctx.drafts, studentId, max: CONFIG.recordTextMax, queue: ctx.recordQueue });
+    resending = Promise.allSettled([
+      resendDrafts({ repo: ctx.repo, drafts: ctx.drafts, studentId, max: CONFIG.recordTextMax, queue: ctx.recordQueue }),
+      resendInkDrafts({ repo: ctx.repo, files: ctx.files, inkDrafts: ctx.inkDrafts, studentId,
+        queue: ctx.recordQueue, makeThumb: inkThumb }),
+    ]).then((results) => {
+      const total = { sent: 0, kept: 0, dropped: 0 };
+      for (const result of results) {
+        if (result.status === 'rejected') throw result.reason;
+        for (const key of Object.keys(total)) total[key] += result.value[key];
+      }
+      return total;
+    });
     renderPending();
     resending = resending.then(async ({ sent, kept, dropped }) => {
       if (!alive || leaving) return;

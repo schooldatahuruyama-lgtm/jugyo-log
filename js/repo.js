@@ -23,6 +23,29 @@ function attachmentSlot(slot) {
   return slot;
 }
 
+function inkField(field) {
+  if (!CONFIG.inkFields.includes(field)) throw new TypeError('手書きの欄が正しくありません。');
+  return field;
+}
+
+function toInk(value) {
+  const out = {};
+  for (const [field, index] of isObj(value) ? Object.entries(value) : []) {
+    if (!CONFIG.inkFields.includes(field) || !isObj(index)) continue;
+    const { fileId, bytes, strokes, updatedAt } = index;
+    if (typeof fileId !== 'string' || fileId.length < 1 || fileId.length > 200
+      || !isNum(bytes) || bytes < 0 || bytes > 400000
+      || !Number.isInteger(strokes) || strokes < 1 || strokes > 2000 || !isNum(updatedAt)) continue;
+    out[field] = { fileId, bytes, strokes, updatedAt };
+  }
+  return out;
+}
+
+function toInkCleared(value) {
+  return Object.fromEntries((isObj(value) ? Object.entries(value) : [])
+    .filter(([field, time]) => CONFIG.inkFields.includes(field) && isNum(time)));
+}
+
 function termSlot(slot) {
   if (!CONFIG.myTermSlots.includes(slot)) throw new TypeError('用語の置き場所が正しくありません。');
   return slot;
@@ -215,7 +238,7 @@ export function createRepo(net) {
       const value = await net.get(`records/${key(classId)}/${key(lessonId)}/${key(studentId)}`);
       if (value === null || value === undefined) return null;
       return { ...normalizeRecord(value, { max: CONFIG.recordTextMax }), updatedAt: isNum(value.updatedAt) ? value.updatedAt : 0,
-        attachments: attachmentList(value.attachments) };
+        attachments: attachmentList(value.attachments), ink: toInk(value.ink), inkCleared: toInkCleared(value.inkCleared) };
     },
 
     // 先生が読む、授業 1 回分の全員の記録。書きかけも含め、1 回で読む
@@ -224,7 +247,7 @@ export function createRepo(net) {
       return Object.fromEntries((isObj(value) ? Object.entries(value) : [])
         .filter(([, v]) => isObj(v))
         .map(([id, v]) => [id, { ...normalizeRecord(v, { max: CONFIG.recordTextMax }), updatedAt: isNum(v.updatedAt) ? v.updatedAt : 0,
-          attachments: attachmentList(v.attachments) }]));
+          attachments: attachmentList(v.attachments), ink: toInk(v.ink), inkCleared: toInkCleared(v.inkCleared) }]));
     },
 
     // 添付は残し、文字・理解度・一覧の印を 1 回のルート update で一緒に変える
@@ -257,6 +280,33 @@ export function createRepo(net) {
       const path = `${key(classId)}/${key(lessonId)}/${key(studentId)}`;
       const aid = attachmentSlot(slot);
       await net.update('', { [`records/${path}/attachments/${aid}`]: null, [`recThumbs/${path}/${aid}`]: null });
+    },
+
+    // undefined は画像を維持し、null は消す。メモの画像と文字の記録・更新日時・印には触らない。
+    async setInk(classId, lessonId, studentId, field, { fileId, bytes, strokes }, thumb, now) {
+      const path = `${key(classId)}/${key(lessonId)}/${key(studentId)}`;
+      const name = inkField(field);
+      const patch = { [`records/${path}/ink/${name}`]: { fileId, bytes, strokes, updatedAt: now },
+        [`records/${path}/inkCleared/${name}`]: null };
+      if (CONFIG.inkThumbFields.includes(name) && thumb !== undefined) {
+        patch[`inkThumbs/${classId}/${lessonId}/${name}/${studentId}`] = typeof thumb === 'string' ? thumb : null;
+      }
+      await net.update('', patch);
+    },
+
+    async removeInk(classId, lessonId, studentId, field, now) {
+      if (!isNum(now)) throw new TypeError('手書きを消した時刻が正しくありません。');
+      const path = `${key(classId)}/${key(lessonId)}/${key(studentId)}`;
+      const name = inkField(field);
+      const patch = { [`records/${path}/ink/${name}`]: null, [`records/${path}/inkCleared/${name}`]: now };
+      if (CONFIG.inkThumbFields.includes(name)) patch[`inkThumbs/${classId}/${lessonId}/${name}/${studentId}`] = null;
+      await net.update('', patch);
+    },
+
+    async listInkThumbs(classId, lessonId, field) {
+      if (!CONFIG.inkThumbFields.includes(field)) throw new TypeError('手書きの画像の欄が正しくありません。');
+      return Object.fromEntries(entriesOf(await net.get(`inkThumbs/${key(classId)}/${key(lessonId)}/${field}`))
+        .filter(([, v]) => typeof v === 'string'));
     },
 
     async getRecThumbs(classId, lessonId, studentId) {

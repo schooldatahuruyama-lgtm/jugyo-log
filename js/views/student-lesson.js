@@ -8,6 +8,7 @@ import { materialPane } from './parts/material-pane.js';
 import { attachmentPane } from './parts/attachment-pane.js';
 import { headingIcon } from './parts/heading-icon.js';
 import { termRow } from './parts/term-row.js';
+import { inkField } from './parts/ink-field.js';
 
 export function mount(root, ctx) {
   const { classId, lessonId } = ctx.params;
@@ -29,6 +30,9 @@ export function mount(root, ctx) {
   const dialogs = new AbortController();
   const fields = {};
   const counts = {};
+  const inkFields = {};
+  const writingFields = {};
+  const saveStates = { text: 'idle' };
   const levelButtons = new Map();
   const saveStatus = el('div', { class: 'student-lesson-status', role: 'status', 'aria-live': 'polite' });
   const connectionStatus = el('div', { class: 'student-lesson-status', role: 'status', 'aria-live': 'polite' });
@@ -52,7 +56,39 @@ export function mount(root, ctx) {
     fields[key] = el('textarea', { id, rows, maxlength: CONFIG.recordTextMax,
       'aria-describedby': `${id}-count`, oninput: editRecord });
     counts[key] = el('p', { id: `${id}-count`, class: 'small student-record-count' });
-    return el('div', { class: 'field' }, el('label', { class: 'label', for: id, text: label }), fields[key], counts[key]);
+    const textArea = el('div', {}, fields[key], counts[key]);
+    const inkArea = el('div', { hidden: true });
+    const textButton = el('button', { type: 'button', text: '文字', 'aria-pressed': 'true',
+      onclick: () => setWritingMode(key, 'text') });
+    const inkButton = el('button', { type: 'button', text: '手書き', 'aria-pressed': 'false',
+      onclick: () => setWritingMode(key, 'ink') });
+    writingFields[key] = { label, mode: 'text', textArea, inkArea, textButton, inkButton };
+    return el('div', { class: 'field' }, el('div', { class: 'student-writing-heading' },
+      el('label', { class: 'label', for: id, text: label }),
+      el('div', { class: 'student-writing-switch', role: 'group', 'aria-label': `${label}の書き方` }, textButton, inkButton)),
+    textArea, inkArea);
+  }
+
+  function syncWritingMode(key) {
+    const entry = writingFields[key];
+    const isInk = entry.mode === 'ink';
+    entry.textArea.hidden = isInk;
+    entry.inkArea.hidden = !isInk;
+    for (const [button, name, selected, filled] of [
+      [entry.textButton, '文字', !isInk, record[key].length > 0],
+      [entry.inkButton, '手書き', isInk, inkFields[key]?.hasInk()],
+    ]) {
+      button.setAttribute('aria-pressed', String(selected));
+      button.textContent = `${name}${!selected && filled ? ' ●' : ''}`;
+      button.setAttribute('aria-label', `${name}${!selected && filled ? '（書いてあります）' : ''}`);
+    }
+  }
+
+  function setWritingMode(key, mode) {
+    if (!alive || !ready) return;
+    writingFields[key].mode = mode;
+    syncWritingMode(key);
+    if (mode === 'ink') void inkFields[key].show();
   }
 
   const memo = textField('memo', 'メモ', 7);
@@ -95,8 +131,16 @@ export function mount(root, ctx) {
       el('span', { text: label }));
   }
 
-  function showSaveState(state) {
+  function retrySaves() {
+    for (const item of [saver, ...Object.values(inkFields)]) {
+      if (item && (item.state === 'failed' || item.state === 'retrying')) void item.retry();
+    }
+  }
+
+  function showSaveState() {
     if (!alive) return;
+    const priority = { idle: 0, saved: 1, dirty: 2, saving: 2, retrying: 3, failed: 4 };
+    const state = Object.values(saveStates).reduce((worst, value) => priority[value] > priority[worst] ? value : worst, 'idle');
     const labels = {
       dirty: ['info', '保存中…'], saving: ['info', '保存中…'], saved: ['ok', '保存しました'],
       retrying: ['warn', '保存できませんでした。もう一度ためしています…'], failed: ['danger', '保存できませんでした'],
@@ -104,7 +148,7 @@ export function mount(root, ctx) {
     const label = labels[state];
     saveStatus.replaceChildren(...(label ? [statusText(...label)] : []));
     if (state === 'failed') saveStatus.append(el('button', {
-      type: 'button', class: 'btn', text: 'もう一度', onclick: () => saver.retry(),
+      type: 'button', class: 'btn', text: 'もう一度', onclick: retrySaves,
     }));
   }
 
@@ -123,6 +167,7 @@ export function mount(root, ctx) {
       const remaining = CONFIG.recordTextMax - record[key].length;
       counts[key].textContent = record[key].length < CONFIG.recordCountFrom ? ''
         : remaining === 0 ? 'これ以上は書けません' : `あと ${remaining} 文字`;
+      syncWritingMode(key);
     }
     for (const level of LEVELS) {
       const selected = record.level === level.value;
@@ -192,14 +237,27 @@ export function mount(root, ctx) {
           if (alive) updatedAt = Math.max(updatedAt, editedAt);
         }),
         saveDraft, removeDraft: () => ctx.drafts.remove(studentId, classId, lessonId),
-        now: ctx.now, ...ctx.timers, delayMs: CONFIG.save.delayMs, retryMs: CONFIG.save.retryMs, onState: showSaveState,
+        now: ctx.now, ...ctx.timers, delayMs: CONFIG.save.delayMs, retryMs: CONFIG.save.retryMs,
+        onState(state) { saveStates.text = state; showSaveState(); },
       });
+      for (const field of CONFIG.inkFields) {
+        const entry = writingFields[field];
+        inkFields[field] = inkField({ ctx, classId, lessonId, studentId, field, label: entry.label,
+          index: server?.ink?.[field] ?? null, cleared: server?.inkCleared?.[field],
+          onState(state) { saveStates[field] = state; showSaveState(); },
+          onChange: () => syncWritingMode(field) });
+        entry.inkArea.replaceChildren(inkFields[field].node);
+        entry.mode = inkFields[field].hasInk() && record[field].length === 0 ? 'ink' : 'text';
+      }
       date.textContent = dateLabel(lesson.date);
       heading.textContent = lesson.title;
       syncRecord();
       ready = true;
       content.hidden = false;
       pageMessage.replaceChildren();
+      for (const field of CONFIG.inkFields) {
+        if (writingFields[field].mode === 'ink') void inkFields[field].show();
+      }
       if (initial.fromDraft) {
         saver.edit(record, { editedAt: draft.editedAt });
         toast('前に保存できなかった内容を、もう一度送ります。');
@@ -219,13 +277,15 @@ export function mount(root, ctx) {
   }
 
   async function refreshRecord() {
-    if (!alive || !ready || document.visibilityState !== 'visible' || saver.dirty) return;
+    if (!alive || !ready || document.visibilityState !== 'visible') return;
     const current = ++refreshId;
     const startedRevision = revision;
     try {
       const server = await ctx.repo.getRecord(classId, lessonId, studentId);
+      if (!alive || current !== refreshId) return;
+      for (const field of CONFIG.inkFields) inkFields[field].refresh(server?.ink?.[field] ?? null, server?.inkCleared?.[field]);
       // 読みこみの途中で書いた場合も、その入力を守る。
-      if (!alive || current !== refreshId || saver.dirty || startedRevision !== revision) return;
+      if (saver.dirty || startedRevision !== revision) return;
       if (typeof server?.updatedAt !== 'number' || !Number.isFinite(server.updatedAt) || server.updatedAt <= updatedAt) return;
       record = normalizeRecord(server, { max: CONFIG.recordTextMax });
       updatedAt = server.updatedAt;
@@ -235,12 +295,14 @@ export function mount(root, ctx) {
 
   async function okToLeave() {
     terms?.setLocked(true);
+    for (const item of Object.values(inkFields)) item.setLocked(true);
     let leaving = false;
     try {
       if (terms && !await terms.settle()) return false;
-      if (saver?.dirty) {
-        showSaveState('saving');
-        const saved = await saver.flush();
+      const savers = [saver, ...Object.values(inkFields)].filter(Boolean);
+      if (savers.some((item) => item.dirty)) {
+        const results = await Promise.all(savers.map((item) => item.flush()));
+        const saved = results.every(Boolean);
         if (!alive) return false;
         if (!saved && !await confirmDialog({ title: 'まだ保存できていません',
           body: 'この iPad の中に残して、一覧へもどりますか？　次に一覧を開いたときに、もう一度送ります。',
@@ -253,7 +315,10 @@ export function mount(root, ctx) {
       leaving = alive;
       return leaving;
     } finally {
-      if (!leaving) terms?.setLocked(false);
+      if (!leaving) {
+        terms?.setLocked(false);
+        for (const item of Object.values(inkFields)) item.setLocked(false);
+      }
     }
   }
 
@@ -267,7 +332,7 @@ export function mount(root, ctx) {
   const onOnline = () => {
     online = true;
     showConnection();
-    if (saver && (saver.state === 'failed' || saver.state === 'retrying')) void saver.retry();
+    retrySaves();
   };
   ctx.setLeaveGuard(okToLeave);
   window.addEventListener('offline', onOffline);
@@ -280,6 +345,7 @@ export function mount(root, ctx) {
   return () => {
     alive = false;
     saver?.dispose();
+    for (const item of Object.values(inkFields)) item.destroy();
     dialogs.abort();
     ctx.setLeaveGuard(null);
     window.removeEventListener('offline', onOffline);

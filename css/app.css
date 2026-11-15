@@ -379,6 +379,11 @@ dialog.material-viewer[open] { display: flex; flex-direction: column; gap: var(-
 .review-row-heading .chip { max-width: 100%; overflow-wrap: anywhere; }
 .review-person { font-weight: 700; }
 .review-text { display: block; min-width: 0; max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-ink { display: block; align-self: flex-start; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.review-ink-thumb { display: block; width: auto; height: auto; max-width: 100%; max-height: 120px; border: 1px solid var(--c-border); background: #FFFFFF; object-fit: contain; }
+.record-ink { width: 100%; min-width: 0; max-width: 100%; margin-top: var(--s-1); border: 1px solid var(--c-border); background: #FFFFFF; }
+.record-ink .ink-pad { width: 100%; }
+.record-ink .ink-paper { border: 0; }
 .review-copy-area:empty { display: none; }
 .review-copy-area textarea { display: block; width: 100%; margin: var(--s-1) 0; white-space: pre-wrap; overflow-wrap: anywhere; resize: vertical; }
 
@@ -436,6 +441,55 @@ button.term-pill:disabled { opacity: 0.55; cursor: not-allowed; }
 .term-pill-small { min-height: 0; padding: 0 8px; border-width: 1px; font-size: 12px; }
 .term-pill-small.is-match { background: #FFF1A8; }
 .term-more { font-size: 12px; }
+
+/* 手書き。道具・紙・下に足すボタンを、同じ幅でつなぐ。 */
+.student-writing-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-bottom: var(--s-1); min-width: 0; }
+.student-writing-heading > .label { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.student-writing-switch { display: inline-flex; flex: none; max-width: 100%; }
+.student-writing-switch > button {
+  min-width: 44px; min-height: 44px; padding: 6px 12px; border: 2px solid var(--section-color, var(--mine));
+  background: #FFFFFF; color: var(--section-color, var(--mine)); font: inherit; font-weight: 700;
+  cursor: pointer; touch-action: manipulation;
+}
+.student-writing-switch > button:first-child { border-radius: 12px 0 0 12px; }
+.student-writing-switch > button:last-child { border-left: 0; border-radius: 0 12px 12px 0; }
+.student-writing-switch > button[aria-pressed='true'] { background: var(--section-color, var(--mine)); color: #FFFFFF; }
+.ink-field { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.ink-draft-warning { margin: var(--s-1) 0 0; }
+.ink-pad { min-width: 0; max-width: 100%; }
+.ink-tools {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; padding: 8px;
+  border: 1px solid var(--soft-line); border-radius: 12px 12px 0 0; background: var(--mine-bg);
+}
+.ink-tool, .ink-more {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; min-height: 44px; max-width: 100%;
+  padding: 4px 10px; border: 1px solid var(--soft-line); border-radius: 10px;
+  background: #FFFFFF; color: var(--c-navy); font: inherit; font-weight: 700; cursor: pointer; touch-action: manipulation; overflow-wrap: anywhere;
+}
+.ink-tool[aria-pressed='true'] { border: 3px solid var(--c-navy); padding: 2px 8px; }
+.ink-mode[aria-pressed='true'] { background: var(--c-navy); color: #FFFFFF; }
+.ink-mode[aria-pressed='true']:focus-visible { outline-color: var(--mine); }
+.ink-tool:disabled, .ink-more:disabled { opacity: 0.55; cursor: not-allowed; }
+.ink-clear { color: var(--c-danger-text); }
+.ink-color-dot, .ink-width-dot { display: block; flex: none; width: 20px; height: 20px; border-radius: 50%; }
+.ink-width-dot { width: 6px; height: 6px; background: #111111; }
+.ink-width-thick { width: 14px; height: 14px; }
+.ink-ruler-icon { flex: none; width: 26px; height: 14px; stroke: var(--c-navy); stroke-width: 1.5; }
+.ink-status { min-width: 0; margin-left: auto; font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+.ink-paper { display: block; width: 100%; height: auto; border: 1px solid var(--soft-line); background: #FFFFFF; }
+.ink-pad:not(.ink-readonly) .ink-paper { user-select: none; -webkit-user-select: none; }
+.ink-writing .ink-paper { border: 2px solid var(--mine); cursor: crosshair; }
+.ink-more { display: flex; width: 100%; border-top: 0; border-radius: 0 0 12px 12px; background: var(--mine-bg); color: var(--mine); }
+.ink-message { margin: var(--s-1) 0 0; overflow-wrap: anywhere; }
+.ink-message:empty { display: none; }
+.ink-empty { margin: 0; }
+.student-lesson-reflection .ink-tools { border-color: var(--reflect); background: var(--reflect-bg); }
+.student-lesson-reflection .ink-tool,
+.student-lesson-reflection .ink-paper,
+.student-lesson-reflection .record-ink { border-color: var(--reflect); }
+.student-lesson-reflection .ink-paper > g[aria-hidden='true'] { stroke: var(--reflect-bg); }
+.student-lesson-reflection .ink-mode[aria-pressed='true']:focus-visible { outline-color: var(--reflect); }
+.student-lesson-reflection .ink-more { border-color: var(--reflect); background: var(--reflect-bg); color: var(--reflect); }
 
 @media (orientation: portrait), (max-width: 899px) {
   .teacher-record-page .student-lesson-columns { grid-template-columns: minmax(0, 1fr); }
