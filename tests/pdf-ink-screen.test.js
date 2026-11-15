@@ -13,7 +13,7 @@ const hooks = registerHooks({
   load(url, context, next) {
     if (url === new URL('../js/pdf.js', import.meta.url).href) return {
       format: 'module', shortCircuit: true,
-      source: 'export async function openPdf() { return globalThis.pdfInkScreenTest.openPdf(); }',
+      source: 'export { pdfThumb } from "./pdf.js?thumb-test"; export async function openPdf() { return globalThis.pdfInkScreenTest.openPdf(); }',
     };
     return next(url, context);
   },
@@ -23,6 +23,7 @@ const { materialPane } = await import('../js/views/parts/material-pane.js');
 const { pictureInks, canUsePictureInk, hasPictureInk } = await import('../js/views/parts/picture-ink.js');
 const { mount: mountTeacher } = await import('../js/views/teacher-record.js');
 const { mount: mountStudent } = await import('../js/views/student-lesson.js');
+const { mount: mountTeacherLesson } = await import('../js/views/teacher-lesson.js');
 after(() => hooks.deregister());
 
 const ids = { classId: 'test-class', lessonId: 'test-lesson', studentId: 'test-student' };
@@ -133,6 +134,103 @@ async function clearPage() {
   const confirmation = byClass(document.body, 'confirm')[0];
   assert.match(confirmation.textContent, /このページへの書きこみを全部消します。「1 つ戻す」で戻せます。/);
   buttons(confirmation, '全部消す')[0].click(); await settle();
+}
+
+function thumbnailPdf(h, { error = null, gate = null } = {}) {
+  const result = { thumb: 'data:image/jpeg;base64,AAAA', renders: [], closed: 0 };
+  h.openPdf = () => {
+    let closed = false;
+    return {
+      async renderPage(page, edge) {
+        result.renders.push([page, edge]);
+        if (edge < CONFIG.thumb.maxEdge) {
+          if (gate) await gate.promise;
+          if (closed) throw new Error('閉じた PDF');
+          if (error) throw error;
+        }
+        return { toDataURL: () => edge === CONFIG.thumb.maxEdge
+          ? result.thumb + 'A'.repeat(CONFIG.thumb.maxChars) : result.thumb };
+      },
+      close() { if (!closed) { closed = true; result.closed++; } },
+    };
+  };
+  return result;
+}
+
+async function pdfUploadScreen(h, kind) {
+  const uploads = [], additions = [];
+  h.ctx.files.uploadStudent = h.ctx.files.upload = async (args) => {
+    uploads.push(args); return { fileId: 'test-uploaded-pdf', bytes: 3 };
+  };
+  let root, destroy;
+  if (kind === 'attachment') {
+    h.record.attachments = [];
+    h.ctx.repo.addAttachment = async (c, l, s, slot, item, thumb) => {
+      additions.push({ item, thumb });
+      h.record.attachments.push({ slot, ...item });
+    };
+    const pane = paneFor(h);
+    root = pane.node; destroy = () => pane.destroy();
+  } else {
+    h.lesson.materials = {};
+    h.ctx.repo.listClasses = async () => [{ id: ids.classId, year: 2026, name: '確認用クラス' }];
+    h.ctx.repo.listUnits = async () => [];
+    h.ctx.repo.getThumbs = async () => Object.fromEntries(additions.map(({ id, thumb }) => [id, thumb]));
+    h.ctx.repo.addMaterial = async (targets, id, item, thumb) => {
+      additions.push({ id, item, thumb });
+      h.lesson.materials[id] = { ...item, order: targets[0].order };
+    };
+    root = document.createElement('main'); document.body.append(root);
+    destroy = mountTeacherLesson(root, h.ctx); h.cleanup(destroy);
+  }
+  await settle();
+  const input = all(root, (node) => node.tagName === 'input' && node.getAttribute('type') === 'file'
+    && node.getAttribute('accept').includes('application/pdf'))[0];
+  assert.ok(input);
+  return { root, destroy, uploads, additions, async send() {
+    input.files = [{ type: 'application/pdf', name: '確認用.pdf', size: 3,
+      arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }];
+    input.fire('change'); await settle();
+    if (kind === 'material') {
+      const form = byClass(root, 'material-form')[0];
+      assert.ok(form);
+      form.fire('submit'); await settle();
+    }
+  } };
+}
+
+for (const kind of ['attachment', 'material']) {
+  for (const fails of [false, true]) {
+    test(`PDF追加・${kind}: ${fails ? '描き直しに失敗しても、小さい画像なしで送る' : '1 回目が大きすぎても、小さい画像を付けて送る'}`, async (t) => {
+      const h = setup(t);
+      const rendered = thumbnailPdf(h, { error: fails ? new Error('描けません') : null });
+      const screen = await pdfUploadScreen(h, kind);
+      await screen.send();
+      assert.deepEqual(rendered.renders, [[1, 320], [1, 240]]);
+      assert.equal(rendered.closed, 1);
+      assert.equal(screen.uploads.length, 1);
+      assert.equal(screen.uploads[0].mime, 'application/pdf');
+      assert.equal(screen.uploads[0].dataB64, 'AQID');
+      assert.equal(screen.additions.length, 1);
+      assert.equal(screen.additions[0].item.type, 'pdf');
+      assert.equal(screen.additions[0].thumb, fails ? null : rendered.thumb);
+      const images = all(screen.root, (node) => node.tagName === 'img');
+      assert.equal(images.length, fails ? 0 : 1);
+      if (!fails) assert.equal(images[0].getAttribute('src'), rendered.thumb);
+    });
+  }
+
+  test(`PDF追加・${kind}: 描き直しの途中で画面を離れたら送らず、PDF を閉じる`, async (t) => {
+    const h = setup(t), gate = deferred();
+    const rendered = thumbnailPdf(h, { gate });
+    const screen = await pdfUploadScreen(h, kind);
+    await screen.send();
+    assert.deepEqual(rendered.renders, [[1, 320], [1, 240]]);
+    screen.destroy(); gate.resolve(); await settle();
+    assert.equal(screen.uploads.length, 0);
+    assert.equal(screen.additions.length, 0);
+    assert.equal(rendered.closed, 1);
+  });
 }
 
 test('ページの印: 場所・on・下書き時刻を確かめ、消去はそのページだけに効く', (t) => {

@@ -4,8 +4,8 @@ import { CONFIG } from '../../config.js';
 import { newId } from '../../ids.js';
 import { freeSlot, attachmentLabels } from '../../record-logic.js';
 import { addAttachmentFlow, settleAttachmentFlow, removeAttachmentFlow } from '../../attachment-flow.js';
-import { compressImage, compressCanvas, dataUrlToBase64 } from '../../image.js';
-import { openPdf } from '../../pdf.js';
+import { compressImage, dataUrlToBase64 } from '../../image.js';
+import { openPdf, pdfThumb } from '../../pdf.js';
 import { openViewer } from './viewer.js';
 import { pictureInks } from './picture-ink.js';
 
@@ -152,8 +152,8 @@ export function attachmentPane({ ctx, classId, lessonId, studentId, attachments,
       pdf = await openPdf(buffer);
       if (!alive) return null;
       item.pdf = pdf;
-      const canvas = await pdf.renderPage(1, CONFIG.thumb.maxEdge);
-      if (alive) thumb = compressCanvas(canvas, { maxBytes: CONFIG.thumb.maxChars });
+      const url = await pdfThumb(pdf, { maxEdge: CONFIG.thumb.maxEdge, maxBytes: CONFIG.thumb.maxChars });
+      if (alive) thumb = url;
     } catch { /* こわれた PDF も、小さい画像なしで送る */ }
     finally {
       if (pdf) await pdf.close();

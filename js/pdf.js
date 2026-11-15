@@ -1,5 +1,20 @@
 // PDF の部品は、初めて開くときだけ自分のサイトから読みこむ。
-import { fitSize } from './image.js';
+import { fitSize, compressCanvas } from './image.js';
+
+// 1 ページ目を小さい画像（JPEG のデータ URL）にする。大きすぎたら、長辺を 0.75 倍にして描き直す。
+export async function pdfThumb(pdf, { maxEdge, maxBytes }) {
+  if (!Number.isFinite(maxEdge) || maxEdge <= 0 || !Number.isFinite(maxBytes) || maxBytes <= 0) {
+    throw new TypeError('maxEdge と maxBytes は正の有限の数にしてください');
+  }
+  let edge = maxEdge;
+  while (edge >= 64) {
+    const canvas = await pdf.renderPage(1, edge);
+    const url = compressCanvas(canvas, { maxBytes });
+    if (url) return url;
+    edge = Math.floor(edge * 0.75);
+  }
+  return null;
+}
 
 let library = null;
 

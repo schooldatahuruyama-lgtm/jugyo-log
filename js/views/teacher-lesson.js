@@ -4,8 +4,8 @@ import { CONFIG } from '../config.js';
 import { newId } from '../ids.js';
 import { checkLesson, sortUnits, materialList, nextOrder, moveInOrder } from '../lesson-logic.js';
 import { cleanTerm, checkTerm, termKey, lessonTerms, suggestTerms } from '../term-logic.js';
-import { compressImage, compressCanvas, dataUrlToBase64 } from '../image.js';
-import { openPdf } from '../pdf.js';
+import { compressImage, dataUrlToBase64 } from '../image.js';
+import { openPdf, pdfThumb } from '../pdf.js';
 import { addMaterialFlow, removeMaterialFlow } from '../material-flow.js';
 import { teacherNav } from './parts/teacher-nav.js';
 import { openViewer } from './parts/viewer.js';
@@ -488,8 +488,7 @@ export function mount(root, ctx) {
     let pdf = null;
     try {
       pdf = await openPdf(buffer);
-      const canvas = await pdf.renderPage(1, CONFIG.thumb.maxEdge);
-      thumb = compressCanvas(canvas, { maxBytes: CONFIG.thumb.maxChars });
+      thumb = await pdfThumb(pdf, { maxEdge: CONFIG.thumb.maxEdge, maxBytes: CONFIG.thumb.maxChars });
     } catch { /* PDF を送れるように、サムネイルが作れなくても続ける */ }
     finally { if (pdf) await pdf.close(); }
     return { mime: 'application/pdf', dataB64, thumb };
