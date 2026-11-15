@@ -1,9 +1,15 @@
-// 写真ごとの手書きをページが持つ。大きな表示を閉じても、保存待ちと戻す履歴を残す。
-import { inkPlaceKind, pictureIndex, serverInkTime } from '../../ink-logic.js';
+// 写真・PDF のページごとの手書き。大きな表示を閉じても、保存待ちと戻す履歴を残す。
+import { inkPlaceKind, inkPagePlace, splitInkPlace, hasPageInk, pictureIndex, serverInkTime } from '../../ink-logic.js';
 import { inkField } from './ink-field.js';
 
 export function canUsePictureInk(photo) {
-  return photo?.type === 'image' && typeof photo.fileId === 'string' && !!photo.fileId
+  return typeof photo?.fileId === 'string' && !!photo.fileId
+    && (photo.type === 'image' && ['attachment', 'material'].includes(inkPlaceKind(photo.place))
+      || photo.type === 'pdf' && ['attachment-page', 'material-page'].includes(inkPlaceKind(photo.place)));
+}
+
+function isPdf(photo) {
+  return photo?.type === 'pdf' && typeof photo.fileId === 'string' && !!photo.fileId
     && ['attachment', 'material'].includes(inkPlaceKind(photo.place));
 }
 
@@ -99,12 +105,34 @@ export function pictureInks({ ctx, classId, lessonId, studentId, ink = {}, inkCl
     priority[entry.field.state] > priority[worst] ? entry.field.state : worst, 'idle');
   const changed = () => { if (alive) { onState(state()); onChange(); } };
 
+  function pagesFor(photo) {
+    if (!isPdf(photo)) return [photo];
+    const drafts = readOnly ? [] : ctx.inkDrafts.list(studentId).filter((draft) =>
+      draft.classId === classId && draft.lessonId === lessonId && draft.on === photo.fileId);
+    const places = new Set([...Object.keys(ink ?? {}), ...drafts.map((draft) => draft.field),
+      ...[...entries.values()].filter((entry) => entry.photo.fileId === photo.fileId).map((entry) => entry.photo.place)]);
+    return [...places].filter((place) => splitInkPlace(place)?.place === photo.place)
+      .map((place) => ({ ...photo, place }));
+  }
+
+  function has(photo) {
+    if (isPdf(photo)) {
+      // 開いているページや新しい下書きの全消去は、古い目録より優先する。
+      const current = {};
+      for (const page of pagesFor(photo)) if (has(page)) current[page.place] = { on: photo.fileId };
+      return hasPageInk({ ink: current }, photo.place, photo.fileId);
+    }
+    if (!canUsePictureInk(photo)) return false;
+    return entries.get(key(photo))?.field.hasInk() ?? hasPictureInk(photo, ink, inkCleared, draftFor(photo));
+  }
+
   function get(photo) {
     if (!alive || !studentId || !canUsePictureInk(photo)) return null;
     const id = key(photo);
     if (!entries.has(id)) {
-      const entry = pausableInkField({ ctx, classId, lessonId, studentId, field: photo.place, label: photo.label || '写真',
-        index: indexFor(photo), cleared: inkCleared?.[photo.place], picture: { on: photo.fileId }, readOnly,
+      const entry = pausableInkField({ ctx, classId, lessonId, studentId, field: photo.place,
+        label: photo.label || (photo.type === 'pdf' ? 'PDF' : '写真'),
+        index: indexFor(photo), cleared: inkCleared?.[photo.place], picture: { on: photo.fileId, type: photo.type }, readOnly,
         async reloadIndex() {
           const record = await ctx.repo.getRecord(classId, lessonId, studentId);
           if (alive) {
@@ -125,25 +153,28 @@ export function pictureInks({ ctx, classId, lessonId, studentId, ink = {}, inkCl
 
   return {
     get,
-    has(photo) {
-      if (!canUsePictureInk(photo)) return false;
-      return entries.get(key(photo))?.field.hasInk() ?? hasPictureInk(photo, ink, inkCleared, draftFor(photo));
+    getPage(photo, page) {
+      if (!isPdf(photo) || !Number.isInteger(page) || page < 1 || page > 999) return null;
+      return get({ ...photo, place: inkPagePlace(photo.place, page), label: photo.label || 'PDF' });
     },
+    has,
     restore(photos) {
       if (readOnly) return;
-      for (const photo of photos) {
+      for (const photo of photos.flatMap(pagesFor)) {
         if (!canUsePictureInk(photo)) continue;
         const draft = draftFor(photo);
         if (draft?.on === photo.fileId) get(photo);
       }
     },
-    pause(photo) { entries.get(key(photo))?.pause(); },
-    resume(photo) { entries.get(key(photo))?.resume(locked); },
+    pause(photo) { for (const page of pagesFor(photo)) entries.get(key(page))?.pause(); },
+    resume(photo) { for (const page of pagesFor(photo)) entries.get(key(page))?.resume(locked); },
     stop(photo) {
-      const entry = entries.get(key(photo));
-      entry?.field.destroy({ discard: true });
-      entries.delete(key(photo));
-      if (!readOnly && draftFor(photo)?.on === photo.fileId) ctx.inkDrafts.remove(studentId, classId, lessonId, photo.place);
+      for (const page of pagesFor(photo)) {
+        const entry = entries.get(key(page));
+        entry?.field.destroy({ discard: true });
+        entries.delete(key(page));
+        if (!readOnly && draftFor(page)?.on === page.fileId) ctx.inkDrafts.remove(studentId, classId, lessonId, page.place);
+      }
       changed();
     },
     get dirty() { return [...entries.values()].some(({ field }) => field.dirty); },

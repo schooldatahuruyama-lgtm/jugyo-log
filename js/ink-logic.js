@@ -5,12 +5,37 @@ const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const clamp = (n, max) => Math.max(0, Math.min(max, n));
 
-export function inkPlaceKind(name) {
+function basePlaceKind(name) {
   if (typeof name !== 'string' || !name) return null;
   if (CONFIG.inkFields.includes(name)) return 'field';
   if (CONFIG.attachmentSlots.includes(name)) return 'attachment';
   // 資料を足す画面の newId と同じ、12 文字の英数字。
   return name.length === CONFIG.idLength && /^[A-Za-z0-9]+$/.test(name) ? 'material' : null;
+}
+
+export function inkPlaceKind(name) {
+  const base = basePlaceKind(name);
+  if (base) return base;
+  const page = splitInkPlace(name);
+  return page ? `${basePlaceKind(page.place)}-page` : null;
+}
+
+export function inkPagePlace(place, page) {
+  if (!['attachment', 'material'].includes(basePlaceKind(place))
+    || !Number.isInteger(page) || page < 1 || page > 999) throw new TypeError('PDF のページが正しくありません。');
+  return `${place}#p${page}`;
+}
+
+export function splitInkPlace(name) {
+  if (typeof name !== 'string') return null;
+  const match = /^([^#]+)#p([1-9][0-9]{0,2})$/.exec(name);
+  if (!match || match[0] !== name || !['attachment', 'material'].includes(basePlaceKind(match[1]))) return null;
+  return { place: match[1], page: Number(match[2]) };
+}
+
+export function hasPageInk(record, place, fileId) {
+  if (!['attachment', 'material'].includes(basePlaceKind(place)) || typeof fileId !== 'string' || !fileId) return false;
+  return Object.entries(record?.ink ?? {}).some(([name, index]) => splitInkPlace(name)?.place === place && index?.on === fileId);
 }
 
 export function pictureIndex(record, place, fileId) {
