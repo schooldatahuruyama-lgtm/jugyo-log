@@ -406,6 +406,22 @@ dialog.material-viewer[open] { display: flex; flex-direction: column; gap: var(-
 .review-copy-area:empty { display: none; }
 .review-copy-area textarea { display: block; width: 100%; margin: var(--s-1) 0; white-space: pre-wrap; overflow-wrap: anywhere; resize: vertical; }
 
+/* 先生の一覧のまとめ。長い文章と用語はカードの幅の中で折り返す。 */
+.review-summary { min-width: 0; }
+.summary-box { min-width: 0; max-width: 100%; padding: var(--s-2); overflow-wrap: anywhere; }
+.summary-box h3 { margin-top: var(--s-3); }
+.summary-box .btn { min-width: 44px; min-height: 44px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.summary-box .btn[aria-expanded='true'] { background: var(--c-navy); border-color: var(--c-navy); color: #FFFFFF; text-decoration: underline; text-underline-offset: 4px; }
+.summary-table { width: 100%; min-width: 480px; border-collapse: collapse; background: var(--c-card); }
+.summary-table th, .summary-table td { padding: var(--s-1) 12px; border-bottom: 1px solid var(--c-line); text-align: left; vertical-align: middle; }
+.summary-table thead th { background: var(--c-bg); font-size: 16px; }
+.summary-table tbody tr { cursor: pointer; }
+.summary-table tbody tr:hover { background: #FBF4E2; }
+.summary-words { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+.summary-excerpts { padding-left: var(--s-3); }
+.summary-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.summary-details { margin-top: var(--s-2); padding: var(--s-2); border: 1px solid var(--c-border); border-radius: var(--r-1); }
+
 /* 一人の記録。資料の並びは生徒の授業と共通にし、文章は読むだけで出す。 */
 .record-heading { margin-bottom: var(--s-3); overflow-wrap: anywhere; }
 .record-heading h1 { margin-bottom: var(--s-1); font-size: 24px; }
