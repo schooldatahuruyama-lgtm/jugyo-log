@@ -136,7 +136,10 @@ function correctAnswer(method, path, repo, value) {
     if (path === `records/${inId}/${lesson?.id}/s00-999/attachments/a1`
       && value.type === 'image' && value.fileId === 'probe') return 'ok';
     if (path === `recThumbs/${inId}/${lesson?.id}/s00-999/a1`) return 'ok';
-    if (path === `records/${inId}/${lesson?.id}/s00-999/ink/memo` && value.strokes === 1 && value.updatedAt >= 1000) return 'ok';
+    if (path === `records/${inId}/${lesson?.id}/s00-999/ink/memo` && !('on' in value) && value.strokes === 1 && value.updatedAt >= 1000) return 'ok';
+    const material = repo.state.materials.find((m) => m.classId === inId);
+    if ([`records/${inId}/${lesson?.id}/s00-999/ink/a1`, `records/${inId}/${lesson?.id}/s00-999/ink/${material?.materialId}`].includes(path)
+      && value.on === 'probe' && value.strokes === 1) return 'ok';
     if (path === `inkThumbs/${inId}/${lesson?.id}/learned/s00-999`) return 'ok';
     if (path === `records/${inId}/${lesson?.id}/s00-999/inkCleared/memo` && Number.isFinite(value) && value > 1000) return 'ok';
   }
@@ -320,7 +323,64 @@ function inkChecks(repo) {
   ];
 }
 
-const LABEL_COUNT = 77;
+function pictureChecks(repo) {
+  const cid = repo.state.members[0].classId;
+  const lid = repo.state.lessons.find((l) => l.classId === cid).id;
+  const mid = repo.state.materials.find((m) => m.classId === cid).materialId;
+  const own = `records/${cid}/${lid}/s00-999/ink`;
+  return [
+    ['set', `${own}/a1`, 'ok', (v) => v.on === 'probe'],
+    ['set', `${own}/a1`, 'denied', (v) => v.on === 'probe-other' && v.updatedAt > 1000],
+    ['set', `${own}/a2`, 'denied', (v) => v.on === 'probe'],
+    ['set', `${own}/memo`, 'denied', (v) => v.on === 'probe' && v.updatedAt > 1003],
+    ['set', `${own}/${mid}`, 'ok', (v) => v.on === 'probe'],
+    ['set', null, 'denied', (v, p) => p.startsWith(`${own}/`) && p !== `${own}/${mid}`
+      && /^[A-Za-z0-9]{12}$/.test(p.split('/').at(-1)) && v.on === 'probe'],
+  ];
+}
+
+const LABEL_COUNT = 83;
+
+test('runRulesProbe: 写真の 6 行は on・写真・資料の対応を確かめ、逆の答えと通信失敗を検出する', async () => {
+  for (let i = 0; i < 6; i++) {
+    for (const failure of [null, '逆の答え', '通信失敗']) {
+      let called = 0;
+      const s = setup({ override: (m, p, repo, v) => {
+        if (!repo.state.members.length) return undefined;
+        const check = pictureChecks(repo)[i];
+        if (!matchesRecordCheck(check, m, p, v)) return undefined;
+        called += 1;
+        return failure === '通信失敗' ? new NetError('network')
+          : failure === '逆の答え' ? (check[2] === 'ok' ? 'denied' : 'ok') : undefined;
+      } });
+      const rows = await runRulesProbe(s.args);
+      assert.equal(rows.length, LABEL_COUNT);
+      assert.equal(called, 1);
+      assert.equal(rows[77 + i].expect, pictureChecks(s.teacherRepo)[i][2]);
+      assert.equal(rows[77 + i].pass, failure === null);
+      assert.equal(rows.filter((row) => !row.pass).length, failure ? 1 : 0);
+      assertLessonCleanup(s);
+    }
+  }
+});
+
+test('runRulesProbe: 写真の目録は応答が失われても生徒として片付け、資料も授業と一緒に消す', async () => {
+  for (const loseRecordReply of [false, true]) {
+    const s = recordCleanupSetup({ loseRecordReply });
+    const rows = await runRulesProbe(s.args);
+    for (const i of [77, 81]) assert.equal(rows[i].got, loseRecordReply ? 'error' : 'ok');
+    for (const i of [78, 79, 80, 82]) assert.equal(rows[i].got, 'denied');
+    assert.equal(await s.mem.get('records'), null);
+    assert.equal(await s.mem.get('lessons'), null);
+    assert.equal(rows.some((row) => row.label === '片付け'), false);
+    const writes = s.events.filter(([who, method, path, value]) => who === '生徒' && method === 'set'
+      && path.includes('/ink/') && value.on === 'probe' && !path.endsWith('/a2') && !path.endsWith('/memo'));
+    assert.equal(writes.length, 3);
+    for (const [, , path] of writes.slice(0, 2)) {
+      assert.ok(s.events.some(([who, method, , patch]) => who === '生徒' && method === 'update' && patch[path] === null));
+    }
+  }
+});
 
 test('runRulesProbe: 古い目録・削除時刻の 2 行は拒否を試し、逆の答えと通信失敗を検出する', async () => {
   for (const [i, kind] of [[73, 'ink'], [74, 'inkCleared']]) {
@@ -590,7 +650,7 @@ test('runRulesProbe: 小さい画像を片付けられないときは、片付�
   assert.equal(await s.mem.get('accounts'), null);
 });
 
-test('runRulesProbe: 規則が正しければ、全部の行が pass: true（77 行）', async () => {
+test('runRulesProbe: 規則が正しければ、全部の行が pass: true（83 行）', async () => {
   const s = setup();
   const rows = await runRulesProbe(s.args);
   assert.equal(rows.length, LABEL_COUNT);
@@ -614,6 +674,7 @@ test('runRulesProbe: 規則が正しければ、全部の行が pass: true（77 
     'ok', 'ok',
     'denied', 'denied',
     'ok', 'denied',
+    'ok', 'denied', 'denied', 'denied', 'ok', 'denied',
   ]);
 });
 
@@ -692,6 +753,8 @@ test('runRulesProbe: メモは 2000 文字・level なし、理解度は records
     ['update', '', { [`inkThumbs/${cid}/${lid}/learned/s00-999`]: null }],
     ['update', '', { [`terms/s00-999/${cid}`]: null }],
     ['update', '', { [`${own}/inkCleared/memo`]: null }],
+    ['update', '', { [`${own}/ink/a1`]: null }],
+    ['update', '', { [`${own}/ink/${s.teacherRepo.state.materials.find((m) => m.classId === cid).materialId}`]: null }],
   ], '同じ組は 1 回だけ消し、拒否された場所は足さない');
   for (const [m, p, , accepts = () => true] of recordChecks(s.teacherRepo).slice(7, 14)) {
     assert.ok(s.studentNet().calls.some(([cm, cp, v]) => cm === m && (p === null || cp === p) && accepts(v, cp)));
@@ -750,11 +813,17 @@ function recordCleanupSetup({ initial = {}, failStudentCleanup = false, failTeac
       if (previous && !(time > previous.updatedAt) || cleared !== undefined && !(time > cleared)) return false;
     }
     if (parts[4] === 'inkCleared') return ['memo', 'learned', 'question'].includes(parts[5]) && Number.isFinite(value);
-    if (parts[4] === 'ink') return ['memo', 'learned', 'question'].includes(parts[5])
-      && typeof value.fileId === 'string' && value.fileId.length > 0 && value.fileId.length <= 200
-      && typeof value.bytes === 'number' && value.bytes >= 0 && value.bytes <= 400000
-      && Number.isInteger(value.strokes) && value.strokes >= 1 && value.strokes <= 2000
-      && typeof value.updatedAt === 'number';
+    if (parts[4] === 'ink') {
+      const field = parts[5];
+      const photo = /^a[1-6]$/.test(field) ? await mem.get(`records/${cid}/${lid}/${sid}/attachments/${field}`)
+        : await mem.get(`lessons/${cid}/${lid}/materials/${field}`);
+      const placeAllowed = ['memo', 'learned', 'question'].includes(field) ? !('on' in value)
+        : photo?.type === 'image' && typeof value.on === 'string' && value.on.length > 0 && value.on.length <= 200 && value.on === photo.fileId;
+      return placeAllowed && typeof value.fileId === 'string' && value.fileId.length > 0 && value.fileId.length <= 200
+        && typeof value.bytes === 'number' && value.bytes >= 0 && value.bytes <= 400000
+        && Number.isInteger(value.strokes) && value.strokes >= 1 && value.strokes <= 2000
+        && typeof value.updatedAt === 'number';
+    }
     if (parts[4] === 'attachments') {
       const existing = await mem.get(path);
       return /^a[1-6]$/.test(parts[5]) && ['image', 'pdf'].includes(value.type)
@@ -1212,6 +1281,11 @@ test('runRulesProbe: 確認用の生徒としてする読み書き（表の順�
     ['set', `records/${inId}/${s.teacherRepo.state.lessons.find((l) => l.classId === inId).id}/s00-999/inkCleared/memo`],
     ['set', `records/${inId}/${s.teacherRepo.state.lessons.find((l) => l.classId === inId).id}/s00-999/inkCleared/memo`],
     ['set', `records/${inId}/${s.teacherRepo.state.lessons.find((l) => l.classId === inId).id}/s00-999/inkCleared/other`],
+    ...pictureChecks(s.teacherRepo).map((check) => {
+      const call = s.studentNet().calls.find(([m, p, v]) => matchesRecordCheck(check, m, p, v));
+      assert.ok(call);
+      return call.slice(0, 2);
+    }),
   ]);
   const sets = s.studentNet().calls.filter(([m, p]) => m === 'set' && !/^(lessons|thumbs|units|records|marks|recThumbs|inkThumbs|terms)\//.test(p));
   assert.equal(sets[1][2], true);                       // memberOf に true

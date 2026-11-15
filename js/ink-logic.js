@@ -5,6 +5,32 @@ const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const clamp = (n, max) => Math.max(0, Math.min(max, n));
 
+export function inkPlaceKind(name) {
+  if (typeof name !== 'string' || !name) return null;
+  if (CONFIG.inkFields.includes(name)) return 'field';
+  if (CONFIG.attachmentSlots.includes(name)) return 'attachment';
+  // 資料を足す画面の newId と同じ、12 文字の英数字。
+  return name.length === CONFIG.idLength && /^[A-Za-z0-9]+$/.test(name) ? 'material' : null;
+}
+
+export function pictureIndex(record, place, fileId) {
+  const index = record?.ink?.[place];
+  return index && index.on === fileId ? index : null;
+}
+
+function pictureHeight(height) {
+  return Math.max(CONFIG.ink.pictureMinHeight, Math.min(CONFIG.ink.pageHeight * CONFIG.ink.maxPages, Math.round(height)));
+}
+
+export function emptyPictureInk(naturalWidth, naturalHeight) {
+  let h = 600;
+  if (isNum(naturalWidth) && naturalWidth > 0 && isNum(naturalHeight) && naturalHeight > 0) {
+    const height = CONFIG.ink.width * naturalHeight / naturalWidth;
+    h = pictureHeight(isNum(height) ? height : CONFIG.ink.width * (naturalHeight / naturalWidth));
+  }
+  return { v: 1, k: 'pic', h, s: [] };
+}
+
 export function serverInkTime(record, field) {
   const updated = record?.ink?.[field]?.updatedAt;
   const cleared = record?.inkCleared?.[field];
@@ -37,7 +63,8 @@ export function cleanStroke(value, height) {
 export function cleanInk(value) {
   if (!isObj(value) || value.v !== 1) return emptyInk();
   const { pageHeight, maxPages, maxStrokes } = CONFIG.ink;
-  const h = isNum(value.h)
+  const picture = value.k === 'pic';
+  const h = picture ? pictureHeight(isNum(value.h) ? value.h : 600) : isNum(value.h)
     ? Math.max(pageHeight, Math.min(pageHeight * maxPages, Math.ceil(value.h / pageHeight) * pageHeight))
     : pageHeight;
   const s = [];
@@ -46,7 +73,7 @@ export function cleanInk(value) {
     if (cleaned) s.push(cleaned);
     if (s.length === maxStrokes) break;
   }
-  return { v: 1, h, s };
+  return picture ? { v: 1, k: 'pic', h, s } : { v: 1, h, s };
 }
 
 export function parseInk(text) {
@@ -177,7 +204,7 @@ export function addPage(ink) {
 }
 
 export function canAddPage(ink) {
-  return ink.h < CONFIG.ink.pageHeight * CONFIG.ink.maxPages;
+  return ink.k !== 'pic' && ink.h < CONFIG.ink.pageHeight * CONFIG.ink.maxPages;
 }
 
 export function strokePath(stroke) {

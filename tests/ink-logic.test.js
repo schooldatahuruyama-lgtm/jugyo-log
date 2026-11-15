@@ -4,11 +4,53 @@ import assert from 'node:assert/strict';
 import { CONFIG } from '../js/config.js';
 import { emptyInk, round1, cleanStroke, cleanInk, parseInk, serializeInk, inkBytes, isEmptyInk,
   simplify, makeStroke, snapLine, hitStroke, eraseAt, addStroke, addPage, canAddPage,
-  strokePath, inkBounds, createHistory } from '../js/ink-logic.js';
+  strokePath, inkBounds, createHistory, emptyPictureInk, inkPlaceKind, pictureIndex } from '../js/ink-logic.js';
 
 const stroke = (change = {}) => ({ c: 0, w: 0, p: [10, 20, 30, 40], ...change });
 const ink = (s = [], h = 400) => ({ v: 1, h, s });
 const draw = (points, change = {}, height = 400) => makeStroke({ points, color: 0, width: 0, ruler: false, ...change }, height);
+
+test('写真の手書き: 高さは整数で 100〜4000。線を確かめ、種類と高さを保存して読める', () => {
+  for (const [height, expected] of [[601.4, 601], [601.5, 602], [-1, 100], [99.9, 100], [1e300, 4000],
+    ['600', 600], [null, 600], [NaN, 600], [Infinity, 600]]) {
+    const value = cleanInk({ v: 1, k: 'pic', h: height, s: [stroke({ p: [-1, -1, 900, 5000] }), null] });
+    assert.deepEqual(value, { v: 1, k: 'pic', h: expected, s: [stroke({ p: [0, 0, 800, expected] })] });
+    assert.deepEqual(parseInk(serializeInk(value)), value);
+  }
+  for (const k of [undefined, 'other', null]) assert.deepEqual(cleanInk({ ...ink([], 601), k }), ink([], 800));
+});
+
+test('emptyPictureInk: 写真の比率と範囲を使い、不正な寸法は高さ 600', () => {
+  for (const [w, h, expected] of [[1600, 1200, 600], [3, 2, 533], [1600, 201, 101], [10000, 1, 100],
+    [1, 10000, 4000], [1e308, 1e308, 800], [Number.MIN_VALUE, 1e308, 4000]]) {
+    assert.deepEqual(emptyPictureInk(w, h), { v: 1, k: 'pic', h: expected, s: [] });
+  }
+  for (const invalid of [0, -1, NaN, Infinity, '100', null, undefined]) {
+    assert.equal(emptyPictureInk(invalid, 100).h, 600);
+    assert.equal(emptyPictureInk(100, invalid).h, 600);
+  }
+  const value = emptyPictureInk(800, 600);
+  assert.equal(canAddPage(value), false);
+  assert.deepEqual(addPage(value), { ink: value, error: 'too-long' });
+});
+
+test('inkPlaceKind: 3 種類を区別し、資料は生成される 12 文字の英数字だけ', () => {
+  for (const name of CONFIG.inkFields) assert.equal(inkPlaceKind(name), 'field');
+  for (const name of CONFIG.attachmentSlots) assert.equal(inkPlaceKind(name), 'attachment');
+  for (const name of ['Abc123Def456', '000000000000']) assert.equal(inkPlaceKind(name), 'material');
+  for (const name of [null, undefined, 1, {}, [], '', 'other', 'a0', 'a7', 'a12', 'x'.repeat(11), 'x'.repeat(13),
+    'abc/123Def45', 'abc_123Def45', '日本語資料1234567', 'Abc123Def45\n']) assert.equal(inkPlaceKind(name), null);
+});
+
+test('pictureIndex: 同じ写真の目録だけを返し、入れ替わった写真や目録なしは null', () => {
+  const index = { fileId: 'ink-file', on: 'photo' };
+  const record = { ink: { a1: index, Abc123Def456: index } };
+  for (const place of ['a1', 'Abc123Def456']) {
+    assert.equal(pictureIndex(record, place, 'photo'), index);
+    assert.equal(pictureIndex(record, place, 'replaced'), null);
+  }
+  for (const record of [null, {}, { ink: {} }]) assert.equal(pictureIndex(record, 'a1', 'photo'), null);
+});
 
 // 設定を変えずに、指定したバイト数ちょうどの有効な手書きを作る。
 function inkOfBytes(bytes) {

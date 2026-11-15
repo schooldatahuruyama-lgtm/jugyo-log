@@ -125,7 +125,7 @@ export function mount(root, ctx) {
     return area;
   }
 
-  function showRecord(person, savedAttachments, stale) {
+  function showRecord(person, savedRecord, stale) {
     const record = normalizeRecord(person.record, { max: CONFIG.recordTextMax });
     reflectionStatus.classList.toggle('is-complete', record.level !== null);
     reflectionStatus.textContent = record.level !== null ? '✓ 記入済み' : '！ 未記入';
@@ -133,7 +133,8 @@ export function mount(root, ctx) {
     const updated = updatedLabel(person.record?.updatedAt);
     attachments?.destroy();
     attachments = attachmentPane({ ctx, classId, lessonId, studentId,
-      attachments: Array.isArray(savedAttachments) ? savedAttachments : [], readOnly: true });
+      attachments: Array.isArray(savedRecord?.attachments) ? savedRecord.attachments : [], readOnly: true,
+      ink: savedRecord?.ink, inkCleared: savedRecord?.inkCleared });
     recordArea.replaceChildren(
       ...(person.record === null ? [el('p', { class: 'notice', text: 'この生徒は、まだ何も書いていません。' })] : []),
       el('dl', { class: 'record-values' },
@@ -185,9 +186,11 @@ export function mount(root, ctx) {
       const label = !person.inRoster ? '名簿にいない生徒' : person.number === null ? '出席番号なしの生徒' : `${person.number} 番`;
       personHeading.textContent = `${label}の記録（読み取り専用）`;
       identity.textContent = `生徒 ID：${person.studentId}`;
-      showRecord(person, recordsResult.value?.[studentId]?.attachments, stale);
+      const savedRecord = recordsResult.value?.[studentId];
+      showRecord(person, savedRecord, stale);
       materials?.destroy();
-      materials = materialPane({ ctx, classId, lessonId, lesson });
+      materials = materialPane({ ctx, classId, lessonId, lesson, studentId, readOnly: true,
+        ink: savedRecord?.ink, inkCleared: savedRecord?.inkCleared });
       materialsArea.replaceChildren(materials.node);
       terms?.destroy();
       terms = termRow({ ctx, classId, lessonId, studentId, lesson, readOnly: true });

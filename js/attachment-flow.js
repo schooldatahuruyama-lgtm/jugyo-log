@@ -1,5 +1,6 @@
 // 添付の保存・削除の順番。画面や通信の中身は、引数で受け取る部品に任せる。
 import { NetError } from './errors.js';
+import { serverInkTime } from './ink-logic.js';
 
 export async function addAttachmentFlow({ repo, files, classId, lessonId, studentId, slot, key, type, mime, dataB64, thumb, now,
   isCancelled = () => false }) {
@@ -30,12 +31,24 @@ export async function settleAttachmentFlow({ repo, files, classId, lessonId, stu
   return { saved: false, attachments };
 }
 
-export async function removeAttachmentFlow({ repo, files, classId, lessonId, studentId, attachment }) {
-  await repo.removeAttachment(classId, lessonId, studentId, attachment.slot);
+export async function removeAttachmentFlow({ repo, files, classId, lessonId, studentId, attachment, now }) {
+  const record = await repo.getRecord(classId, lessonId, studentId);
+  const ink = record?.ink?.[attachment.slot];
+  const cleared = record?.inkCleared?.[attachment.slot];
+  if (ink || cleared !== undefined) {
+    await repo.removeAttachment(classId, lessonId, studentId, attachment.slot,
+      Math.max(now, serverInkTime(record, attachment.slot) + 1));
+  } else {
+    await repo.removeAttachment(classId, lessonId, studentId, attachment.slot);
+  }
+  let trashed = false;
   try {
-    return { trashed: await files.trashStudent(attachment.fileId) };
+    trashed = await files.trashStudent(attachment.fileId);
   } catch {
     // 目録からは外せた。ファイルの片付けに失敗しても取り消さない。
-    return { trashed: false };
   }
+  if (ink) {
+    try { await files.trashStudent(ink.fileId); } catch { /* 書きこみの片付けの失敗は取り消さない */ }
+  }
+  return { trashed };
 }

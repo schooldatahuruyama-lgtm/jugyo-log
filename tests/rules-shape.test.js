@@ -26,6 +26,68 @@ function snapshot(value, parent = null) {
   return node;
 }
 
+function evaluateInkRule(rule, field, newData, data, root = snapshot({})) {
+  const expression = rule.replaceAll('$field.matches(/^a[1-6]$/)', '/^a[1-6]$/.test($field)');
+  return new Function('$field', 'newData', 'data', 'root', '$classId', '$lessonId', `return (${expression});`)(
+    field, newData, data, root, 'c1', 'l1');
+}
+
+test('写真の手書き規則: 写真・on・所属する授業の資料を確かめ、同時削除後の写真では保存できない', () => {
+  const sid = rules.records.$classId.$lessonId.$sid;
+  const index = { fileId: 'ink-file', bytes: 42, strokes: 1, updatedAt: 20 };
+  const fieldRule = sid.ink.$field;
+  assert.equal(fieldRule.on['.validate'], 'newData.isString() && newData.val().length >= 1 && newData.val().length <= 200');
+  for (const on of ['', 'x'.repeat(201), 1, null]) {
+    assert.equal(evaluateInkRule(fieldRule.on['.validate'], 'a1', snapshot(on), snapshot(null)), false);
+  }
+  for (const on of ['x', 'x'.repeat(200)]) {
+    assert.equal(evaluateInkRule(fieldRule.on['.validate'], 'a1', snapshot(on), snapshot(null)), true);
+  }
+  for (const field of ['a1', 'Abc123Def456']) {
+    for (const photo of [null, { type: 'image', fileId: 'photo' }, { type: 'pdf', fileId: 'photo' }, { type: 'image', fileId: 'other' }]) {
+      for (const on of ['photo', undefined, '']) {
+        const root = snapshot({ lessons: { c1: { l1: { materials: { Abc123Def456: photo } } } } });
+        const record = { attachments: { a1: photo }, ink: { [field]: { ...index, ...(on !== undefined ? { on } : {}) } } };
+        const next = snapshot(record).child('ink').child(field);
+        const before = snapshot({}).child('ink').child(field);
+        assert.equal(evaluateInkRule(fieldRule['.validate'], field, next, before, root),
+          photo?.type === 'image' && photo.fileId === on);
+      }
+    }
+  }
+  for (const field of ['memo', 'learned', 'question', 'other', 'a2', 'Missing00001']) {
+    const next = snapshot({ ink: { [field]: { ...index, on: 'photo' } } }).child('ink').child(field);
+    assert.equal(evaluateInkRule(fieldRule['.validate'], field, next, snapshot({}).child('ink').child(field)), false);
+  }
+  const before = snapshot({ attachments: { a1: { type: 'image', fileId: 'photo' } } }).child('ink').child('a1');
+  const next = snapshot({ ink: { a1: { ...index, on: 'photo' } } }).child('ink').child('a1');
+  assert.equal(evaluateInkRule(fieldRule['.validate'], 'a1', next, before), false);
+});
+
+test('写真の手書き規則: 目録・削除時刻の両方より新しい値だけ通り、資料の削除時刻は実在する資料だけ', () => {
+  const sid = rules.records.$classId.$lessonId.$sid;
+  const root = snapshot({ lessons: { c1: { l1: { materials: { Abc123Def456: { type: 'image', fileId: 'photo' } } } } } });
+  for (const field of ['a1', 'Abc123Def456']) {
+    for (const [inkTime, clearedTime] of [[20, 30], [30, 20], [undefined, undefined]]) {
+      const record = { ink: inkTime === undefined ? {} : { [field]: { updatedAt: inkTime } },
+        inkCleared: clearedTime === undefined ? {} : { [field]: clearedTime },
+        attachments: { a1: { type: 'image', fileId: 'photo' } } };
+      for (const time of [19, 20, 29, 30, 31]) {
+        for (const kind of ['ink', 'inkCleared']) {
+          const value = kind === 'ink' ? { fileId: 'ink', bytes: 42, strokes: 1, updatedAt: time, on: 'photo' } : time;
+          const next = snapshot({ ...record, [kind]: { [field]: value } }).child(kind).child(field);
+          assert.equal(evaluateInkRule(sid[kind].$field['.validate'], field, next, snapshot(record).child(kind).child(field), root),
+            (inkTime === undefined || time > inkTime) && (clearedTime === undefined || time > clearedTime));
+        }
+      }
+    }
+  }
+  for (const field of ['a1', 'a6', 'Abc123Def456', 'a7', 'Missing00001']) {
+    assert.equal(evaluateInkRule(sid.inkCleared.$field['.validate'], field, snapshot(40),
+      snapshot({}).child('inkCleared').child(field), root), ['a1', 'a6', 'Abc123Def456'].includes(field));
+  }
+});
+
 // 木をたどり、規則の式（キーが '.' で始まるもの）を [場所, キー, 値] で集める
 function rulesIn(node, path = []) {
   const out = [];
@@ -141,12 +203,12 @@ test('添付は a1〜a6 の置き場所に、決まった 4 項目だけを保�
   assert.equal(aid.$other['.validate'], false);
 });
 
-test('手書き目録は 3 つの欄と 4 項目だけ。bytes と strokes の上限を含み、不正値は拒否する', () => {
+test('手書き目録は必須 4 項目と写真用の on。bytes と strokes の上限を含み、不正値は拒否する', () => {
   const ink = rules.records.$classId.$lessonId.$sid.ink;
   const field = ink.$field;
   assert.equal(ink['.validate'], 'newData.hasChildren()');
-  assert.equal(field['.validate'], "($field === 'memo' || $field === 'learned' || $field === 'question') && newData.hasChildren(['fileId', 'bytes', 'strokes', 'updatedAt']) && (!data.exists() || newData.child('updatedAt').val() > data.child('updatedAt').val()) && (!data.parent().parent().child('inkCleared').child($field).exists() || newData.child('updatedAt').val() > data.parent().parent().child('inkCleared').child($field).val())");
-  assert.deepEqual(Object.keys(field).filter((k) => !k.startsWith('.')).sort(), ['$other', 'bytes', 'fileId', 'strokes', 'updatedAt']);
+  assert.ok(field['.validate'].endsWith(" && newData.hasChildren(['fileId', 'bytes', 'strokes', 'updatedAt']) && (!data.exists() || newData.child('updatedAt').val() > data.child('updatedAt').val()) && (!data.parent().parent().child('inkCleared').child($field).exists() || newData.child('updatedAt').val() > data.parent().parent().child('inkCleared').child($field).val())"));
+  assert.deepEqual(Object.keys(field).filter((k) => !k.startsWith('.')).sort(), ['$other', 'bytes', 'fileId', 'on', 'strokes', 'updatedAt']);
   assert.equal(field.fileId['.validate'], 'newData.isString() && newData.val().length >= 1 && newData.val().length <= 200');
   assert.equal(field.bytes['.validate'], 'newData.isNumber() && newData.val() >= 0 && newData.val() <= 400000');
   assert.equal(field.strokes['.validate'], 'newData.isNumber() && newData.val() >= 1 && newData.val() <= 2000 && newData.val() % 1 === 0');
@@ -154,8 +216,7 @@ test('手書き目録は 3 つの欄と 4 項目だけ。bytes と strokes の�
   assert.equal(field.$other['.validate'], false);
   assert.deepEqual(rulesIn(ink).filter(([, k]) => k === '.read' || k === '.write'), []);
   // 形の式を小さい代役で評価する。権限の実動作は公開後の規則の確認で試す。
-  const accepts = (rule, value, name = 'memo') => new Function('newData', '$field', 'data', `return (${rule});`)(
-    snapshot(value), name, snapshot({}).child('ink').child(name));
+  const accepts = (rule, value, name = 'memo') => evaluateInkRule(rule, name, snapshot(value), snapshot({}).child('ink').child(name));
   const index = { fileId: 'file', bytes: 400000, strokes: 2000, updatedAt: 1 };
   for (const name of ['memo', 'learned', 'question']) assert.equal(accepts(field['.validate'], index, name), true);
   assert.equal(accepts(field['.validate'], index, 'other'), false);
@@ -168,14 +229,13 @@ test('手書き目録は 3 つの欄と 4 項目だけ。bytes と strokes の�
   for (const value of ['', 'x'.repeat(201), 1]) assert.equal(accepts(field.fileId['.validate'], value), false);
 });
 
-test('手書きの削除時刻は 3 欄の数だけ。権限は records から引き継ぐ', () => {
+test('手書きの削除時刻は数だけ。権限は records から引き継ぐ', () => {
   const cleared = rules.records.$classId.$lessonId.$sid.inkCleared;
   assert.equal(cleared['.validate'], 'newData.hasChildren()');
   assert.deepEqual(Object.keys(cleared).sort(), ['.validate', '$field'].sort());
-  assert.equal(cleared.$field['.validate'], "($field === 'memo' || $field === 'learned' || $field === 'question') && newData.isNumber() && (!data.exists() || newData.val() > data.val()) && (!data.parent().parent().child('ink').child($field).exists() || newData.val() > data.parent().parent().child('ink').child($field).child('updatedAt').val())");
+  assert.ok(cleared.$field['.validate'].endsWith(" && newData.isNumber() && (!data.exists() || newData.val() > data.val()) && (!data.parent().parent().child('ink').child($field).exists() || newData.val() > data.parent().parent().child('ink').child($field).child('updatedAt').val())"));
   assert.deepEqual(rulesIn(cleared).filter(([, k]) => k === '.read' || k === '.write'), []);
-  const accepts = (field, value) => new Function('$field', 'newData', 'data', `return (${cleared.$field['.validate']});`)(
-    field, snapshot(value), snapshot({}).child('inkCleared').child(field));
+  const accepts = (field, value) => evaluateInkRule(cleared.$field['.validate'], field, snapshot(value), snapshot({}).child('inkCleared').child(field));
   for (const field of ['memo', 'learned', 'question']) {
     for (const value of [0, 20]) assert.equal(accepts(field, value), true);
     for (const value of ['20', false, {}, [], null, NaN, Infinity]) assert.equal(accepts(field, value), false);

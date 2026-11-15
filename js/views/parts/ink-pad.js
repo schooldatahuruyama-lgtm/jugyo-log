@@ -22,7 +22,7 @@ function inkPath(stroke) {
     'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
 }
 
-export function inkPad({ ink, readOnly = false, label = '手書き', onChange }) {
+export function inkPad({ ink, readOnly = false, picture = false, label = '手書き', onChange }) {
   let current = cleanInk(ink);
   let history = createHistory(CONFIG.ink.undoMax);
   let alive = true;
@@ -40,6 +40,7 @@ export function inkPad({ ink, readOnly = false, label = '手書き', onChange })
   const buttons = [];
   const paths = new Map();
   const paper = svgEl('svg', { class: 'ink-paper', role: 'img' });
+  if (picture) paper.setAttribute('preserveAspectRatio', 'none');
   const rules = svgEl('g', { 'aria-hidden': 'true', stroke: '#E8EEF7', 'stroke-width': 1 });
   const lines = svgEl('g');
   paper.append(rules, lines);
@@ -76,7 +77,7 @@ export function inkPad({ ink, readOnly = false, label = '手書き', onChange })
     for (const control of buttons) control.disabled = locked || !!active || !!confirmation;
     undoButton.disabled ||= !history.canUndo();
     clearButton.disabled ||= current.s.length === 0;
-    moreButton.disabled ||= !canAddPage(current);
+    if (moreButton) moreButton.disabled ||= !canAddPage(current);
     moveButton.setAttribute('aria-pressed', String(mode === 'move'));
     writeButton.setAttribute('aria-pressed', String(mode === 'write'));
     colorButtons.forEach((control, i) => control.setAttribute('aria-pressed', String(color === i)));
@@ -86,7 +87,7 @@ export function inkPad({ ink, readOnly = false, label = '手書き', onChange })
     status.textContent = (mode === 'write' ? 'いま: 書く（指でもペンでも書けます）'
       : 'いま: 動かす（指では書けません。ペンは書けます）')
       + (ruler ? '／定規' : erasing ? '／消しゴム' : '');
-    paper.style.touchAction = mode === 'write' ? 'none' : 'pan-y pinch-zoom';
+    paper.style.touchAction = mode === 'write' ? 'none' : picture ? 'pan-x pan-y pinch-zoom' : 'pan-y pinch-zoom';
     node.classList.toggle('ink-writing', mode === 'write' && !locked);
   }
 
@@ -99,7 +100,7 @@ export function inkPad({ ink, readOnly = false, label = '手書き', onChange })
     paper.setAttribute('viewBox', `0 0 ${CONFIG.ink.width} ${current.h}`);
     paper.style.aspectRatio = `${CONFIG.ink.width} / ${current.h}`;
     const horizontal = [];
-    for (let y = 40; y < current.h; y += 40) {
+    for (let y = 40; !picture && y < current.h; y += 40) {
       horizontal.push(svgEl('line', { x1: 0, y1: y, x2: CONFIG.ink.width, y2: y }));
     }
     rules.replaceChildren(...horizontal);
@@ -110,7 +111,7 @@ export function inkPad({ ink, readOnly = false, label = '手書き', onChange })
       paths.set(stroke, path);
       lines.append(path);
     }
-    if (readOnly) node.replaceChildren(current.s.length ? paper : empty);
+    if (readOnly && !picture) node.replaceChildren(current.s.length ? paper : empty);
     describePaper(current);
     syncControls();
   }
@@ -125,7 +126,8 @@ export function inkPad({ ink, readOnly = false, label = '手書き', onChange })
   }
 
   function apply(result) {
-    if (result.error) message.textContent = MESSAGES[result.error];
+    if (result.error) message.textContent = picture
+      ? 'これ以上は書けません。いらない線を消してください。' : MESSAGES[result.error];
     else change(result.ink);
   }
 
@@ -140,8 +142,9 @@ export function inkPad({ ink, readOnly = false, label = '手書き', onChange })
     confirmation = request;
     syncControls();
     try {
-      const ok = await confirmDialog({ title: '手書きを全部消しますか？',
-        body: 'この欄の手書きを全部消します。「1 つ戻す」で戻せます。',
+      const ok = await confirmDialog({ title: picture ? '書きこみを全部消しますか？' : '手書きを全部消しますか？',
+        body: picture ? 'この写真への書きこみを全部消します。「1 つ戻す」で戻せます。'
+          : 'この欄の手書きを全部消します。「1 つ戻す」で戻せます。',
         okLabel: '全部消す', danger: true, signal: request.signal });
       if (!alive || confirmation !== request || locked) return;
       if (ok && current.s.length) change({ ...current, s: [] });
@@ -296,10 +299,10 @@ export function inkPad({ ink, readOnly = false, label = '手書き', onChange })
       if (previous) change(previous, false);
     });
     clearButton = button('全部消す', () => { void clearAll(); }, 'ink-tool ink-clear');
-    moreButton = button('＋ 下に書く場所を足す', () => { apply(addPage(current)); }, 'ink-more');
+    if (!picture) moreButton = button('＋ 下に書く場所を足す', () => { apply(addPage(current)); }, 'ink-more');
     tools.append(moveButton, writeButton, ...colorButtons, ...widthButtons,
       rulerButton, eraserButton, undoButton, clearButton, status);
-    node.append(tools, paper, moreButton, message);
+    node.append(...(picture ? [tools, message] : [tools, paper, moreButton, message]));
     listen(paper, 'pointerdown', pointerDown);
     listen(paper, 'pointermove', pointerMove);
     listen(paper, 'pointerup', pointerUp);
@@ -315,7 +318,7 @@ export function inkPad({ ink, readOnly = false, label = '手書き', onChange })
 
   render();
   return {
-    node,
+    node, paper, tools,
     getInk() { return cleanInk(current); },
     setInk(value) {
       if (!alive) return;

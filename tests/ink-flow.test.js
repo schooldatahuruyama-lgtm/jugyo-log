@@ -10,6 +10,8 @@ import { createRepo } from '../js/repo.js';
 import { createMemoryNet } from '../js/dev/memory-net.js';
 import { createRecordQueue } from '../js/record-queue.js';
 import { NetError } from '../js/errors.js';
+import { createDemoGas } from '../js/dev/demo-gas.js';
+import { createFiles } from '../js/files.js';
 
 const ink = { v: 1, h: 400, s: [{ c: 0, w: 0, p: [0, 0, 10, 10] }] };
 function setup(record = { ink: { memo: { fileId: 'old', updatedAt: 10 } } }) {
@@ -26,6 +28,132 @@ function setup(record = { ink: { memo: { fileId: 'old', updatedAt: 10 } } }) {
   return { calls, repo, files, classId: 'c1', lessonId: 'l1', studentId: 's26-001', field: 'memo',
     ink, key: 'ink-test-1', thumb: 'data:image/png;base64,AQID', editedAt: 20 };
 }
+
+function pictureSetup(field = 'a1', photo = { type: 'image', fileId: 'photo' }) {
+  const record = { attachments: photo ? [{ slot: field, ...photo }] : [],
+    ink: { [field]: { fileId: 'old', updatedAt: 10, on: 'previous-photo' } } };
+  const s = setup(record);
+  s.repo.getLesson = async () => { s.calls.push(['lesson']); return { materials: photo ? { [field]: photo } : {} }; };
+  return { ...s, field, on: 'photo', ink: { ...ink, k: 'pic', h: 601 }, record };
+}
+
+test('写真の保存: 添付と資料に on を渡し、前の写真の書きこみファイルも片付ける', async () => {
+  for (const field of ['a1', 'Abc123Def456']) {
+    const s = pictureSetup(field);
+    const saved = await saveInkFlow(s);
+    assert.deepEqual(saved, { index: { fileId: 'new', bytes: 42, strokes: 1, updatedAt: 20, on: 'photo' }, superseded: false });
+    assert.deepEqual(s.calls.find((call) => call[0] === 'set')[5], { fileId: 'new', bytes: 42, strokes: 1, on: 'photo' });
+    assert.deepEqual(s.calls.at(-1), ['trash', 'old']);
+    assert.deepEqual(JSON.parse(s.calls.find((call) => call[0] === 'upload')[1].text), s.ink);
+  }
+});
+
+test('写真の保存: 写真や資料がない・別の写真・PDF は gone で、空の保存もアップロードしない', async () => {
+  for (const field of ['a1', 'Abc123Def456']) {
+    for (const photo of [null, { type: 'image', fileId: 'other' }, { type: 'pdf', fileId: 'photo' }]) {
+      for (const empty of [false, true]) {
+        const s = pictureSetup(field, photo);
+        if (empty) s.ink.s = [];
+        assert.deepEqual(await saveInkFlow(s), { index: null, superseded: true, gone: true, record: s.record });
+        assert.deepEqual(s.calls.map((call) => call[0]), field === 'a1' ? ['get'] : ['get', 'lesson']);
+      }
+    }
+  }
+});
+
+test('写真の保存: 不正な場所と on は通信する前に断る', async () => {
+  const s = pictureSetup();
+  for (const field of [null, 1, '', 'other', 'a7', 'bad/place']) await assert.rejects(saveInkFlow({ ...s, field }), TypeError);
+  for (const field of ['a1', 'Abc123Def456']) {
+    for (const on of [null, undefined, 1, {}, []]) await assert.rejects(saveInkFlow({ ...s, field, on }), TypeError);
+  }
+  assert.deepEqual(s.calls, []);
+});
+
+test('写真の保存: 同じ・新しい時刻はサーバーを残すが、別の写真の目録は返さない', async () => {
+  for (const field of ['a1', 'Abc123Def456']) {
+    for (const time of [20, 30]) {
+      for (const on of ['photo', 'previous-photo']) {
+        const s = pictureSetup(field);
+        Object.assign(s.record.ink[field], { updatedAt: time, on });
+        assert.deepEqual(await saveInkFlow(s), { index: on === 'photo' ? s.record.ink[field] : null, superseded: true, record: s.record });
+        assert.equal(s.calls.some((call) => call[0] === 'upload'), false);
+      }
+    }
+  }
+});
+
+test('写真の保存: denied 後に写真の消去・入れ替え・PDF 化が分かれば gone で今回のファイルを片付ける', async () => {
+  for (const field of ['a1', 'Abc123Def456']) {
+    for (const photo of [null, { type: 'image', fileId: 'replaced' }, { type: 'pdf', fileId: 'photo' }]) {
+      const s = pictureSetup(field);
+      const latest = { attachments: photo ? [{ slot: field, ...photo }] : [], ink: s.record.ink };
+      s.repo.setInk = async () => {
+        s.repo.getRecord = async () => latest;
+        s.repo.getLesson = async () => ({ materials: photo ? { [field]: photo } : {} });
+        throw new NetError('denied');
+      };
+      assert.deepEqual(await saveInkFlow(s), { index: null, superseded: true, gone: true, record: latest });
+      assert.deepEqual(s.calls.at(-1), ['trash', 'new']);
+      assert.equal(s.calls.some((call) => call[0] === 'trash' && call[1] === 'old'), false);
+    }
+  }
+});
+
+test('写真の保存: denied 後の成功判定は on も比較し、別の写真の目録は返さない', async () => {
+  for (const field of ['a1', 'Abc123Def456']) {
+    for (const on of ['photo', 'previous-photo']) {
+      const s = pictureSetup(field);
+      const index = { fileId: 'new', bytes: 42, strokes: 1, updatedAt: 20, on };
+      const latest = { ...s.record, ink: { [field]: index } };
+      s.repo.setInk = async () => { s.repo.getRecord = async () => latest; throw new NetError('denied'); };
+      const result = await saveInkFlow(s);
+      assert.deepEqual(result, on === 'photo' ? { index, superseded: false } : { index: null, superseded: true, record: latest });
+      assert.deepEqual(s.calls.filter((call) => call[0] === 'trash'), [['trash', on === 'photo' ? 'old' : 'new']]);
+    }
+  }
+});
+
+test('写真の保存: アップロード中に写真・資料が消え、新しい消去時刻があっても gone にする', async () => {
+  for (const field of ['a1', 'Abc123Def456']) {
+    for (const time of [20, 30]) {
+      const s = pictureSetup(field);
+      const latest = { attachments: [], ink: {}, inkCleared: { [field]: time } };
+      const upload = s.files.uploadInk;
+      s.files.uploadInk = async (args) => {
+        const uploaded = await upload(args);
+        s.repo.getRecord = async () => latest;
+        s.repo.getLesson = async () => ({ materials: {} });
+        return uploaded;
+      };
+      let denied = false;
+      s.repo.setInk = async () => { denied = true; throw new NetError('denied'); };
+      assert.deepEqual(await saveInkFlow(s), { index: null, superseded: true, gone: true, record: latest });
+      assert.equal(denied, true);
+      assert.deepEqual(s.calls.filter((call) => call[0] === 'trash'), [['trash', 'new']]);
+    }
+  }
+});
+
+test('練習モード: 写真の手書きを代役の GAS とデータベースへ保存して読み直せる', async () => {
+  const net = createMemoryNet();
+  await net.set('accounts/demo-user', 's26-001');
+  await net.set('memberOf/s26-001/c1', true);
+  await net.set('lessons/c1/l1', { createdAt: 1, materials: { Abc123Def456: { type: 'image', fileId: 'material-photo' } } });
+  const repo = createRepo(net);
+  const gas = createDemoGas({ net, getUser: () => ({ uid: 'demo-user' }) });
+  const cached = new Map();
+  const files = createFiles({ gas, cache: { get: (id) => cached.get(id), put: (id, value) => cached.set(id, value), remove: (id) => cached.delete(id) } });
+  await repo.addAttachment('c1', 'l1', 's26-001', 'a1', { type: 'image', fileId: 'photo', bytes: 42 }, null, 1);
+  for (const [field, on] of [['a1', 'photo'], ['Abc123Def456', 'material-photo']]) {
+    const value = { ...ink, k: 'pic', h: 601 };
+    const saved = await saveInkFlow({ repo, files, classId: 'c1', lessonId: 'l1', studentId: 's26-001',
+      field, on, ink: value, key: `picture-${field}`, editedAt: 20 });
+    assert.equal(saved.superseded, false);
+    assert.deepEqual((await repo.getRecord('c1', 'l1', 's26-001')).ink[field], saved.index);
+    assert.deepEqual(await loadInkFlow({ files, fileId: saved.index.fileId }), value);
+  }
+});
 
 test('手書き保存: アップロード → 目録と画像 → 古いファイルの順', async () => {
   const s = setup();
@@ -273,6 +401,40 @@ function resendSetup() {
   };
   return { ...s, pending, add, inkDrafts, queue: createRecordQueue() };
 }
+
+test('写真の再送: on を送り、画像を作らず、写真がなければ下書きを捨てる', async () => {
+  for (const field of ['a1', 'Abc123Def456']) {
+    for (const gone of [false, true]) {
+      const s = resendSetup();
+      const pic = pictureSetup(field, gone ? null : { type: 'image', fileId: 'photo' });
+      s.repo = pic.repo;
+      s.add('l1', { field, on: 'photo', ink: pic.ink });
+      s.makeThumb = () => assert.fail('写真の小さい画像は作らない');
+      assert.deepEqual(await resendInkDrafts(s), { sent: gone ? 0 : 1, kept: 0, dropped: gone ? 1 : 0 });
+      assert.equal(s.pending.size, 0);
+      if (!gone) {
+        const set = pic.calls.find((call) => call[0] === 'set');
+        assert.equal(set[5].on, 'photo');
+        assert.equal(set[6], undefined);
+      } else assert.equal(s.calls.length, 0);
+    }
+  }
+});
+
+test('写真の再送: 待機中・送信中に on だけ変わった下書きも送信や削除をしない', async () => {
+  for (const when of ['queue', 'save']) {
+    const s = resendSetup();
+    const pic = pictureSetup();
+    s.repo = pic.repo;
+    const draft = { field: 'a1', on: 'photo', ink: pic.ink };
+    s.add('l1', draft);
+    if (when === 'queue') s.queue = { async run(_, task) { s.add('l1', { ...draft, on: 'replaced' }); await task(); } };
+    else s.repo.setInk = async () => s.add('l1', { ...draft, on: 'replaced' });
+    assert.deepEqual(await resendInkDrafts(s), { sent: when === 'save' ? 1 : 0, kept: when === 'queue' ? 1 : 0, dropped: 0 });
+    assert.equal(s.pending.get('l1').on, 'replaced');
+    if (when === 'queue') assert.equal(s.calls.length, 0);
+  }
+});
 
 test('手書き再送: アップロード中に B が全消去したら、拒否後の読み直しで古い下書きを捨てる', async () => {
   const s = resendSetup();

@@ -142,13 +142,14 @@
             "inkCleared": {
               ".validate": "newData.hasChildren()",
               "$field": {
-                ".validate": "($field === 'memo' || $field === 'learned' || $field === 'question') && newData.isNumber() && (!data.exists() || newData.val() > data.val()) && (!data.parent().parent().child('ink').child($field).exists() || newData.val() > data.parent().parent().child('ink').child($field).child('updatedAt').val())"
+                ".validate": "($field === 'memo' || $field === 'learned' || $field === 'question' || $field.matches(/^a[1-6]$/) || root.child('lessons').child($classId).child($lessonId).child('materials').child($field).exists()) && newData.isNumber() && (!data.exists() || newData.val() > data.val()) && (!data.parent().parent().child('ink').child($field).exists() || newData.val() > data.parent().parent().child('ink').child($field).child('updatedAt').val())"
               }
             },
             "ink": {
               ".validate": "newData.hasChildren()",
               "$field": {
-                ".validate": "($field === 'memo' || $field === 'learned' || $field === 'question') && newData.hasChildren(['fileId', 'bytes', 'strokes', 'updatedAt']) && (!data.exists() || newData.child('updatedAt').val() > data.child('updatedAt').val()) && (!data.parent().parent().child('inkCleared').child($field).exists() || newData.child('updatedAt').val() > data.parent().parent().child('inkCleared').child($field).val())",
+                ".validate": "((($field === 'memo' || $field === 'learned' || $field === 'question') && !newData.child('on').exists()) || ($field.matches(/^a[1-6]$/) && newData.parent().parent().child('attachments').child($field).child('type').val() === 'image' && newData.child('on').val() === newData.parent().parent().child('attachments').child($field).child('fileId').val()) || (root.child('lessons').child($classId).child($lessonId).child('materials').child($field).child('type').val() === 'image' && newData.child('on').val() === root.child('lessons').child($classId).child($lessonId).child('materials').child($field).child('fileId').val())) && newData.hasChildren(['fileId', 'bytes', 'strokes', 'updatedAt']) && (!data.exists() || newData.child('updatedAt').val() > data.child('updatedAt').val()) && (!data.parent().parent().child('inkCleared').child($field).exists() || newData.child('updatedAt').val() > data.parent().parent().child('inkCleared').child($field).val())",
+                "on": { ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200" },
                 "fileId": {
                   ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200"
                 },

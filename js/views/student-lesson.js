@@ -132,7 +132,7 @@ export function mount(root, ctx) {
   }
 
   function retrySaves() {
-    for (const item of [saver, ...Object.values(inkFields)]) {
+    for (const item of [saver, materials, attachments, ...Object.values(inkFields)]) {
       if (item && (item.state === 'failed' || item.state === 'retrying')) void item.retry();
     }
   }
@@ -262,10 +262,14 @@ export function mount(root, ctx) {
         saver.edit(record, { editedAt: draft.editedAt });
         toast('前に保存できなかった内容を、もう一度送ります。');
       }
-      materials = materialPane({ ctx, classId, lessonId, lesson });
+      materials = materialPane({ ctx, classId, lessonId, lesson, studentId, readOnly: false,
+        ink: server?.ink, inkCleared: server?.inkCleared,
+        onState(state) { saveStates.materials = state; showSaveState(); } });
       materialsArea.replaceChildren(materials.node);
       attachments = attachmentPane({ ctx, classId, lessonId, studentId,
-        attachments: Array.isArray(server?.attachments) ? server.attachments : [], readOnly: false });
+        attachments: Array.isArray(server?.attachments) ? server.attachments : [], readOnly: false,
+        ink: server?.ink, inkCleared: server?.inkCleared,
+        onState(state) { saveStates.attachments = state; showSaveState(); } });
       attachmentsArea.replaceChildren(attachments.node);
       terms = termRow({ ctx, classId, lessonId, studentId, lesson, readOnly: false });
       termsArea.replaceChildren(terms.node);
@@ -284,6 +288,8 @@ export function mount(root, ctx) {
       const server = await ctx.repo.getRecord(classId, lessonId, studentId);
       if (!alive || current !== refreshId) return;
       for (const field of CONFIG.inkFields) inkFields[field].refresh(server?.ink?.[field] ?? null, server?.inkCleared?.[field]);
+      materials?.refreshInk(server?.ink, server?.inkCleared);
+      attachments?.refreshInk(server?.ink, server?.inkCleared);
       // 読みこみの途中で書いた場合も、その入力を守る。
       if (saver.dirty || startedRevision !== revision) return;
       if (typeof server?.updatedAt !== 'number' || !Number.isFinite(server.updatedAt) || server.updatedAt <= updatedAt) return;
@@ -296,10 +302,12 @@ export function mount(root, ctx) {
   async function okToLeave() {
     terms?.setLocked(true);
     for (const item of Object.values(inkFields)) item.setLocked(true);
+    materials?.setLocked(true);
+    attachments?.setLocked(true);
     let leaving = false;
     try {
       if (terms && !await terms.settle()) return false;
-      const savers = [saver, ...Object.values(inkFields)].filter(Boolean);
+      const savers = [saver, materials, attachments, ...Object.values(inkFields)].filter(Boolean);
       if (savers.some((item) => item.dirty)) {
         const results = await Promise.all(savers.map((item) => item.flush()));
         const saved = results.every(Boolean);
@@ -318,6 +326,8 @@ export function mount(root, ctx) {
       if (!leaving) {
         terms?.setLocked(false);
         for (const item of Object.values(inkFields)) item.setLocked(false);
+        materials?.setLocked(false);
+        attachments?.setLocked(false);
       }
     }
   }

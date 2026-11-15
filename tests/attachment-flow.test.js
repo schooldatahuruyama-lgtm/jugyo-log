@@ -198,22 +198,22 @@ test('settleAttachmentFlow: 目録なし・配列でない目録は空の配列�
   }
 });
 
-const removal = () => ({ classId: 'c1', lessonId: 'l1', studentId: 's26-001', attachment: { slot: 'a1', fileId: 'file-a' } });
+const removal = () => ({ classId: 'c1', lessonId: 'l1', studentId: 's26-001', attachment: { slot: 'a1', fileId: 'file-a' }, now: 100 });
 
 test('removeAttachmentFlow: 目録から外し終わってから、ファイルをゴミ箱に入れる', async () => {
   const calls = [];
-  const repo = { async removeAttachment(...values) {
+  const repo = { async getRecord(...values) { calls.push(['get', ...values]); return null; }, async removeAttachment(...values) {
     calls.push(['remove', ...values]);
     await Promise.resolve();
     calls.push(['removed']);
   } };
   const files = { async trashStudent(id) { calls.push(['trash', id]); return true; } };
   assert.deepEqual(await removeAttachmentFlow({ ...removal(), repo, files }), { trashed: true });
-  assert.deepEqual(calls, [['remove', 'c1', 'l1', 's26-001', 'a1'], ['removed'], ['trash', 'file-a']]);
+  assert.deepEqual(calls, [['get', 'c1', 'l1', 's26-001'], ['remove', 'c1', 'l1', 's26-001', 'a1'], ['removed'], ['trash', 'file-a']]);
 });
 
 test('removeAttachmentFlow: ゴミ箱への移動の失敗と false は、例外にせず false を返す', async () => {
-  const repo = { async removeAttachment() {} };
+  const repo = { async getRecord() { return {}; }, async removeAttachment() {} };
   for (const trashStudent of [async () => false, async () => { throw new NetError('network'); }]) {
     assert.deepEqual(await removeAttachmentFlow({ ...removal(), repo, files: { trashStudent } }), { trashed: false });
   }
@@ -221,7 +221,36 @@ test('removeAttachmentFlow: ゴミ箱への移動の失敗と false は、例外
 
 test('removeAttachmentFlow: 目録から外せなければ例外をそのまま返し、ファイルを消さない', async () => {
   const error = new NetError('denied');
-  const repo = { async removeAttachment() { throw error; } };
+  const repo = { async getRecord() { return {}; }, async removeAttachment() { throw error; } };
+  const files = { async trashStudent() { assert.fail('消してはいけない'); } };
+  await assert.rejects(removeAttachmentFlow({ ...removal(), repo, files }), (e) => e === error);
+});
+
+test('removeAttachmentFlow: 書きこみ・削除時刻より新しい時刻を渡し、別の写真の書きこみも片付ける', async () => {
+  for (const record of [{ ink: { a1: { fileId: 'ink-file', on: 'old-photo', updatedAt: 90 } } },
+    { ink: { a1: { fileId: 'ink-file', on: 'file-a', updatedAt: 100 } }, inkCleared: { a1: 110 } },
+    { inkCleared: { a1: 100 } }, { inkCleared: { a1: 0 } }]) {
+    for (const failTrash of [false, true]) {
+      const calls = [];
+      const repo = {
+        async getRecord(...args) { calls.push(['get', ...args]); return record; },
+        async removeAttachment(...args) { calls.push(['remove', ...args]); },
+      };
+      const files = { async trashStudent(id) { calls.push(['trash', id]); if (failTrash) throw new NetError('network'); return true; } };
+      assert.deepEqual(await removeAttachmentFlow({ ...removal(), repo, files }), { trashed: !failTrash });
+      assert.deepEqual(calls, [['get', 'c1', 'l1', 's26-001'], ['remove', 'c1', 'l1', 's26-001', 'a1',
+        Math.max(100, (record.ink?.a1.updatedAt ?? 0) + 1, (record.inkCleared?.a1 ?? 0) + 1)],
+      ['trash', 'file-a'], ...(record.ink ? [['trash', 'ink-file']] : [])]);
+    }
+  }
+});
+
+test('removeAttachmentFlow: 最初の読み取りに失敗したら目録もファイルも消さない', async () => {
+  const error = new NetError('network');
+  const repo = {
+    async getRecord() { throw error; },
+    async removeAttachment() { assert.fail('消してはいけない'); },
+  };
   const files = { async trashStudent() { assert.fail('消してはいけない'); } };
   await assert.rejects(removeAttachmentFlow({ ...removal(), repo, files }), (e) => e === error);
 });

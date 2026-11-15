@@ -12,6 +12,16 @@ const records = {
   's26-009': { memo: '', level: 2, learned: '', question: '単位が分からない', updatedAt: 3 },
 };
 
+test('一覧とコピー: 写真への書きこみは手書きの件数に含めず、表示する欄だけ数える', () => {
+  const index = { fileId: 'ink', bytes: 42, strokes: 1, updatedAt: 20, on: 'photo' };
+  const people = [{ record: { learned: '光', question: 'なぜ', ink: { a1: index, Abc123Def456: index } } },
+    { record: { learned: '鏡', ink: { learned: { fileId: 'field-ink', bytes: 42, strokes: 1, updatedAt: 20 }, a1: index } } }];
+  const learned = reviewRows(people, { field: 'learned' });
+  assert.deepEqual(learned.map((row) => row.hasInk), [false, true]);
+  assert.deepEqual(copyText(learned), { text: '光\n鏡\n（手書き 1 件は含まれていません）', count: 2, inkCount: 1 });
+  assert.equal(copyText(reviewRows(people, { field: 'question' })).inkCount, 0);
+});
+
 test('reviewPeople: 名簿の全員と、名簿にいない生徒の記録', () => {
   const p = reviewPeople(members, records);
   assert.deepEqual(p.map((x) => [x.studentId, x.number, x.inRoster, x.record === null]),

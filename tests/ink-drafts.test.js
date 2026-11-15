@@ -17,6 +17,38 @@ function fakeStorage() {
 const path = 'jugyolog:ink:s26-001:c1:l1:memo';
 const draft = { ink: emptyInk(), editedAt: 10, key: 'ink-test-1' };
 
+test('写真の下書き: 添付と資料の on・k・整数の高さを保存し、一覧にも返す', () => {
+  const drafts = createInkDrafts({ storage: fakeStorage() });
+  const picture = { ...draft, on: 'photo', ink: { v: 1, k: 'pic', h: 601, s: [] } };
+  for (const field of ['a1', 'Abc123Def456']) {
+    assert.equal(drafts.put('s26-001', 'c1', 'l1', field, picture), true);
+    assert.deepEqual(drafts.get('s26-001', 'c1', 'l1', field), picture);
+  }
+  assert.deepEqual(drafts.list('s26-001'), ['a1', 'Abc123Def456'].map((field) => ({ classId: 'c1', lessonId: 'l1', field, ...picture })));
+  drafts.remove('s26-001', 'c1', 'l1', 'a1');
+  assert.equal(drafts.get('s26-001', 'c1', 'l1', 'a1'), null);
+  assert.equal(drafts.put('s26-001', 'c1', 'l1', 'memo', { ...draft, on: 'photo' }), true);
+  assert.deepEqual(drafts.get('s26-001', 'c1', 'l1', 'memo'), draft);
+});
+
+test('写真の下書き: on が文字でないものと知らない場所は保存せず、既存値も読まない', () => {
+  const storage = fakeStorage();
+  const drafts = createInkDrafts({ storage });
+  for (const field of ['a1', 'Abc123Def456']) {
+    for (const on of [undefined, null, 42, {}, []]) {
+      const value = { ...draft, on };
+      storage.setItem(path.replace(':memo', `:${field}`), JSON.stringify(value));
+      assert.equal(drafts.get('s26-001', 'c1', 'l1', field), null);
+      assert.equal(drafts.put('s26-001', 'c1', 'l1', field, value), false);
+    }
+  }
+  for (const field of [null, undefined, 1, '', 'other', 'a7', 'bad/place']) {
+    assert.equal(drafts.put('s26-001', 'c1', 'l1', field, { ...draft, on: 'photo' }), false);
+    assert.equal(drafts.get('s26-001', 'c1', 'l1', field), null);
+  }
+  assert.deepEqual(drafts.list('s26-001'), []);
+});
+
 test('手書き下書き: 保存・取得・上書き・削除し、線は cleanInk を通す', () => {
   const storage = fakeStorage();
   const drafts = createInkDrafts({ storage });

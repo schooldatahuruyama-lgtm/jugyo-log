@@ -43,6 +43,8 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
   const inLessonId = newId(random, CONFIG.idLength);
   const outLessonId = newId(random, CONFIG.idLength);
   const materialId = newId(random, CONFIG.idLength);
+  let missingMaterialId = newId(random, CONFIG.idLength);
+  while (missingMaterialId === materialId) missingMaterialId = newId(random, CONFIG.idLength);
   const unitId = newId(random, CONFIG.idLength);
   let missingLessonId = newId(random, CONFIG.idLength);
   while (missingLessonId === inLessonId) missingLessonId = newId(random, CONFIG.idLength);
@@ -211,6 +213,12 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       ['自分の inkCleared/memo に目録より古い時刻を書く', 'denied', () => writeInkCleared('memo', ink.updatedAt - 1)],
       ['自分の inkCleared/memo に数を書く', 'ok', () => writeInkCleared('memo')],
       ['自分の inkCleared/other に数を書く', 'denied', () => writeInkCleared('other')],
+      ['自分の写真と同じ on で ink/a1 を書く', 'ok', () => writeInk('a1', { ...ink, on: attachment.fileId })],
+      ['自分の写真と違う on で ink/a1 を書く', 'denied', () => writeInk('a1', { ...ink, on: 'probe-other', updatedAt: ink.updatedAt + 1 })],
+      ['写真がない ink/a2 を書く', 'denied', () => writeInk('a2', { ...ink, on: attachment.fileId })],
+      ['on を付けて ink/memo を書く', 'denied', () => writeInk('memo', { ...ink, on: attachment.fileId, updatedAt: ink.updatedAt + 4 })],
+      ['授業の写真の資料と同じ on で ink/（資料）を書く', 'ok', () => writeInk(materialId, { ...ink, on: 'probe' })],
+      ['授業にない資料の ink を書く', 'denied', () => writeInk(missingMaterialId, { ...ink, on: 'probe' })],
     ];
     for (const [label, expect, fn] of checks) {
       const got = await attempt(fn);

@@ -7,6 +7,7 @@ import { addAttachmentFlow, settleAttachmentFlow, removeAttachmentFlow } from '.
 import { compressImage, compressCanvas, dataUrlToBase64 } from '../../image.js';
 import { openPdf } from '../../pdf.js';
 import { openViewer } from './viewer.js';
+import { pictureInks } from './picture-ink.js';
 
 // PDF は大きいので、一度に全バイトを引数に広げない。
 function bufferToBase64(buffer) {
@@ -16,7 +17,8 @@ function bufferToBase64(buffer) {
   return btoa(parts.join(''));
 }
 
-export function attachmentPane({ ctx, classId, lessonId, studentId, attachments, readOnly }) {
+export function attachmentPane({ ctx, classId, lessonId, studentId, attachments, readOnly,
+  ink, inkCleared, onState }) {
   let alive = true;
   let viewer = null;
   let viewedItem = null;
@@ -35,6 +37,8 @@ export function attachmentPane({ ctx, classId, lessonId, studentId, attachments,
   const add = el('button', { type: 'button', class: 'btn attachment-add', text: '＋ 写真・PDF' });
   const node = el('div', { class: 'attachment-pane' }, listArea,
     readOnly ? null : [el('div', { class: 'attachment-actions' }, add, input), limit, message]);
+  const photoFor = (item) => ({ place: item.slot, fileId: item.attachment?.fileId, type: item.type });
+  const inks = pictureInks({ ctx, classId, lessonId, studentId, ink, inkCleared, readOnly, onState, onChange: render });
 
   function availableSlot(except = null) {
     return freeSlot(items.filter((item) => item.state === 'saved').map((item) => item.attachment),
@@ -57,6 +61,7 @@ export function attachmentPane({ ctx, classId, lessonId, studentId, attachments,
     viewer?.close();
     viewedItem = item;
     viewer = openViewer({ title: labels()[items.indexOf(item)], kind: item.type,
+      pictureInk: () => inks.get(photoFor(item)),
       load: () => ctx.files.loadStudentFile(item.attachment.fileId) });
   }
 
@@ -77,6 +82,8 @@ export function attachmentPane({ ctx, classId, lessonId, studentId, attachments,
         preview.replaceChildren(image);
       }
       const summary = [preview, el('span', { class: 'material-name', text: names[index] })];
+      if (item.state === 'saved' && inks.has(photoFor(item))) summary.push(
+        el('span', { class: 'picture-ink-badge', text: '✎ 書きこみあり' }));
       const heading = item.state === 'saved'
         ? action('', () => view(item), { class: 'attachment-open', 'aria-label': `${names[index]} を開く`, disabled: item.removing })
         : el('div', { class: 'attachment-pending' });
@@ -164,6 +171,7 @@ export function attachmentPane({ ctx, classId, lessonId, studentId, attachments,
     }
     saved.sort((a, b) => (a.attachment.addedAt - b.attachment.addedAt) || a.slot.localeCompare(b.slot));
     if (viewedItem && !saved.includes(viewedItem)) { viewer?.close(); viewer = null; viewedItem = null; }
+    for (const entry of previous) if (!saved.includes(entry)) inks.stop(photoFor(entry));
     // 応答待ち・応答を失った添付も、保存済みなら 1 つにまとめる。
     const savedIds = new Set(saved.map((entry) => entry.attachment.fileId));
     const pending = items.filter((entry) => entry.state !== 'saved'
@@ -182,6 +190,7 @@ export function attachmentPane({ ctx, classId, lessonId, studentId, attachments,
     const record = await ctx.repo.getRecord(classId, lessonId, studentId);
     if (!alive) return;
     reconcileAttachments(Array.isArray(record?.attachments) ? record.attachments : [], previous);
+    inks.refreshInk(record?.ink, record?.inkCleared);
   }
 
   async function send(item) {
@@ -310,12 +319,22 @@ export function attachmentPane({ ctx, classId, lessonId, studentId, attachments,
       item.error = '';
       render();
       const ok = await confirmDialog({ title: item.type === 'pdf' ? 'この PDF を消しますか？' : 'この写真を消しますか？',
-        body: '消すと元にもどせません。', okLabel: '消す', danger: true, signal: dialogs.signal });
+        body: '消すと元にもどせません。' + (inks.has(photoFor(item)) ? 'この写真への書きこみも消えます。' : ''),
+        okLabel: '消す', danger: true, signal: dialogs.signal });
       if (!ok || !alive) return;
       item.confirming = false;
+      inks.pause(photoFor(item));
+      if (viewedItem === item) { viewer?.close(); viewer = null; viewedItem = null; }
       render();
-      const result = await removeAttachmentFlow({ repo: ctx.repo, files: ctx.files, classId, lessonId, studentId,
-        attachment: item.attachment });
+      const result = await ctx.recordQueue.run(`${classId}/${lessonId}`, async () => {
+        const record = await ctx.repo.getRecord(classId, lessonId, studentId);
+        if (!record?.attachments?.some((entry) => entry.slot === item.slot && entry.fileId === item.attachment.fileId)) {
+          return { trashed: true };
+        }
+        return removeAttachmentFlow({ repo: { ...ctx.repo, getRecord: async () => record }, files: ctx.files,
+          classId, lessonId, studentId, attachment: item.attachment, now: ctx.now() });
+      });
+      inks.stop(photoFor(item));
       if (!alive) return;
       if (viewedItem === item) { viewer?.close(); viewer = null; viewedItem = null; }
       const index = items.indexOf(item);
@@ -323,7 +342,10 @@ export function attachmentPane({ ctx, classId, lessonId, studentId, attachments,
       item.thumb = null;
       if (!result.trashed) message.textContent = '一覧から外しましたが、ファイルの片付けはできませんでした。';
     } catch {
-      if (alive) item.error = '消せませんでした。もう一度ためしてください。';
+      if (alive) {
+        inks.resume(photoFor(item));
+        item.error = '消せませんでした。もう一度ためしてください。';
+      }
     } finally {
       operating = false;
       item.removing = false;
@@ -336,11 +358,18 @@ export function attachmentPane({ ctx, classId, lessonId, studentId, attachments,
     add.addEventListener('click', () => { if (alive && !operating && availableSlot()) input.click(); }, { signal: events.signal });
     input.addEventListener('change', choose, { signal: events.signal });
   }
+  inks.restore(items.filter((item) => item.state === 'saved').map(photoFor));
   render();
   void loadThumbs();
   return {
     node,
     get busy() { return items.some((item) => item.state !== 'saved'); },
+    get dirty() { return inks.dirty; },
+    get state() { return inks.state; },
+    flush: () => inks.flush(),
+    retry: () => inks.retry(),
+    setLocked: (value) => inks.setLocked(value),
+    refreshInk: (next, cleared) => inks.refreshInk(next, cleared),
     destroy() {
       if (!alive) return;
       alive = false;
@@ -348,6 +377,7 @@ export function attachmentPane({ ctx, classId, lessonId, studentId, attachments,
       events.abort();
       rowEvents.abort();
       viewer?.close();
+      inks.destroy();
       viewer = null;
       viewedItem = null;
       for (const item of items) {
