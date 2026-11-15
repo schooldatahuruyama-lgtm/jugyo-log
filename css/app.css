@@ -329,6 +329,7 @@ dialog.material-viewer[open] { display: flex; flex-direction: column; gap: var(-
 .viewer-ink { flex: none; min-width: 0; max-height: 45%; overflow-y: auto; }
 .picture-ink-overlay { position: absolute; inset: 0; pointer-events: none; }
 .picture-ink-overlay.is-editing { pointer-events: auto; }
+.picture-ink-overlay:has(.ink-paper-writing) { touch-action: none; }
 .picture-ink-overlay .ink-paper { width: 100%; height: 100%; border: 0; background: transparent; user-select: none; -webkit-user-select: none; }
 .picture-ink-save { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1); min-height: 1.6em; }
 .picture-ink-badge { font-size: 14px; font-weight: 700; color: var(--mine); overflow-wrap: anywhere; }
@@ -484,6 +485,7 @@ button.term-pill:disabled { opacity: 0.55; cursor: not-allowed; }
 .ink-ruler-icon { flex: none; width: 26px; height: 14px; stroke: var(--c-navy); stroke-width: 1.5; }
 .ink-status { min-width: 0; margin-left: auto; font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
 .ink-paper { display: block; width: 100%; height: auto; border: 1px solid var(--soft-line); background: #FFFFFF; }
+.ink-paper.ink-paper-writing { touch-action: none; }
 .ink-pad:not(.ink-readonly) .ink-paper { user-select: none; -webkit-user-select: none; }
 .ink-writing .ink-paper { border: 2px solid var(--mine); cursor: crosshair; }
 .ink-more { display: flex; width: 100%; border-top: 0; border-radius: 0 0 12px 12px; background: var(--mine-bg); color: var(--mine); }
