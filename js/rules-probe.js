@@ -113,7 +113,21 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       const path = `${ownRecord}/attachments/${slot}`;
       return trackWrite({ [path]: null }, () => net.set(path, value));
     };
-    const writeRecThumb = (path) => trackWrite({ [path]: null }, () => net.set(`${path}/a1`, PROBE_THUMB));
+    const writeRecThumb = (path, key = 'a1') => trackWrite({ [path]: null }, () => net.set(`${path}/${key}`, PROBE_THUMB));
+    const ink = { fileId: 'probe-ink', bytes: 42, strokes: 1, updatedAt: now() };
+    const writeInk = (field, value, studentId = sid) => {
+      const path = `records/${inId}/${inLessonId}/${studentId}/ink/${field}`;
+      return trackWrite({ [path]: null }, () => net.set(path, value));
+    };
+    const inkThumbs = `inkThumbs/${inId}/${inLessonId}`;
+    const writeInkCleared = (field, time = ink.updatedAt + 3) => {
+      const path = `${ownRecord}/inkCleared/${field}`;
+      return trackWrite({ [path]: null }, () => net.set(path, time));
+    };
+    const writeInkThumb = (field, studentId = sid) => {
+      const path = `${inkThumbs}/${field}/${studentId}`;
+      return trackWrite({ [path]: null }, () => net.set(path, PROBE_THUMB));
+    };
 
     const checks = [
       ['gen/s00-999 を読む（ログインなし）', 'ok', () => net.getPublic(`gen/${sid}`)],
@@ -169,6 +183,16 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       ['すでにある attachments/a1 を同じ fileId で書き直す', 'ok', () => writeAttachment('a1', { ...attachment, bytes: 43 })],
       ['すでにある attachments/a1 を別の fileId で書きかえる', 'denied', () => writeAttachment('a1', { ...attachment, fileId: 'probe-changed' })],
       ['自分の recThumbs に文字を直接書く', 'denied', () => trackWrite({ [ownThumbs]: null }, () => net.set(ownThumbs, PROBE_THUMB))],
+      ['自分の ink/memo を書く', 'ok', () => writeInk('memo', ink)],
+      ['自分の ink/other を書く', 'denied', () => writeInk('other', ink)],
+      ['strokes がない ink/memo を書く', 'denied', () => writeInk('memo', { fileId: ink.fileId, bytes: ink.bytes, updatedAt: ink.updatedAt + 1 })],
+      ['strokes が 0 の ink/memo を書く', 'denied', () => writeInk('memo', { ...ink, strokes: 0, updatedAt: ink.updatedAt + 2 })],
+      ['ほかの生徒（s00-998）の ink/memo を書く', 'denied', () => writeInk('memo', ink, 's00-998')],
+      ['自分の inkThumbs/learned を書く', 'ok', () => writeInkThumb('learned')],
+      ['自分の inkThumbs/memo を書く', 'denied', () => writeInkThumb('memo')],
+      ['ほかの生徒（s00-998）の inkThumbs/learned を書く', 'denied', () => writeInkThumb('learned', 's00-998')],
+      ['inkThumbs/（入っているクラス）/（授業）/learned 全体を読む', 'denied', () => net.get(`${inkThumbs}/learned`)],
+      ['先生として inkThumbs/（入っているクラス）/（授業）/learned を読む', 'ok', () => teacherNet.get(`${inkThumbs}/learned`)],
       ['自分の terms/t1 を書く', 'ok', () => writeTerm('t1', '光の反射')],
       ['自分の terms/（入っているクラス）を読む', 'ok', () => net.get(ownTerms)],
       ['自分の terms/t9 を書く', 'denied', () => writeTerm('t9', '鏡の実験')],
@@ -183,6 +207,10 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       ['initialPw/s00-999 を消す', 'ok', () => net.remove(`initialPw/${sid}`)],
       ['先生として records/（入っているクラス）/（授業）を読む', 'ok', () => teacherNet.get(`records/${inId}/${inLessonId}`)],
       ['先生として marks/s00-999 を読む', 'ok', () => teacherNet.get(`marks/${sid}`)],
+      ['自分の ink/memo を前より古い時刻で書く', 'denied', () => writeInk('memo', { ...ink, updatedAt: ink.updatedAt - 1 })],
+      ['自分の inkCleared/memo に目録より古い時刻を書く', 'denied', () => writeInkCleared('memo', ink.updatedAt - 1)],
+      ['自分の inkCleared/memo に数を書く', 'ok', () => writeInkCleared('memo')],
+      ['自分の inkCleared/other に数を書く', 'denied', () => writeInkCleared('other')],
     ];
     for (const [label, expect, fn] of checks) {
       const got = await attempt(fn);
@@ -262,6 +290,7 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
         patch[`lessons/${c.id}/${lessonId}`] = null;
         studentPatch[`records/${c.id}/${lessonId}/${sid}`] = null;
         studentPatch[`recThumbs/${c.id}/${lessonId}/${sid}`] = null;
+        for (const field of CONFIG.inkThumbFields) studentPatch[`inkThumbs/${c.id}/${lessonId}/${field}/${sid}`] = null;
       }
       if (ofIds.includes(c.id) && of[c.id] === true
         && await attempt(() => studentNet.update('', studentPatch)) !== 'ok') recordsRemoved = false;

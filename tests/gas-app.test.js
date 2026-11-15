@@ -21,6 +21,8 @@ const tokU = jwt({ user_id: 'uidU' });
 const PHOTO = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x80, 0x7f, 0x00, 0x01]).toString('base64');
 const PDF = Buffer.from('%PDF-1.7\nテスト用の資料').toString('base64');
 const bad = { ok: false, error: 'bad' };
+const INK_TEXT = '{"v":1,"h":400,"s":[{"c":0,"w":0,"p":[0,0,1,1]}]}';
+const INK = { mime: 'application/json', dataB64: Buffer.from(INK_TEXT).toString('base64') };
 const auth = { ok: false, error: 'auth' };
 const notfound = { ok: false, error: 'notfound' };
 
@@ -93,12 +95,71 @@ function countDriveReads(fakes) {
   return ids;
 }
 
-test('本番の ping と doGet は app-2 を JSON で返す', () => {
+test('手書き JSON: 同じキーは 1 ファイル。本人と先生だけが読み、本人だけが片付ける', () => {
+  const { putStudent, call, fakes } = setup();
+  const saved = putStudent(INK);
+  assert.equal(saved.ok, true);
+  assert.equal(saved.bytes, Buffer.byteLength(INK_TEXT));
+  assert.deepEqual(putStudent(INK), { ...saved, existed: true });
+  assert.equal(fakes.files.length, 1);
+  const file = fakes.files[0];
+  assert.equal(file.getName(), 's_student-0001');
+  assert.equal(file.getDescription(), 'student:s26-001:c1:l1');
+  assert.equal(file.getParents().next().getName(), STUDENT_FOLDER_NAME);
+  assert.equal(file.getMimeType(), 'application/json');
+  assert.equal(file.getBlob().getDataAsString('UTF-8'), INK_TEXT);
+  for (const token of [tokS, tokT]) {
+    assert.deepEqual(call({ op: 'getStudentFile', token, fileId: saved.id }), { ok: true, ...INK });
+    assert.deepEqual(call({ op: 'getStudentFiles', token, fileIds: [saved.id] }), { ok: true, files: {}, missing: [saved.id] });
+  }
+  assert.deepEqual(call({ op: 'getStudentFile', token: tokOther, fileId: saved.id }), notfound);
+  assert.deepEqual(call({ op: 'trashStudentFile', token: tokOther, fileId: saved.id }), { ok: true, trashed: false });
+  assert.deepEqual(call({ op: 'trashStudentFile', token: tokT, fileId: saved.id }), { ok: false, error: 'denied' });
+  assert.equal(file.isTrashed(), false);
+  assert.deepEqual(call({ op: 'trashStudentFile', token: tokS, fileId: saved.id }), { ok: true, trashed: true });
+  assert.deepEqual(call({ op: 'getStudentFile', token: tokS, fileId: saved.id }), notfound);
+});
+
+test('手書き JSON: 壊れた JSON・オブジェクト以外・違う版は bad。Drive に何も作らない', () => {
+  for (const text of ['{', 'null', '[]', '1', '"text"', '{}', '{"v":2}', '{"v":"1"}']) {
+    const { putStudent, fakes } = setup();
+    assert.deepEqual(putStudent({ mime: 'application/json', dataB64: Buffer.from(text).toString('base64') }), bad);
+    assert.equal(fakes.files.length, 0);
+    assert.equal(fakes.DriveApp.getFoldersByName(STUDENT_FOLDER_NAME).hasNext(), false);
+  }
+});
+
+test('手書き JSON: base64 が 400000 文字なら通り、超えれば toobig', () => {
+  const { putStudent, fakes } = setup();
+  const text = '{"v":1}' + ' '.repeat(300000 - 7);
+  const dataB64 = Buffer.from(text).toString('base64');
+  assert.equal(dataB64.length, 400000);
+  assert.equal(putStudent({ mime: 'application/json', dataB64 }).bytes, 300000);
+  assert.deepEqual(putStudent({ mime: 'application/json', dataB64: dataB64 + 'AAAA', key: 'ink-other-1' }), { ok: false, error: 'toobig' });
+  assert.equal(fakes.files.length, 1);
+});
+
+test('手書き JSON: キー・授業・所属・所有者の確認と先生の資料の種類を維持', () => {
+  for (const override of [{ key: 'bad' }, { classId: 'bad/id' }, { lessonId: 'missing' }, { classId: 'outside' }, { token: tokT }]) {
+    const { putStudent, fakes } = setup();
+    assert.equal(putStudent({ ...INK, ...override }).ok, false);
+    assert.equal(fakes.files.length, 0);
+    assert.equal(fakes.DriveApp.getFoldersByName(STUDENT_FOLDER_NAME).hasNext(), false);
+  }
+  const { putStudent, put, fakes } = setup();
+  assert.equal(putStudent(INK).ok, true);
+  assert.deepEqual(putStudent({ ...INK, token: tokOther }), { ok: false, error: 'denied' });
+  assert.deepEqual(putStudent({ ...INK, lessonId: 'l2' }), { ok: false, error: 'denied' });
+  assert.deepEqual(put(INK), bad);
+  assert.equal(fakes.files.length, 1);
+});
+
+test('本番の ping と doGet は app-3 を JSON で返す', () => {
   const { call, gas, fakes } = setup();
-  assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-2' });
+  assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-3' });
   const out = gas.doGet();
   assert.equal(out.getMimeType(), fakes.ContentService.MimeType.JSON);
-  assert.deepEqual(JSON.parse(out.getContent()), { ok: true, version: 'app-2' });
+  assert.deepEqual(JSON.parse(out.getContent()), { ok: true, version: 'app-3' });
   assert.equal(fakes.fetched.length, 0);
 });
 
@@ -503,8 +564,8 @@ test('DATABASE_URL が空なら ping と doGet のほかは config', () => {
     for (const op of ['whoami', 'putMaterial', 'getMaterials', 'getFile', 'trashFile']) {
       assert.deepEqual(call({ op, token: tokT }), { ok: false, error: 'config' });
     }
-    assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-2' });
-    assert.deepEqual(JSON.parse(gas.doGet().getContent()), { ok: true, version: 'app-2' });
+    assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-3' });
+    assert.deepEqual(JSON.parse(gas.doGet().getContent()), { ok: true, version: 'app-3' });
     assert.equal(fakes.fetched.length, 0);
     assert.equal(fakes.files.length, 0);
   }

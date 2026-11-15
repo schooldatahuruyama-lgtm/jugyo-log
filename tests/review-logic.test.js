@@ -64,7 +64,7 @@ test('filterRows: 理解度・入力なしでしぼり、全員にも戻せる�
   for (const key of [null, undefined, 'other', '2', 0, 5]) assert.deepEqual(filterRows(rows, key), rows);
   for (const key of [4, 3, 2, 1]) assert.deepEqual(filterRows(rows, key), rows.filter((row) => row.level === key));
   assert.deepEqual(filterRows(rows, 'none'), [rows[3]]);
-  assert.deepEqual(copyText(filterRows(rows, 2)), { text: '単位が分からない', count: 1 });
+  assert.deepEqual(copyText(filterRows(rows, 2)), { text: '単位が分からない', count: 1, inkCount: 0 });
   assert.deepEqual(rows, before);
   for (const value of [null, undefined, 'x', 1, {}]) assert.deepEqual(filterRows(value, 2), []);
 });
@@ -74,16 +74,49 @@ test('reviewRows: 理解度が低い順、入力なしは最後', () => {
   assert.deepEqual(rows.map((r) => r.studentId), ['s26-002', 's26-009', 's26-001', 's26-003']);
   assert.equal(rows[3].level, null);
   assert.equal(rows[2].text, '');
-  assert.deepEqual(rows[1], { studentId: 's26-009', number: null, inRoster: false, level: 2, text: '単位が分からない' });
+  assert.deepEqual(rows[1], { studentId: 's26-009', number: null, inRoster: false, level: 2, text: '単位が分からない', hasInk: false });
 });
 
 test('reviewRows: 出席番号順と、分かったことへの切りかえ', () => {
   assert.deepEqual(reviewRows(reviewPeople(members, records), { field: 'learned', sort: 'number' }), [
-    { studentId: 's26-001', number: 1, inRoster: true, level: 4, text: 'オームの法則' },
-    { studentId: 's26-002', number: 2, inRoster: true, level: 1, text: '' },
-    { studentId: 's26-003', number: 3, inRoster: true, level: null, text: '' },
-    { studentId: 's26-009', number: null, inRoster: false, level: 2, text: '' },
+    { studentId: 's26-001', number: 1, inRoster: true, level: 4, text: 'オームの法則', hasInk: false },
+    { studentId: 's26-002', number: 2, inRoster: true, level: 1, text: '', hasInk: false },
+    { studentId: 's26-003', number: 3, inRoster: true, level: null, text: '', hasInk: false },
+    { studentId: 's26-009', number: null, inRoster: false, level: 2, text: '', hasInk: false },
   ]);
+});
+
+test('reviewPeople・reviewRows: 今出している欄の手書きを、文章の有無と別に残す', () => {
+  const index = Object.freeze({ fileId: 'ink-example', bytes: 100, strokes: 1, updatedAt: 1 });
+  const saved = {
+    's26-001': { ...records['s26-001'], ink: { memo: index, learned: index } },
+    's26-002': { ...records['s26-002'], ink: { question: index } },
+    's26-009': { ink: { question: index } },
+  };
+  const before = structuredClone(saved);
+  const people = reviewPeople(members, saved);
+  assert.deepEqual(people[0].record.ink, { memo: index, learned: index });
+  assert.deepEqual(reviewRows(people, { field: 'question', sort: 'number' }).map((row) => row.hasInk),
+    [false, true, false, true]);
+  assert.deepEqual(reviewRows(people, { field: 'learned', sort: 'number' }).map((row) => row.hasInk),
+    [true, false, false, false]);
+  assert.deepEqual(copyText(filterRows(reviewRows(people), 'none')),
+    { text: '（手書き 1 件は含まれていません）', count: 0, inkCount: 1 });
+  assert.deepEqual(saved, before);
+});
+
+test('reviewRows: 記録なし・不正な手書きの目録・別の欄だけなら hasInk は false', () => {
+  const index = { fileId: 'ink-example', bytes: 100, strokes: 1, updatedAt: 1 };
+  const invalid = [null, [], 'x', {}, { ...index, fileId: '' }, { ...index, fileId: 1 },
+    { ...index, bytes: '100' }, { ...index, bytes: -1 }, { ...index, bytes: 400001 },
+    { ...index, strokes: 0 }, { ...index, strokes: 2001 }, { ...index, strokes: 1.5 },
+    { ...index, updatedAt: NaN }, { ...index, updatedAt: '1' }];
+  const values = [null, [], 'x', {}, { ink: [] }, { ink: 'x' }, { ink: { memo: index } },
+    ...invalid.map((question) => ({ ink: { question } }))];
+  for (const record of values) {
+    assert.equal(reviewRows([{ record }])[0].hasInk, false);
+    assert.equal(reviewRows(reviewPeople(members, { 's26-001': record }))[0].hasInk, false);
+  }
 });
 
 test('reviewRows: 知らない項目・並び順は疑問・理解度順', () => {
@@ -144,7 +177,7 @@ test('levelCounts・reviewRows・levelLabel: 1〜4 の整数だけを理解度�
 test('copyText: 1 人 1 行。番号も ID も入れない', () => {
   const rows = reviewRows(reviewPeople(members, records), { field: 'question', sort: 'level' });
   const c = copyText(rows);
-  assert.deepEqual(c, { text: 'なぜ電圧が 分かれるのか 知りたい\n単位が分からない', count: 2 });
+  assert.deepEqual(c, { text: 'なぜ電圧が 分かれるのか 知りたい\n単位が分からない', count: 2, inkCount: 0 });
   assert.ok(!/s26|\b[0-9]+\b/.test(c.text));
 });
 
@@ -154,9 +187,23 @@ test('copyText: 空白だけを除き、いろいろな改行を空白にして�
     { text: ' \t\n\r\n　' }, { text: ' 先頭\r\n  次\r最後\u2028 続き\u2029 終わり ' },
     { text: long }, { text: '' }, { text: null }, null, [],
   ];
-  assert.deepEqual(copyText(rows), { text: `先頭 次 最後 続き 終わり\n${long}`, count: 2 });
+  assert.deepEqual(copyText(rows), { text: `先頭 次 最後 続き 終わり\n${long}`, count: 2, inkCount: 0 });
   assert.deepEqual(copyText(reviewRows(reviewPeople(members, records), { field: 'learned' })),
-    { text: 'オームの法則', count: 1 });
+    { text: 'オームの法則', count: 1, inkCount: 0 });
+});
+
+test('copyText: 手書きの件数を数え、文章の最後に 1 行だけ注を足す', () => {
+  const rows = Object.freeze([
+    Object.freeze({ text: '文章と\n手書き', hasInk: true }),
+    Object.freeze({ text: '　 ', hasInk: true }),
+    Object.freeze({ text: '文章だけ', hasInk: false }),
+    Object.freeze({ text: '', hasInk: 'true' }),
+  ]);
+  assert.deepEqual(copyText(rows), {
+    text: '文章と 手書き\n文章だけ\n（手書き 2 件は含まれていません）', count: 2, inkCount: 2,
+  });
+  assert.deepEqual(copyText([{ text: '', hasInk: true }, { hasInk: true }, null]),
+    { text: '（手書き 2 件は含まれていません）', count: 0, inkCount: 2 });
 });
 
 test('neighbors: 出席番号順の前後。名簿にいない人は最後', () => {
@@ -190,7 +237,7 @@ test('空のクラスや、不正な一覧を渡しても落ちない', () => {
     assert.deepEqual(reviewPeople(value, null), []);
     assert.deepEqual(levelCounts(value), { 4: 0, 3: 0, 2: 0, 1: 0, none: 0, total: 0 });
     assert.deepEqual(reviewRows(value), []);
-    assert.deepEqual(copyText(value), { text: '', count: 0 });
+    assert.deepEqual(copyText(value), { text: '', count: 0, inkCount: 0 });
     assert.deepEqual(neighbors(value, 's26-001'), { prev: null, next: null });
     assert.equal(defaultLesson(value, 0), null);
   }
@@ -201,7 +248,7 @@ test('空のクラスや、不正な一覧を渡しても落ちない', () => {
   const people = reviewPeople([], {});
   assert.deepEqual(levelCounts(people), { 4: 0, 3: 0, 2: 0, 1: 0, none: 0, total: 0 });
   assert.deepEqual(reviewRows(people), []);
-  assert.deepEqual(copyText([]), { text: '', count: 0 });
+  assert.deepEqual(copyText([]), { text: '', count: 0, inkCount: 0 });
   assert.deepEqual(neighbors([], 's26-001'), { prev: null, next: null });
   assert.equal(defaultLesson([], 0), null);
   assert.deepEqual(reviewPeople([null, [], 'x', {}, { studentId: 1 }], {}), []);

@@ -2,17 +2,18 @@
  * 授業ログ 本番用の GAS ウェブアプリ
  *
  * 先生の資料を Drive に保存し、呼んだ人が読める授業の資料だけを取り出す。
- * 生徒の添付は別のフォルダに保存し、持ち主と先生だけが取り出す。
+ * 生徒の添付と手書き JSON は別のフォルダに保存し、持ち主と先生だけが取り出す。
  * 本人確認と授業の読み取りには、呼んだ人の Firebase ID トークンを使う。
  * ファイルの共有の設定は変えない。公開の手順は docs/setup/gas.md にある。
  * スクリプト プロパティ DATABASE_URL に、データベースの URL を入れておくこと。
  */
 
-var VERSION = 'app-2';
+var VERSION = 'app-3';
 var FOLDER_NAME = '授業ログ_資料';
 var STUDENT_FOLDER_NAME = '授業ログ_生徒';
 var IMAGE_MAX_B64 = 1400000;
 var PDF_MAX_B64 = 14000000;
+var INK_MAX_B64 = 400000;
 var TOTAL_MAX_B64 = 6000000;
 var AUTH_CACHE_SECONDS = 60;
 
@@ -303,13 +304,13 @@ function trashFile_(req) {
   return { ok: true, trashed: true };
 }
 
-// ---- 生徒の添付 ----
+// ---- 生徒の添付・手書き ----
 
 function putStudentFile_(req, base, user) {
   if (!matches_(req.key, KEY_RE) || !validLesson_(req)) return fail_('bad');
-  if (req.mime !== 'image/jpeg' && req.mime !== 'application/pdf') return fail_('bad');
+  if (req.mime !== 'image/jpeg' && req.mime !== 'application/pdf' && req.mime !== 'application/json') return fail_('bad');
   if (typeof req.dataB64 !== 'string' || req.dataB64.length === 0) return fail_('bad');
-  var max = req.mime === 'image/jpeg' ? IMAGE_MAX_B64 : PDF_MAX_B64;
+  var max = req.mime === 'application/json' ? INK_MAX_B64 : req.mime === 'image/jpeg' ? IMAGE_MAX_B64 : PDF_MAX_B64;
   if (req.dataB64.length > max) return fail_('toobig');
 
   var bytes;
@@ -319,6 +320,15 @@ function putStudentFile_(req, base, user) {
     return fail_('bad');
   }
   if (!bytes || bytes.length === 0) return fail_('bad');
+
+  if (req.mime === 'application/json') {
+    try {
+      var ink = JSON.parse(Utilities.newBlob(bytes).getDataAsString('UTF-8'));
+      if (ink === null || typeof ink !== 'object' || Array.isArray(ink) || ink.v !== 1) return fail_('bad');
+    } catch (err) {
+      return fail_('bad');
+    }
+  }
 
   // 保存のたびに本人のトークンで所属と授業を確かめ、通るまでは Drive に何も作らない
   var path = '/lessons/' + req.classId + '/' + req.lessonId + '/createdAt.json?auth=' + req.token;

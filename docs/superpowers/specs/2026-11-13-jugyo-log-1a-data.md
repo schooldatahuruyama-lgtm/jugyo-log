@@ -48,9 +48,12 @@ lessons/<classId>/<lessonId>: { date, title, unitId, materials, terms, createdAt
 lessons/<classId>/<lessonId>/terms/<termId>: "光の反射"   先生の重要用語
 terms/<studentId>/<classId>/<lessonId>/<t1〜t8>: "鏡の実験"   生徒が足した用語
 thumbs/<classId>/<lessonId>/<materialId>: "<data URL>"   一覧用の小さい画像          … 1a-2
-records/<classId>/<lessonId>/<studentId>: { memo, level, learned, question, updatedAt, attachments } … 1a-3・1b-1
+records/<classId>/<lessonId>/<studentId>: { memo, level, learned, question, updatedAt, attachments, ink, inkCleared } … 1a-3・1b-1・1b-2
 records/<classId>/<lessonId>/<studentId>/attachments/<a1〜a6>: { type, fileId, bytes, addedAt } … 1b-1
 recThumbs/<classId>/<lessonId>/<studentId>/<a1〜a6>: "<data URL>"   添付の小さい画像 … 1b-1
+records/<classId>/<lessonId>/<studentId>/ink/<memo・learned・question>: { fileId, bytes, strokes, updatedAt } … 1b-2
+records/<classId>/<lessonId>/<studentId>/inkCleared/<memo・learned・question>: 数（空にした時刻） … 1b-2
+inkThumbs/<classId>/<lessonId>/<learned・question>/<studentId>: "<data URL>" … 1b-2（メモの画像は置かない）
 marks/<studentId>/<classId>/<lessonId>: number   理解度（1〜4）。一覧の印に使う       … 1a-3
 check/…                                      段階 0 の確認用（そのまま残す）
 ```
@@ -62,10 +65,15 @@ check/…                                      段階 0 の確認用（そのま
 - `date` は `'YYYY-MM-DD'`。
 - 理解度の数: 4 よく分かった／3 分かった／2 あまり分からなかった／1 全然分からなかった。選んでいなければ項目を置かない。
 - `members` と `memberOf` は、必ず 1 回の書きこみ（ルートへの複数パスの update）で一緒に変える。
-- 文字の記録の保存は、`records` の `memo`・`learned`・`question`・`updatedAt`・`level` と `marks` を、1 回のルートへの複数パスの update で一緒に変える。`level` が未選択なら `level` と `marks` を `null` で消す。記録全体は置きかえず、`attachments` を残す。
+- 文字の記録の保存は、`records` の `memo`・`learned`・`question`・`updatedAt`・`level` と `marks` を、1 回のルートへの複数パスの update で一緒に変える。`level` が未選択なら `level` と `marks` を `null` で消す。記録全体は置きかえず、`attachments`・`ink` を残す。
 - 生徒の添付（1b-1）は、置き場所を `a1`〜`a6` に固定し、1 回の授業につき 6 個まで。目録は `{ type: 'image'|'pdf', fileId, bytes, addedAt }`。元のファイル名は保存しない。足した日時（`addedAt`）の古い順、同じ日時なら置き場所順に並べ、写真と PDF をそれぞれ 1 から数えて「写真 1」「PDF 1」と出す。
 - 添付の追加は、目録の置き場所 1 つと、文字の小さい画像があれば `recThumbs` の同じ置き場所を、1 回の update で書く。削除は目録と小さい画像を 1 回の update で消す。どちらも文字の記録と `updatedAt`・`marks` は変えない。
 - 小さい画像を `recThumbs` に分けて置き、一覧を並べるだけでは GAS を呼ばない。本体は押したときに取り出して端末に取っておく。
+- 手書き（1b-2）は、`memo`・`learned`・`question` ごとに線の JSON を Drive へ保存し、`ink` に目録を置く。`learned`・`question` の小さい画像は `inkThumbs` に分け、目録と 1 回の update で書く。文字・理解度・記録全体の `updatedAt`・`marks` は変えない。画像の引数が `undefined` なら維持、`null` なら削除、文字なら保存する。線が 0 本なら目録と画像を消し、同じ update で `inkCleared/<field>` に書いた時刻を残す。新しく手書きを保存するときは、目録と同じ update でその欄の `inkCleared` を消す。`memo` は画像の引数にかかわらず目録と削除時刻だけを変え、画像に触らない。
+- 先生の一覧では `listInkThumbs(classId, lessonId, field)` で、今出している欄の全員分を 1 回で読む。`field` は `learned`・`question` だけで、それ以外は `TypeError`。文字でない値は落とし、`{ [studentId]: データ URL }` を返す。
+- 手書きの保存順は、アップロード → 目録 → 古いファイルの片付け。目録の保存・全消去が `denied` なら記録を読み直す。同じ `fileId`・`updatedAt === editedAt` の目録（全消去なら目録が無く `inkCleared[field] === editedAt`）があれば、自分の保存が届いていたものとして成功にする。それ以外でサーバーの時刻が `editedAt` 以上なら、今回アップロードしたファイルを片付け、新しい記録を `superseded` として返す。サーバーの時刻が古ければ、今回のファイルを片付けて元の `denied` を返す。読み直しに失敗したらそのエラーを返し、同じキーで再送できるようファイルを残す。通信失敗でもファイルを残し、片付けの失敗は保存結果を変えない。壊れた JSON の読み取りは `bad-data` にする。
+- 目録に入らなかったアップロードの ID はページを開いている間だけ覚え、保存成功時に現在の目録以外を片付ける。ページを閉じて覚えが消えた分は片付けず、目録からは見えない小さいファイルが Drive に残る。
+- 手書きの端末下書きは `jugyolog:ink:<studentId>:<classId>:<lessonId>:<field>` に `{ ink, editedAt, key }` を置く。自動保存・やり直し・再送は授業ごとの順番待ちの中でサーバーの記録を読み、目録の `updatedAt` と `inkCleared` の大きいほうが下書きの `editedAt` 以上なら保存せず、古い下書きを捨てる。授業ページでは新しい記録を表示して知らせるが、待つ間に書き足した線は残して保存を続ける。送信中に変わった下書きや失敗した下書きは残す。ログアウトで全員分の手書き下書きを消す。
 - 一覧用の画像を `lessons` と分けるのは、授業の一覧（文字だけ・軽い）を 1 回で読み、画像は見えるタイルの分だけ読むため。
 - 本名・学校のメールアドレスは、どこにも置かない。
 
@@ -93,18 +101,23 @@ check/…                                      段階 0 の確認用（そのま
 | `thumbs/$classId` | 先生と、その組の一員 | 先生 |
 | `records/$classId` | 先生。`$lessonId/$sid` は本人も | 本人だけ（その組の一員で、その授業があるとき）。先生は書けない |
 | `recThumbs/$classId` | 先生。`$lessonId/$sid` は本人も | 本人だけ（その組の一員で、その授業があるとき）。`records` と同じ式。先生は書けない |
+| `inkThumbs/$classId/$lessonId/$field` | 先生。`$sid` は本人も | 本人だけ（その組の一員で、その授業があるとき）。`records` と同じ式。先生は書けない |
 | `marks/$sid` | 先生と本人 | 本人だけ（その組の一員）。1〜4 の数 |
 | `terms/$sid` | 先生と本人（`marks/$sid` と同じ式） | `$classId` から下に本人だけ（その組の一員。`marks/$sid/$classId` と同じ式）。先生は書けない |
 | `check` | 段階 0 のまま | 段階 0 のまま |
 
-- `records` の中身は、`memo`・`learned`・`question` が 2000 文字までの文字、`level` が 1〜4 の整数、`updatedAt` が数。1b-1 で `attachments` を追加する。それ以外の項目は、今までどおり `$other: false` で受けつけない。
+- `records` の中身は、`memo`・`learned`・`question` が 2000 文字までの文字、`level` が 1〜4 の整数、`updatedAt` が数。1b-1 で `attachments`、1b-2 で `ink`・`inkCleared` を追加する。それ以外の項目は、今までどおり `$other: false` で受けつけない。
 - `attachments` は子を持つ目録。`$aid` は `/^a[1-6]$/` に合うものだけで、7 個目の置き場所は受けつけない。各項目には `type`（`'image'` または `'pdf'`）・`fileId`（1〜200 文字の文字）・`bytes`（0 以上の数）・`addedAt`（数）の 4 つを必須とし、ほかの項目は受けつけない。同じ置き場所への再送は置きかえになる。呼ぶ側は、保存済みと送信中の置き場所を数え、空きだけを使う。
 - すでに目録がある置き場所への書きこみは、同じ `fileId` のときだけ受けつける（`!data.exists() || newData.child('fileId').val() === data.child('fileId').val()`）。別のファイルに入れかえるには先に消す。`null` による削除は今までどおりできる。
-- `recThumbs` の `$aid` も `/^a[1-6]$/` に合うものだけ。値は 20000 文字までの文字。`$classId` の読み取りは `teacherList` で先生を確かめ、`$lessonId/$sid` の読み取りは `accounts` で本人を確かめる。書きこみは本人に限り、`memberOf` の所属と `lessons` の授業の存在も確かめる。
+- `inkCleared` の欄は `memo`・`learned`・`question` だけで、値は数。`getRecord`・`listRecords` は不正値・知らない欄を落とし、無ければ `{}` を返す。
+- `ink` の欄は `memo`・`learned`・`question` だけ。`fileId`（1〜200 文字）・`bytes`（0〜400000 の数）・`strokes`（1〜2000 の整数）・`updatedAt`（数）の 4 項目が必要で、ほかの項目は受けつけない。読み取り・書きこみの権限は `records` と同じ。
+- `ink/<field>` の `updatedAt` と `inkCleared/<field>` の時刻は、書きこむ前の同じ欄の目録・削除時刻の両方より新しい場合だけ書ける（同じ時刻は拒否）。前の目録も削除時刻も無い初回は、形が正しければどの時刻でも書ける。消したあとの保存は削除時刻より新しい場合に通る。比較には書きこむ前の `data` を使い、`setInk`・`removeInk` が目録と削除時刻を同じ update で書きかえても、比較と書きこみの間にすき間を作らない。端末の事前比較は通信を減らすために残し、比較後の競合はこの規則で拒否する。
+- `recThumbs` の `$aid` は `/^a[1-6]$/` に合う添付の置き場所だけ。値は 20000 文字までの文字。`$classId` の読み取りは `teacherList` で先生を確かめ、`$lessonId/$sid` の読み取りは `accounts` で本人を確かめる。書きこみは本人に限り、`memberOf` の所属と `lessons` の授業の存在も確かめる。
+- `inkThumbs` の `$field` は `learned`・`question` だけで、`memo` は置かない。値は 20000 文字までの文字。`$classId/$lessonId/$field` は先生がまとめて読み、その下の `$sid` は本人も読める。書きこみは本人に限り、`memberOf` の所属と `lessons` の授業の存在も確かめる。
 - `terms/$sid/$classId` は `newData.hasChildren()`、その下の `$lessonId` は `newData.hasChildren() && root.child('lessons').child($classId).child($lessonId).exists()` で、実在する授業の用語だけを受けつける。`$tid` は `$tid.matches(/^t[1-8]$/) && newData.isString() && newData.val().length >= 1 && newData.val().length <= 20`。削除は `null` で行う。
 - 先生の用語は既存の `lessons` の規則をそのまま使う。先生だけが書け、その組の一員が読める。先生の用語の個数と文字数は呼ぶ側で確かめる。公開読み取り（`.read: true`）は引き続き `check/ping` と `gen/$sid` だけ。
-- 規則の確認は用語の 6 行を加えて 63 行にする。確認用の生徒として用語の書きこみ・読み取りを試し、置き場所 `t9`・21 文字・ほかの生徒の読み取り・先生の用語への書きこみは拒否を確かめる。今回と前回の残りの片付けでは、所属を消す前に生徒として `terms/<自分>/<入っているクラス>` を消す。
-- 生徒が自分で書きかえられるのは、`records`・`recThumbs`・`marks`・`terms` の自分の分と、`initialPw` の自分の分を消すことだけ。`accounts`・`memberOf`・`lessons` は先生しか書けないので、規則と GAS の判断の根拠にしてよい。添付の `fileId` は本人が書きかえられるため、ファイルを開けるかどうかの根拠にしない。GAS が保存時に付けた持ち主と、認証した本人で判断する。
+- 規則の確認は用語の 6 行と手書きの 14 行を含む 77 行。用語の置き場所 `t9`・21 文字・ほかの生徒の読み取り・先生の用語への書きこみは拒否を確かめる。手書きは自分の正しい目録・`learned` の画像が通り、知らない目録の欄・`strokes` なし・0 本・ほかの生徒への書きこみ・`memo` の画像・生徒による画像の欄全体の読み取りは拒否を確かめる。形の拒否を試す時刻は目録より新しくし、時刻の拒否に隠されないようにする。先生は画像の欄全体を読めることも確かめる。自分の `ink/memo` を前より古い時刻で書く場合と、`inkCleared/memo` に目録より古い時刻を書く場合は拒否される。目録より新しい数の `inkCleared/memo` への書きこみは通り、`inkCleared/other` は拒否され、確認用の削除時刻も片付ける。所属を消す前に生徒として記録・小さい画像・`terms/<自分>/<入っているクラス>` を片付ける。前回の残りの片付けでも、授業ごとに自分の `inkThumbs` の `learned`・`question` を消す。
+- 生徒が自分で書きかえられるのは、`records`・`recThumbs`・`inkThumbs`・`marks`・`terms` の自分の分と、`initialPw` の自分の分を消すことだけ。`accounts`・`memberOf`・`lessons` は先生しか書けないので、規則と GAS の判断の根拠にしてよい。添付の `fileId` は本人が書きかえられるため、ファイルを開けるかどうかの根拠にしない。GAS が保存時に付けた持ち主と、認証した本人で判断する。
 - パスワードを出し直すと、古いアカウントの `accounts/<uid>` が消えるので、古いアカウントは何も読めなくなる。
 - メール／パスワードのアカウントは、公開している API キーでだれでも作れる。作っただけのアカウントには `accounts` の対応がないので、`gen` と `check` のほかは何も読めない。
 
@@ -119,6 +132,7 @@ check/…                                      段階 0 の確認用（そのま
 - 1 つの授業の画像は、1 回の呼び出しでまとめて返す。PDF は開くときに 1 つずつ返す。
 - 保存と削除は先生だけ。保存は端末が作ったキーを付け、同じキーなら 1 個にする。
 - 生徒自身のファイル（1b）は、ファイルの説明に書いた持ち主の生徒 ID と、トークンから分かる生徒 ID を比べて判断する。
+- 手書き対応は `app-3`。`putStudentFile` は `application/json` を base64 400000 文字まで受け取り、UTF-8 の JSON オブジェクトで `v === 1` か確かめる。ファイルは `serializeInk` の文字で、名前 `s_<key>`・説明 `student:<sid>:<classId>:<lessonId>` を付け「授業ログ_生徒」に置く。`getStudentFile`・`trashStudentFile` を共用し、`getStudentFiles` は写真だけのまま。
 
 ## 6. ファイルの分け方（1a 全体）
 

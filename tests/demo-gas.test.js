@@ -11,6 +11,8 @@ import { NetError } from '../js/errors.js';
 const upload = { key: 'test-key-1', mime: 'image/jpeg', name: '板書', dataB64: 'AQID' };
 const refs = { classId: 'c1', lessonId: 'l1' };
 const rejectsCode = (p, code) => assert.rejects(p, (e) => e instanceof NetError && e.code === code);
+const inkText = '{"v":1,"h":400,"s":[{"c":0,"w":0,"p":[0,0,1,1]}]}';
+const inkUpload = { key: 'ink-test-1', ...refs, mime: 'application/json', dataB64: Buffer.from(inkText).toString('base64') };
 function make() {
   let user = { uid: 'teacher' };
   const net = createMemoryNet({ now: () => 1000, initial: {
@@ -31,7 +33,7 @@ test('先生は保存でき、同じ key を同時に頼んでも 1 個になる
 
 test('ping と whoami は本物と同じ形。未ログイン・対応のないアカウントは auth', async () => {
   const { gas, setUser } = make();
-  assert.deepEqual(await gas.call('ping'), { ok: true, version: 'app-2' });
+  assert.deepEqual(await gas.call('ping'), { ok: true, version: 'app-3' });
   assert.deepEqual(await gas.call('whoami'), { ok: true, role: 'teacher' });
   setUser('student');
   assert.deepEqual(await gas.call('whoami'), { ok: true, role: 'student', studentId: 's26-001' });
@@ -138,6 +140,55 @@ async function makeStudent() {
   setup.setUser('student');
   return setup;
 }
+
+test('練習の手書き: 同時に同じキーで送っても 1 個。本人と先生だけ読み、まとめ読みは対象外', async () => {
+  const { gas, setUser } = await makeStudent();
+  const [saved, again] = await Promise.all([gas.call('putStudentFile', inkUpload), gas.call('putStudentFile', inkUpload)]);
+  assert.deepEqual(again, { ...saved, existed: true });
+  assert.equal(saved.bytes, inkText.length);
+  const files = createFiles({ gas, cache: createFileCache({}) });
+  assert.equal(await files.loadInk(saved.id), inkText);
+  for (const user of ['student', 'teacher']) {
+    setUser(user);
+    assert.deepEqual(await gas.call('getStudentFile', { fileId: saved.id }), { ok: true, mime: 'application/json', dataB64: inkUpload.dataB64 });
+    assert.deepEqual(await gas.call('getStudentFiles', { fileIds: [saved.id] }), { ok: true, files: {}, missing: [saved.id] });
+  }
+  await rejectsCode(gas.call('trashStudentFile', { fileId: saved.id }), 'denied');
+  await rejectsCode(gas.call('putMaterial', { ...inkUpload, name: '手書き' }), 'unknown');
+  setUser('outsider');
+  await rejectsCode(gas.call('getStudentFile', { fileId: saved.id }), 'notfound');
+  assert.deepEqual(await gas.call('trashStudentFile', { fileId: saved.id }), { ok: true, trashed: false });
+  setUser('student');
+  assert.equal(await files.trashStudent(saved.id), true);
+  await rejectsCode(files.loadInk(saved.id), 'notfound');
+});
+
+test('練習の手書き: JSON の形と版を確かめ、400000 文字の境界を本番と合わせる', async () => {
+  const { gas } = await makeStudent();
+  for (const text of ['{', 'null', '[]', '1', '"text"', '{}', '{"v":2}', '{"v":"1"}']) {
+    await rejectsCode(gas.call('putStudentFile', { ...inkUpload, dataB64: Buffer.from(text).toString('base64') }), 'unknown');
+  }
+  const text = '{"v":1}' + ' '.repeat(300000 - 7);
+  const dataB64 = Buffer.from(text).toString('base64');
+  assert.equal(dataB64.length, 400000);
+  assert.equal((await gas.call('putStudentFile', { ...inkUpload, dataB64 })).bytes, 300000);
+  await rejectsCode(gas.call('putStudentFile', { ...inkUpload, dataB64: dataB64 + 'AAAA' }), 'toobig');
+});
+
+test('練習の手書き: キー・授業・所属・所有者の確認を維持する', async () => {
+  const { gas, net, setUser } = await makeStudent();
+  for (const [change, code] of [[{ key: 'bad' }, 'unknown'], [{ lessonId: 'bad/id' }, 'unknown'],
+    [{ lessonId: 'missing' }, 'notfound'], [{ classId: 'outside' }, 'notfound']]) {
+    await rejectsCode(gas.call('putStudentFile', { ...inkUpload, ...change }), code);
+  }
+  await gas.call('putStudentFile', inkUpload);
+  await net.set('memberOf/s26-002/c1', true);
+  setUser('outsider');
+  await rejectsCode(gas.call('putStudentFile', inkUpload), 'denied');
+  setUser('student');
+  await net.set('lessons/c1/l2', { createdAt: 1 });
+  await rejectsCode(gas.call('putStudentFile', { ...inkUpload, lessonId: 'l2' }), 'denied');
+});
 
 test('生徒の保存: 同じキーを同時に送っても 1 個で、名前は取り出しに含まない', async () => {
   const { gas } = await makeStudent();

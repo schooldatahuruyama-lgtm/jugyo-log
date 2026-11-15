@@ -8,6 +8,8 @@ Set-Location $root
 $paths = @("index.html", "check.html", "css", "js", "assets")
 $head = (git rev-parse --short HEAD).Trim()
 $tmpIndex = Join-Path $env:TEMP ("jugyolog-pages-index-" + [guid]::NewGuid().ToString("N"))
+$tmpBlob = Join-Path $root (".pages-blob-" + [guid]::NewGuid().ToString("N"))
+$utf8 = New-Object Text.UTF8Encoding($false)
 $env:GIT_INDEX_FILE = $tmpIndex
 try {
   git read-tree --empty
@@ -17,15 +19,19 @@ try {
     git update-index --add --cacheinfo "100644,$blob,$f"
   }
   # .nojekyll: tell GitHub Pages not to run Jekyll
-  $empty = ("" | git hash-object -w --stdin).Trim()
+  [IO.File]::WriteAllText($tmpBlob, "", $utf8)
+  $empty = (git hash-object -w --no-filters -- $tmpBlob).Trim()
   git update-index --add --cacheinfo "100644,$empty,.nojekyll"
   # Published version: replace the dev marker in the tree only, leaving the working tree alone
-  $versionJs = ("export const VERSION = '$head';" | git hash-object -w --stdin).Trim()
+  [IO.File]::WriteAllText($tmpBlob, "export const VERSION = '$head';`n", $utf8)
+  $versionJs = (git hash-object -w --no-filters -- $tmpBlob).Trim()
   git update-index --add --cacheinfo "100644,$versionJs,js/version.js"
-  $versionText = ($head | git hash-object -w --stdin).Trim()
+  [IO.File]::WriteAllText($tmpBlob, "$head`n", $utf8)
+  $versionText = (git hash-object -w --no-filters -- $tmpBlob).Trim()
   git update-index --add --cacheinfo "100644,$versionText,version.txt"
   $tree = (git write-tree).Trim()
 } finally {
+  if (Test-Path -LiteralPath $tmpBlob) { Remove-Item -LiteralPath $tmpBlob }
   Remove-Item Env:GIT_INDEX_FILE
   if (Test-Path $tmpIndex) { Remove-Item $tmpIndex }
 }

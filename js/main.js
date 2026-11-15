@@ -10,6 +10,7 @@ import { createGas } from './gas.js';
 import { createFileCache } from './file-cache.js';
 import { createFiles } from './files.js';
 import { createDrafts } from './drafts.js';
+import { createInkDrafts } from './ink-drafts.js';
 import { createRecordQueue } from './record-queue.js';
 import { createThumbStore } from './thumb-store.js';
 import { parseRoute, routeHash, viewFile, roleFor } from './router.js';
@@ -154,6 +155,7 @@ function start() {
   const cache = createFileCache({ caches: cacheStorage });
   const files = createFiles({ gas: backend.gas, cache });
   const drafts = createDrafts({ storage });
+  const inkDrafts = createInkDrafts({ storage });
   const recordQueue = createRecordQueue();
   const thumbs = createThumbStore({ repo, cache });
   const timers = { setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window) };
@@ -161,6 +163,7 @@ function start() {
     try { thumbs.clear(); } catch { /* 小さい画像の片付けに失敗してもログアウトする */ }
     try { await files.clearCache(); } catch { /* 片付けに失敗してもログアウトする */ }
     try { drafts.clear(); } catch { /* 下書きの片付けに失敗してもログアウトする */ }
+    try { inkDrafts.clear(); } catch { /* 下書きの片付けに失敗してもログアウトする */ }
     await auth.signOut();
   }
   let session = null; // resolveSession の結果。まだ決めていなければ null
@@ -314,7 +317,7 @@ function start() {
         return;
       }
       const ctx = {
-        auth, repo, files, drafts, recordQueue, thumbs, timers, signOutAll, session, navigate, now, random, demo: Boolean(backend.demo), params: route.params,
+        auth, repo, files, drafts, inkDrafts, recordQueue, thumbs, timers, signOutAll, session, navigate, now, random, demo: Boolean(backend.demo), params: route.params,
         net: backend.net, makeProbeStudent: backend.makeProbeStudent,
         // 離れてよいかをたずねる関数を置く（null で外す）。古くなった画面からの呼び出しは無視する
         setLeaveGuard: (fn) => { if (!stale()) leave.set(fn); },

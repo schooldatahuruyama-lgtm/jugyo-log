@@ -1,8 +1,10 @@
 // 残った下書きとサーバーを比べ、送れない授業があっても次へ進むことを確かめる。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resendDrafts, pendingLessons } from '../js/record-flow.js';
+import { resendDrafts, pendingLessonCount, pendingLessons } from '../js/record-flow.js';
 import { createDrafts } from '../js/drafts.js';
+import { createInkDrafts } from '../js/ink-drafts.js';
+import { emptyInk } from '../js/ink-logic.js';
 import { createRecordQueue } from '../js/record-queue.js';
 import { createRecordSaver } from '../js/record-saver.js';
 import { pickInitial } from '../js/record-logic.js';
@@ -303,4 +305,39 @@ test('pendingLessons: 指定した生徒・クラスの授業だけを Set で�
   ]) h.drafts.put(student, cls, lesson, record('メモ'), 3000);
   assert.deepEqual(pendingLessons(h.drafts, 'student1', 'class1'), new Set(['lesson1', 'lesson2']));
   assert.deepEqual(pendingLessons(h.drafts, 'student1', 'class3'), new Set());
+});
+
+test('未送信の授業: 文字と手書き3欄が重なっても1件、別クラスの同じ授業IDは別件', () => {
+  const h = setup();
+  const inkDrafts = createInkDrafts({ storage: h.storage });
+  const draft = { ink: emptyInk(), editedAt: 3000, key: 'ink-test' };
+  assert.equal(pendingLessonCount(h.drafts, h.studentId, inkDrafts), 0);
+  for (const field of ['memo', 'learned', 'question']) {
+    inkDrafts.put(h.studentId, 'class1', 'lesson1', field, draft);
+  }
+  assert.equal(pendingLessonCount(h.drafts, h.studentId, inkDrafts), 1);
+  assert.deepEqual(pendingLessons(h.drafts, h.studentId, 'class1', inkDrafts), new Set(['lesson1']));
+  h.drafts.put(h.studentId, 'class1', 'lesson1', record('メモ'), 3000);
+  assert.equal(pendingLessonCount(h.drafts, h.studentId, inkDrafts), 1);
+  h.drafts.put(h.studentId, 'class1', 'lesson2', record('メモ'), 3000);
+  inkDrafts.put(h.studentId, 'class2', 'lesson1', 'memo', draft);
+  inkDrafts.put('student2', 'class1', 'lesson3', 'memo', draft);
+  assert.equal(pendingLessonCount(h.drafts, h.studentId, inkDrafts), 3);
+  assert.deepEqual(pendingLessons(h.drafts, h.studentId, 'class1', inkDrafts), new Set(['lesson1', 'lesson2']));
+  assert.deepEqual(pendingLessons(h.drafts, h.studentId, 'class2', inkDrafts), new Set(['lesson1']));
+  assert.deepEqual(pendingLessons(h.drafts, h.studentId, 'class3', inkDrafts), new Set());
+  assert.equal(pendingLessonCount(h.drafts, h.studentId), 2);
+});
+
+test('未送信の授業: こわれた手書き下書き・不正な欄やキーは件数と印に入れない', () => {
+  const h = setup();
+  const inkDrafts = createInkDrafts({ storage: h.storage });
+  const draft = { ink: emptyInk(), editedAt: 3000, key: 'ink-test' };
+  inkDrafts.put(h.studentId, 'class1', 'lesson1', 'memo', draft);
+  for (const [suffix, value] of [
+    ['class1:broken:memo', '{'], ['class1:invalid:memo', '{}'],
+    ['class1:wrong:other', JSON.stringify(draft)], ['class1::memo', JSON.stringify(draft)],
+  ]) h.storage.setItem(`jugyolog:ink:${h.studentId}:${suffix}`, value);
+  assert.equal(pendingLessonCount(h.drafts, h.studentId, inkDrafts), 1);
+  assert.deepEqual(pendingLessons(h.drafts, h.studentId, 'class1', inkDrafts), new Set(['lesson1']));
 });

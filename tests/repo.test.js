@@ -167,8 +167,8 @@ test('listRecords: 2 人分を 1 回で読み、getRecord と同じ形で返す�
   const before = mem.dump();
   const result = await repo.listRecords('c1', 'l1');
   assert.deepEqual(result, {
-    's26-001': { ...first, attachments: [] },
-    's26-002': { memo: '', level: null, learned: 'あ'.repeat(2000), question: '', updatedAt: 0, attachments: [] },
+    's26-001': { ...first, attachments: [], ink: {}, inkCleared: {} },
+    's26-002': { memo: '', level: null, learned: 'あ'.repeat(2000), question: '', updatedAt: 0, attachments: [], ink: {}, inkCleared: {} },
   });
   assert.deepEqual(calls.get, [['records/c1/l1']]);
   assert.equal(calls.getPublic.length, 0);
@@ -185,7 +185,7 @@ test('listRecords: 無ければ空。オブジェクトでない 1 人分は入�
   }
   const all = { 's26-001': {}, 's26-002': 'x', 's26-003': null, 's26-004': [], 's26-005': 1 };
   assert.deepEqual(await createRepo({ get: async () => all }).listRecords('c1', 'l1'), {
-    's26-001': { memo: '', level: null, learned: '', question: '', updatedAt: 0, attachments: [] },
+    's26-001': { memo: '', level: null, learned: '', question: '', updatedAt: 0, attachments: [], ink: {}, inkCleared: {} },
   });
   for (const updatedAt of [undefined, null, NaN, Infinity]) {
     const direct = createRepo({ get: async () => ({ 's26-001': { updatedAt } }) });
@@ -207,7 +207,7 @@ test('saveRecord: 理解度なしは level を置かず、1 回の update で記
   assert.equal(Object.hasOwn(await mem.get('records/c1/l1/s26-001'), 'level'), false);
   assert.equal(await mem.get('marks/s26-001/c1/l1'), null);
   assert.equal(await mem.get('marks/s26-001/c1/l2'), 4);
-  assert.deepEqual(await repo.getRecord('c1', 'l1', 's26-001'), { ...record, updatedAt: 5000, attachments: [] });
+  assert.deepEqual(await repo.getRecord('c1', 'l1', 's26-001'), { ...record, updatedAt: 5000, attachments: [], ink: {}, inkCleared: {} });
 });
 
 test('saveRecord: 理解度を記録と印に 1 回で置き、余分な項目を保存しない', async () => {
@@ -234,7 +234,7 @@ test('saveRecord・getRecord: 欠けた項目・型の違い・上限をそろ�
   assert.equal(await repo.getRecord('c1', 'l1', 's26-001'), null);
   const bad = { memo: 5, level: '3', learned: 'あ'.repeat(2001), question: null, updatedAt: '5000' };
   await mem.set('records/c1/l1/s26-001', bad);
-  assert.deepEqual(await repo.getRecord('c1', 'l1', 's26-001'), { memo: '', level: null, learned: 'あ'.repeat(2000), question: '', updatedAt: 0, attachments: [] });
+  assert.deepEqual(await repo.getRecord('c1', 'l1', 's26-001'), { memo: '', level: null, learned: 'あ'.repeat(2000), question: '', updatedAt: 0, attachments: [], ink: {}, inkCleared: {} });
   await repo.saveRecord('c1', 'l1', 's26-001', bad, 5000);
   assert.deepEqual(await mem.get('records/c1/l1/s26-001'), { memo: '', learned: 'あ'.repeat(2000), question: '', updatedAt: 5000 });
   for (const updatedAt of [undefined, null, NaN, Infinity]) {
@@ -815,4 +815,138 @@ test('reserveIds: 断られつづけたら、3 回でやめて denied を伝え�
   const net = { get: async () => 0, update: async () => { updates += 1; throw new NetError('denied'); } };
   await assert.rejects(createRepo(net).reserveIds(26, 1, 0), (e) => e.code === 'denied');
   assert.equal(updates, 3);
+});
+
+
+test('手書き目録: getRecord と listRecords は不正値を落とし、境界値を返す', async () => {
+  const index = { fileId: 'file-ink', bytes: 400000, strokes: 2000, updatedAt: 10 };
+  const bad = [null, [], {}, { ...index, fileId: '' }, { ...index, fileId: 1 }, { ...index, fileId: 'x'.repeat(201) },
+    { ...index, bytes: '1' }, { ...index, bytes: -1 }, { ...index, bytes: 400001 }, { ...index, bytes: Infinity },
+    { ...index, strokes: 0 }, { ...index, strokes: 1.5 }, { ...index, strokes: 2001 }, { ...index, strokes: '1' },
+    { ...index, updatedAt: '10' }, { ...index, updatedAt: NaN }];
+  for (const value of bad) {
+    const repo = createRepo({ get: async (p) => p.endsWith('/s26-001')
+      ? { ink: { memo: index, learned: value, other: index } }
+      : { 's26-001': { ink: { memo: index, learned: value, other: index } } } });
+    assert.deepEqual((await repo.getRecord('c1', 'l1', 's26-001')).ink, { memo: index });
+    assert.deepEqual((await repo.listRecords('c1', 'l1'))['s26-001'].ink, { memo: index });
+  }
+  const { repo } = setup({ records: { c1: { l1: { 's26-001': { memo: '文字' } } } } });
+  assert.deepEqual((await repo.getRecord('c1', 'l1', 's26-001')).ink, {});
+  assert.deepEqual((await repo.listRecords('c1', 'l1'))['s26-001'].ink, {});
+});
+
+test('手書き目録: 1 回の update で目録・削除時刻・画像を書き、undefined は画像を維持', async () => {
+  const original = { memo: '文字', learned: '学び', question: '問い', level: 3, updatedAt: 5,
+    attachments: { a1: { type: 'image', fileId: 'photo', bytes: 3, addedAt: 1 } } };
+  const { repo, mem, calls } = setup({ records: { c1: { l1: { 's26-001': original } } }, marks: { 's26-001': { c1: { l1: 3 } } } });
+  const index = { fileId: 'ink', bytes: 0, strokes: 1 };
+  for (const field of ['learned', 'question']) {
+    for (const thumb of ['data:image/png;base64,AQID', undefined, null]) {
+      const before = calls.update.length;
+      await repo.setInk('c1', 'l1', 's26-001', field, index, thumb, 20);
+      const patch = { ['records/c1/l1/s26-001/ink/' + field]: { ...index, updatedAt: 20 }, ['records/c1/l1/s26-001/inkCleared/' + field]: null };
+      if (thumb !== undefined) patch[`inkThumbs/c1/l1/${field}/s26-001`] = thumb;
+      assert.deepEqual(calls.update[before], ['', patch]);
+      assert.equal(calls.update.length, before + 1);
+      assert.equal((await repo.listInkThumbs('c1', 'l1', field))['s26-001'], thumb === null ? undefined : 'data:image/png;base64,AQID');
+      const { ink, inkCleared, ...record } = await mem.get('records/c1/l1/s26-001');
+      assert.deepEqual(record, original);
+      assert.equal(await mem.get('marks/s26-001/c1/l1'), 3);
+    }
+    await repo.setInk('c1', 'l1', 's26-001', field, index, 'data:image/png;base64,AQID', 20);
+    await repo.removeInk('c1', 'l1', 's26-001', field, 30);
+    assert.deepEqual(calls.update.at(-1), ['', {
+      ['records/c1/l1/s26-001/ink/' + field]: null, ['records/c1/l1/s26-001/inkCleared/' + field]: 30, [`inkThumbs/c1/l1/${field}/s26-001`]: null,
+    }]);
+    assert.equal(await mem.get(`inkThumbs/c1/l1/${field}/s26-001`), null);
+    assert.equal(await mem.get(`records/c1/l1/s26-001/ink/${field}`), null);
+    await repo.removeInk('c1', 'l1', 's26-001', field, 30);
+  }
+  const before = writes(calls);
+  for (const field of ['other', '', 'memo/x', undefined]) {
+    await assert.rejects(repo.setInk('c1', 'l1', 's26-001', field, index, null, 20), TypeError);
+    await assert.rejects(repo.removeInk('c1', 'l1', 's26-001', field, 30), TypeError);
+  }
+  assert.equal(writes(calls), before);
+});
+
+test('手書きの削除時刻: getRecord と listRecords は 3 欄の数だけを返す', async () => {
+  for (const value of [undefined, null, [], 1, '20', { memo: 0, learned: 20, question: 30, other: 40 },
+    { memo: '20', learned: Infinity, question: NaN }, { memo: false, learned: {}, question: [] }]) {
+    const repo = createRepo({ get: async (path) => path.endsWith('/s26-001')
+      ? { inkCleared: value } : { 's26-001': { inkCleared: value } } });
+    const expected = value?.memo === 0 ? { memo: 0, learned: 20, question: 30 } : {};
+    assert.deepEqual((await repo.getRecord('c1', 'l1', 's26-001')).inkCleared, expected);
+    assert.deepEqual((await repo.listRecords('c1', 'l1'))['s26-001'].inkCleared, expected);
+  }
+});
+
+test('手書きの削除時刻: 消すと残り、新しく保存すると同じ update で消える。不正時刻は書かない', async () => {
+  const { repo, mem, calls } = setup();
+  for (const field of ['memo', 'learned', 'question']) {
+    await repo.removeInk('c1', 'l1', 's26-001', field, 30);
+    assert.equal(await mem.get(`records/c1/l1/s26-001/inkCleared/${field}`), 30);
+    await repo.setInk('c1', 'l1', 's26-001', field, { fileId: 'new', bytes: 42, strokes: 1 }, null, 40);
+    assert.equal(await mem.get(`records/c1/l1/s26-001/inkCleared/${field}`), null);
+    assert.equal((await repo.getRecord('c1', 'l1', 's26-001')).ink[field].updatedAt, 40);
+  }
+  const before = writes(calls);
+  for (const now of [undefined, null, '30', NaN, Infinity, -Infinity, {}, [], false]) {
+    await assert.rejects(repo.removeInk('c1', 'l1', 's26-001', 'memo', now), TypeError);
+  }
+  assert.equal(writes(calls), before);
+});
+
+test('手書きメモ: 画像の引数にかかわらず目録だけを保存・削除し、画像には触らない', async () => {
+  const initial = {
+    inkThumbs: { c1: { l1: { learned: { 's26-001': '学びの画像' }, question: { 's26-001': '問いの画像' } } } },
+    recThumbs: { c1: { l1: { 's26-001': { a1: '添付の画像' } } } },
+  };
+  const { repo, mem, calls } = setup(initial);
+  const index = { fileId: 'ink', bytes: 10, strokes: 1 };
+  for (const thumb of ['data:image/png;base64,AQID', null, undefined, 42, false, {}]) {
+    await repo.setInk('c1', 'l1', 's26-001', 'memo', index, thumb, 20);
+    assert.deepEqual(calls.update.at(-1), ['', { 'records/c1/l1/s26-001/ink/memo': { ...index, updatedAt: 20 }, 'records/c1/l1/s26-001/inkCleared/memo': null }]);
+    assert.deepEqual(await mem.get('inkThumbs'), initial.inkThumbs);
+    assert.deepEqual(await mem.get('recThumbs'), initial.recThumbs);
+  }
+  for (let i = 0; i < 2; i++) {
+    await repo.removeInk('c1', 'l1', 's26-001', 'memo', 30);
+    assert.deepEqual(calls.update.at(-1), ['', { 'records/c1/l1/s26-001/ink/memo': null, 'records/c1/l1/s26-001/inkCleared/memo': 30 }]);
+    assert.equal(await mem.get('records/c1/l1/s26-001/ink/memo'), null);
+    assert.deepEqual(await mem.get('inkThumbs'), initial.inkThumbs);
+    assert.deepEqual(await mem.get('recThumbs'), initial.recThumbs);
+  }
+});
+
+test('listInkThumbs: 1 つの欄を 1 回で読み、文字以外を落とし、書きこまない', async () => {
+  for (const field of ['learned', 'question']) {
+    const values = { 's26-001': 'data:image/png;base64,AQID', 's26-002': 'x'.repeat(20000),
+      's26-003': 3, 's26-004': {}, 's26-005': [], 's26-006': false };
+    const { repo, calls } = setup({ inkThumbs: { c1: { l1: { [field]: values } } } });
+    assert.deepEqual(await repo.listInkThumbs('c1', 'l1', field), { 's26-001': values['s26-001'], 's26-002': values['s26-002'] });
+    assert.deepEqual(calls.get, [[`inkThumbs/c1/l1/${field}`]]);
+    assert.deepEqual(await repo.listInkThumbs('c1', 'missing', field), {});
+    assert.equal(writes(calls), 0);
+  }
+  for (const value of [null, [], 3, false, '不正な一覧']) {
+    const repo = createRepo({ get: async () => value });
+    assert.deepEqual(await repo.listInkThumbs('c1', 'l1', 'learned'), {});
+  }
+});
+
+test('listInkThumbs: 不正な欄やキーは通信せず TypeError。読み取り失敗は呼び出し元へ返す', async () => {
+  const { repo, calls } = setup();
+  for (const field of ['memo', 'other', '', 'learned/x', null, undefined, 1]) {
+    await assert.rejects(repo.listInkThumbs('c1', 'l1', field), TypeError);
+  }
+  for (const key of ['', 'bad/key', 'bad.key', null, undefined]) {
+    await assert.rejects(repo.listInkThumbs(key, 'l1', 'learned'), TypeError);
+    await assert.rejects(repo.listInkThumbs('c1', key, 'question'), TypeError);
+  }
+  assert.deepEqual(calls.get, []);
+  assert.equal(writes(calls), 0);
+  const error = new NetError('network');
+  await assert.rejects(createRepo({ get: async () => { throw error; } }).listInkThumbs('c1', 'l1', 'learned'), (e) => e === error);
 });

@@ -33,6 +33,16 @@ export async function resendDrafts({ repo, drafts, studentId, max, queue }) {
   return result;
 }
 
-export function pendingLessons(drafts, studentId, classId) {
-  return new Set(drafts.list(studentId).filter((draft) => draft.classId === classId).map((draft) => draft.lessonId));
+function allDrafts(drafts, studentId, inkDrafts) {
+  return [...drafts.list(studentId), ...(inkDrafts?.list(studentId) ?? [])];
+}
+
+export function pendingLessonCount(drafts, studentId, inkDrafts) {
+  return new Set(allDrafts(drafts, studentId, inkDrafts)
+    .map((draft) => JSON.stringify([draft.classId, draft.lessonId]))).size;
+}
+
+export function pendingLessons(drafts, studentId, classId, inkDrafts) {
+  return new Set(allDrafts(drafts, studentId, inkDrafts)
+    .filter((draft) => draft.classId === classId).map((draft) => draft.lessonId));
 }

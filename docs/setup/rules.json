@@ -139,6 +139,33 @@
                 }
               }
             },
+            "inkCleared": {
+              ".validate": "newData.hasChildren()",
+              "$field": {
+                ".validate": "($field === 'memo' || $field === 'learned' || $field === 'question') && newData.isNumber() && (!data.exists() || newData.val() > data.val()) && (!data.parent().parent().child('ink').child($field).exists() || newData.val() > data.parent().parent().child('ink').child($field).child('updatedAt').val())"
+              }
+            },
+            "ink": {
+              ".validate": "newData.hasChildren()",
+              "$field": {
+                ".validate": "($field === 'memo' || $field === 'learned' || $field === 'question') && newData.hasChildren(['fileId', 'bytes', 'strokes', 'updatedAt']) && (!data.exists() || newData.child('updatedAt').val() > data.child('updatedAt').val()) && (!data.parent().parent().child('inkCleared').child($field).exists() || newData.child('updatedAt').val() > data.parent().parent().child('inkCleared').child($field).val())",
+                "fileId": {
+                  ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 200"
+                },
+                "bytes": {
+                  ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 400000"
+                },
+                "strokes": {
+                  ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 2000 && newData.val() % 1 === 0"
+                },
+                "updatedAt": {
+                  ".validate": "newData.isNumber()"
+                },
+                "$other": {
+                  ".validate": false
+                }
+              }
+            },
             "$other": {
               ".validate": false
             }
@@ -156,6 +183,21 @@
             ".validate": "newData.hasChildren()",
             "$aid": {
               ".validate": "$aid.matches(/^a[1-6]$/) && newData.isString() && newData.val().length <= 20000"
+            }
+          }
+        }
+      }
+    },
+    "inkThumbs": {
+      "$classId": {
+        "$lessonId": {
+          "$field": {
+            ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+            ".validate": "$field === 'learned' || $field === 'question'",
+            "$sid": {
+              ".read": "auth != null && root.child('accounts').child(auth.uid).val() === $sid",
+              ".write": "auth != null && root.child('accounts').child(auth.uid).val() === $sid && root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true && root.child('lessons').child($classId).child($lessonId).exists()",
+              ".validate": "newData.isString() && newData.val().length <= 20000"
             }
           }
         }

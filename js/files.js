@@ -1,7 +1,7 @@
 // 先生の資料と生徒の添付を GAS から取り出し、同じファイルは端末の取り置きから返す。
 import { NetError } from './errors.js';
 
-export function createFiles({ gas, cache, atob = globalThis.atob, Blob = globalThis.Blob }) {
+export function createFiles({ gas, cache, atob = globalThis.atob, btoa = globalThis.btoa, Blob = globalThis.Blob }) {
   let generation = 0;
 
   function toBlob({ mime, dataB64 }) {
@@ -13,6 +13,16 @@ export function createFiles({ gas, cache, atob = globalThis.atob, Blob = globalT
     } catch {
       throw new NetError('unknown');
     }
+  }
+
+  async function loadStudentFile(fileId) {
+    const current = generation;
+    const cached = await cache.get(fileId);
+    if (cached) return cached;
+    const response = await gas.call('getStudentFile', { fileId });
+    const blob = toBlob(response);
+    if (current === generation) await cache.put(fileId, blob);
+    return blob;
   }
 
   return {
@@ -61,14 +71,13 @@ export function createFiles({ gas, cache, atob = globalThis.atob, Blob = globalT
       const result = await gas.call('putStudentFile', { key, classId, lessonId, mime, dataB64 });
       return { fileId: result.id, bytes: result.bytes };
     },
-    async loadStudentFile(fileId) {
-      const current = generation;
-      const cached = await cache.get(fileId);
-      if (cached) return cached;
-      const response = await gas.call('getStudentFile', { fileId });
-      const blob = toBlob(response);
-      if (current === generation) await cache.put(fileId, blob);
-      return blob;
+    loadStudentFile,
+    async uploadInk({ key, classId, lessonId, text }) {
+      const result = await gas.call('putStudentFile', { key, classId, lessonId, mime: 'application/json', dataB64: btoa(text) });
+      return { fileId: result.id, bytes: result.bytes };
+    },
+    async loadInk(fileId) {
+      return (await loadStudentFile(fileId)).text();
     },
     async trashStudent(fileId) {
       const result = await gas.call('trashStudentFile', { fileId });

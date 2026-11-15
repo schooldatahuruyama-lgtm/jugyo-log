@@ -158,3 +158,27 @@ test('生徒のファイル: 全消去前の取得が遅れて終わっても取
   await loading;
   assert.equal(await cache.get('student-file'), null);
 });
+
+
+test('手書き: ASCII JSON を base64 で保存し、読み取り・取り置き・片付けを共用する', async () => {
+  const text = '{"v":1,"h":400,"s":[{"c":0,"w":0,"p":[0,0,1,1]}]}';
+  const dataB64 = Buffer.from(text).toString('base64');
+  const { files, calls, cache } = make((op) => op === 'putStudentFile'
+    ? { id: 'ink-file', bytes: text.length }
+    : op === 'getStudentFile' ? { mime: 'application/json', dataB64 } : { trashed: true });
+  assert.deepEqual(await files.uploadInk({ key: 'ink-test-1', classId: 'c1', lessonId: 'l1', text }), { fileId: 'ink-file', bytes: text.length });
+  assert.deepEqual(calls[0], { op: 'putStudentFile', payload: { key: 'ink-test-1', classId: 'c1', lessonId: 'l1', mime: 'application/json', dataB64 } });
+  assert.equal(await files.loadInk('ink-file'), text);
+  assert.equal(await files.loadInk('ink-file'), text);
+  assert.equal((await files.loadStudentFile('ink-file')).type, 'application/json');
+  assert.equal(calls.length, 2);
+  await files.trashStudent('ink-file');
+  assert.equal(await cache.get('ink-file'), null);
+});
+
+test('手書き: 保存・読み取りの通信失敗を返す', async () => {
+  const error = new NetError('network');
+  const { files } = make(() => { throw error; });
+  await assert.rejects(files.uploadInk({ key: 'ink-test-1', classId: 'c1', lessonId: 'l1', text: '{}' }), (e) => e === error);
+  await assert.rejects(files.loadInk('file'), (e) => e === error);
+});

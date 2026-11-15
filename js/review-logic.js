@@ -6,7 +6,17 @@ import { sortLessons, todayString } from './lesson-logic.js';
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 const listOf = (v) => (Array.isArray(v) ? v.filter(isObj) : []);
-const recordOf = (v) => normalizeRecord(v, { max: CONFIG.recordTextMax });
+const recordOf = (v) => {
+  const record = normalizeRecord(v, { max: CONFIG.recordTextMax });
+  const ink = Object.fromEntries((isObj(v) && isObj(v.ink) ? Object.entries(v.ink) : [])
+    .filter(([field, index]) => CONFIG.inkFields.includes(field) && isObj(index)
+      && typeof index.fileId === 'string' && index.fileId.length > 0 && index.fileId.length <= 200
+      && isNum(index.bytes) && index.bytes >= 0 && index.bytes <= 400000
+      && Number.isInteger(index.strokes) && index.strokes >= 1 && index.strokes <= 2000
+      && isNum(index.updatedAt)));
+  if (Object.keys(ink).length) record.ink = ink;
+  return record;
+};
 const byId = (a, b) => (a.studentId < b.studentId ? -1 : a.studentId > b.studentId ? 1 : 0);
 
 export function reviewPeople(members, records) {
@@ -74,17 +84,21 @@ export function reviewRows(people, options = {}) {
   const field = options?.field === 'learned' ? 'learned' : 'question';
   const rows = listOf(people).map(({ studentId, number, inRoster, record }) => {
     const value = recordOf(record);
-    return { studentId, number, inRoster, level: value.level, text: value[field] };
+    return { studentId, number, inRoster, level: value.level, text: value[field], hasInk: !!value.ink?.[field] };
   });
   // 同じ理解度なら、名簿の順番をそのまま残す
   return options?.sort === 'number' ? rows : rows.sort((a, b) => (a.level ?? 5) - (b.level ?? 5));
 }
 
 export function copyText(rows) {
-  const lines = listOf(rows)
+  const list = listOf(rows);
+  const inkCount = list.filter((r) => r.hasInk === true).length;
+  const lines = list
     .map((r) => (typeof r.text === 'string' ? r.text.trim().replace(/\s*[\r\n\u2028\u2029]\s*/g, ' ') : ''))
     .filter((text) => text !== '');
-  return { text: lines.join('\n'), count: lines.length };
+  const count = lines.length;
+  if (inkCount > 0) lines.push(`（手書き ${inkCount} 件は含まれていません）`);
+  return { text: lines.join('\n'), count, inkCount };
 }
 
 export function neighbors(people, studentId) {

@@ -3,12 +3,14 @@ import { el } from '../ui.js';
 import { CONFIG } from '../config.js';
 import { dateLabel } from '../lesson-logic.js';
 import { normalizeRecord } from '../record-logic.js';
+import { loadInkFlow } from '../ink-flow.js';
 import { reviewPeople, neighbors, levelLabel } from '../review-logic.js';
 import { teacherNav } from './parts/teacher-nav.js';
 import { materialPane } from './parts/material-pane.js';
 import { attachmentPane } from './parts/attachment-pane.js';
 import { headingIcon } from './parts/heading-icon.js';
 import { termRow } from './parts/term-row.js';
+import { inkPad } from './parts/ink-pad.js';
 
 function updatedLabel(value) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '';
@@ -26,6 +28,8 @@ export function mount(root, ctx) {
   let materials = null;
   let attachments = null;
   let terms = null;
+  let inkQueue = Promise.resolve();
+  const inkPads = new Set();
   let adjacent = { prev: null, next: null };
   const goList = () => ctx.navigate('t-review', { classId, lessonId });
   const move = (id) => { if (alive && !loading && id) void ctx.navigate('t-record', { classId, lessonId, studentId: id }); };
@@ -62,11 +66,70 @@ export function mount(root, ctx) {
         el('button', { type: 'button', class: 'btn', text: '‹ 一覧へ', onclick: goList }), previous, next),
       titleArea, pageMessage, content)));
 
-  function showRecord(person, savedAttachments) {
+  function destroyInk() {
+    for (const pad of inkPads) pad.destroy();
+    inkPads.clear();
+  }
+
+  function recordField(value, index, field, label, stale) {
+    const area = el('dd', {}, value.trim() || !index
+      ? el('div', { class: 'review-text', text: value.trim() ? value : '（まだ書いていません）' }) : null);
+    if (!index) return area;
+    const inkArea = el('div', { class: 'record-ink' });
+    area.append(inkArea);
+    let pending = false;
+    async function reloadIndex() {
+      const record = await ctx.repo.getRecord(classId, lessonId, studentId);
+      if (!stale()) index = record?.ink?.[field] ?? null;
+    }
+    function loadInk(refresh = false) {
+      if (stale() || pending) return;
+      pending = true;
+      inkArea.replaceChildren(el('p', { class: 'small', role: 'status', text: '手書きを読みこんでいます…' }));
+      // 再試行も同じ列に並べ、3 つの欄の GAS を同時に呼ばない。
+      inkQueue = inkQueue.then(async () => {
+        if (stale()) return;
+        try {
+          if (refresh) await reloadIndex();
+          if (stale()) return;
+          let ink;
+          if (index) {
+            try {
+              ink = await loadInkFlow({ files: ctx.files, fileId: index.fileId });
+            } catch (error) {
+              if (refresh || error?.code !== 'notfound' || stale()) throw error;
+              // 最初の読みこみで入れかわったファイルは、目録から 1 回だけ読み直す。
+              await reloadIndex();
+              if (stale()) return;
+              if (index) ink = await loadInkFlow({ files: ctx.files, fileId: index.fileId });
+            }
+          }
+          if (stale()) return;
+          if (!index) {
+            inkArea.remove();
+            if (!value.trim()) area.append(el('div', { class: 'review-text', text: '（まだ書いていません）' }));
+            return;
+          }
+          const pad = inkPad({ ink, readOnly: true, label: `${label}の手書き` });
+          inkPads.add(pad);
+          inkArea.replaceChildren(pad.node);
+        } catch (error) {
+          if (stale()) return;
+          inkArea.replaceChildren(el('p', { class: 'error', role: 'alert', text: error?.code === 'notfound'
+            ? '手書きが見つかりませんでした。' : '手書きを読みこめませんでした。' }),
+            el('button', { type: 'button', class: 'btn', text: 'もう一度', onclick: () => loadInk(true) }));
+        } finally { pending = false; }
+      });
+    }
+    loadInk();
+    return area;
+  }
+
+  function showRecord(person, savedAttachments, stale) {
     const record = normalizeRecord(person.record, { max: CONFIG.recordTextMax });
     reflectionStatus.classList.toggle('is-complete', record.level !== null);
     reflectionStatus.textContent = record.level !== null ? '✓ 記入済み' : '！ 未記入';
-    const text = (value) => value.trim() ? value : '（まだ書いていません）';
+    const field = (name, label) => recordField(record[name], person.record?.ink?.[name], name, label, stale);
     const updated = updatedLabel(person.record?.updatedAt);
     attachments?.destroy();
     attachments = attachmentPane({ ctx, classId, lessonId, studentId,
@@ -74,16 +137,16 @@ export function mount(root, ctx) {
     recordArea.replaceChildren(
       ...(person.record === null ? [el('p', { class: 'notice', text: 'この生徒は、まだ何も書いていません。' })] : []),
       el('dl', { class: 'record-values' },
-        el('dt', { text: 'メモ' }), el('dd', { class: 'review-text', text: text(record.memo) }),
+        el('dt', { text: 'メモ' }), field('memo', 'メモ'),
         el('dt', { text: '写真・PDF' }), el('dd', {}, attachments.node)));
     reflectionArea.replaceChildren(
       el('dl', { class: 'record-values' },
         el('dt', { text: '理解度' }), el('dd', { text: levelLabel(record.level) })),
       el('div', { class: 'student-reflection-fields' },
         el('dl', { class: 'record-values' },
-          el('dt', { text: '分かったこと・学んだこと' }), el('dd', { class: 'review-text', text: text(record.learned) })),
+          el('dt', { text: '分かったこと・学んだこと' }), field('learned', '分かったこと')),
         el('dl', { class: 'record-values' },
-          el('dt', { text: '疑問・まだ分からないこと' }), el('dd', { class: 'review-text', text: text(record.question) }))),
+          el('dt', { text: '疑問・まだ分からないこと' }), field('question', '疑問'))),
       ...(updated ? [el('p', { class: 'small', text: `最後に書いた日時：${updated}` })] : []));
   }
 
@@ -91,6 +154,7 @@ export function mount(root, ctx) {
     if (!alive || loading) return;
     const current = ++loadId;
     const stale = () => !alive || current !== loadId;
+    destroyInk();
     loading = true;
     previous.disabled = true;
     next.disabled = true;
@@ -121,7 +185,7 @@ export function mount(root, ctx) {
       const label = !person.inRoster ? '名簿にいない生徒' : person.number === null ? '出席番号なしの生徒' : `${person.number} 番`;
       personHeading.textContent = `${label}の記録（読み取り専用）`;
       identity.textContent = `生徒 ID：${person.studentId}`;
-      showRecord(person, recordsResult.value?.[studentId]?.attachments);
+      showRecord(person, recordsResult.value?.[studentId]?.attachments, stale);
       materials?.destroy();
       materials = materialPane({ ctx, classId, lessonId, lesson });
       materialsArea.replaceChildren(materials.node);
@@ -145,5 +209,5 @@ export function mount(root, ctx) {
   }
 
   void load();
-  return () => { alive = false; loadId += 1; materials?.destroy(); attachments?.destroy(); terms?.destroy(); };
+  return () => { alive = false; loadId += 1; destroyInk(); materials?.destroy(); attachments?.destroy(); terms?.destroy(); };
 }
