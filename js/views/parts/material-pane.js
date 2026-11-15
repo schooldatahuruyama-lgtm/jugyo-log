@@ -4,8 +4,10 @@ import { CONFIG } from '../../config.js';
 import { materialList } from '../../lesson-logic.js';
 import { swipeDecision, stepIndex } from '../../student-list-logic.js';
 import { openViewer } from './viewer.js';
+import { pictureInks } from './picture-ink.js';
 
-export function materialPane({ ctx, classId, lessonId, lesson }) {
+export function materialPane({ ctx, classId, lessonId, lesson, studentId, ink, inkCleared,
+  readOnly = true, onState }) {
   let alive = true;
   let viewer = null;
   let index = 0;
@@ -22,6 +24,14 @@ export function materialPane({ ctx, classId, lessonId, lesson }) {
   const prev = el('button', { type: 'button', class: 'btn lesson-tile-arrow', 'aria-label': '前の資料', text: '‹' });
   const next = el('button', { type: 'button', class: 'btn lesson-tile-arrow', 'aria-label': '次の資料', text: '›' });
   const controls = el('div', { class: 'student-material-controls' }, prev, dots, next);
+  const badge = el('span', { class: 'picture-ink-badge', text: '✎ 書きこみあり', hidden: true });
+  const photoFor = (material) => ({ place: material.id, fileId: material.fileId, type: material.type, label: material.name });
+  const inks = pictureInks({ ctx, classId, lessonId, studentId, ink, inkCleared, readOnly, onState, onChange: syncBadge });
+
+  function syncBadge() {
+    const item = currentItem();
+    badge.hidden = !item || !inks.has(photoFor(item.material));
+  }
 
   function listen(target, type, handler) {
     target.addEventListener(type, handler, { signal: events.signal });
@@ -35,6 +45,7 @@ export function materialPane({ ctx, classId, lessonId, lesson }) {
     viewer?.close();
     const { material } = item;
     viewer = openViewer({ title: material.name, kind: material.type,
+      pictureInk: () => inks.get(photoFor(material)),
       load: () => material.type === 'pdf' ? ctx.files.loadFile(classId, lessonId, material) : item.blob });
   }
 
@@ -51,7 +62,8 @@ export function materialPane({ ctx, classId, lessonId, lesson }) {
     frame.replaceChildren(item.preview);
     frame.setAttribute('aria-label', `${kind} ${item.material.name} を開く${materials.length > 1 ? `（${index + 1} / ${materials.length}）` : ''}`);
     summary.replaceChildren(el('span', { class: 'small', text: kind }),
-      el('span', { class: 'material-name', text: item.material.name }));
+      el('span', { class: 'material-name', text: item.material.name }), badge);
+    syncBadge();
     messages.replaceChildren(item.message);
     if (materials.length > 1) {
       counter.textContent = `${index + 1} / ${materials.length}`;
@@ -196,6 +208,7 @@ export function materialPane({ ctx, classId, lessonId, lesson }) {
     materialsArea.replaceChildren(...[frame,
       el('div', { class: 'student-material-caption' }, summary, materials.length > 1 ? counter : null),
       materials.length > 1 ? controls : null, messages].filter(Boolean));
+    inks.restore(materials.map(photoFor));
     showCurrent();
     void loadThumbs();
     void loadImages(materials.filter((material) => material.type === 'image'));
@@ -203,11 +216,18 @@ export function materialPane({ ctx, classId, lessonId, lesson }) {
 
   return {
     node: materialsArea,
+    get dirty() { return inks.dirty; },
+    get state() { return inks.state; },
+    flush: () => inks.flush(),
+    retry: () => inks.retry(),
+    setLocked: (value) => inks.setLocked(value),
+    refreshInk: (next, cleared) => inks.refreshInk(next, cleared),
     destroy() {
       alive = false;
       events.abort();
       releasePointer();
       viewer?.close();
+      inks.destroy();
       viewer = null;
       for (const item of materialViews.values()) clearImage(item);
       materialViews.clear();

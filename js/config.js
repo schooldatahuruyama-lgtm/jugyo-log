@@ -44,7 +44,7 @@ export const CONFIG = {
   gas: { timeoutMs: 60000, maxTries: 3, retryBaseMs: 1500 },
   // 手書き: 紙の幅と 1 枚ぶんの高さ（座標の単位）、上限、保存の待ち時間
   ink: {
-    width: 800, pageHeight: 400, maxPages: 10,
+    width: 800, pageHeight: 400, maxPages: 10, pictureMinHeight: 100,
     maxStrokes: 2000, maxPoints: 2000, maxBytes: 250000,
     colors: ['#111111', '#C8402F', '#0B57B0'], widths: [3, 7],
     eraserRadius: 10, simplifyTolerance: 0.6, snapRatio: 0.0875, undoMax: 30,

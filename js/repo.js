@@ -6,6 +6,7 @@ import { formatStudentId } from './ids.js';
 import { sortLessons, sortUnits } from './lesson-logic.js';
 import { normalizeRecord, tileMark, attachmentList } from './record-logic.js';
 import { CONFIG } from './config.js';
+import { inkPlaceKind } from './ink-logic.js';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -24,26 +25,28 @@ function attachmentSlot(slot) {
 }
 
 function inkField(field) {
-  if (!CONFIG.inkFields.includes(field)) throw new TypeError('手書きの欄が正しくありません。');
+  if (inkPlaceKind(field) === null) throw new TypeError('手書きの場所が正しくありません。');
   return field;
 }
 
 function toInk(value) {
   const out = {};
   for (const [field, index] of isObj(value) ? Object.entries(value) : []) {
-    if (!CONFIG.inkFields.includes(field) || !isObj(index)) continue;
-    const { fileId, bytes, strokes, updatedAt } = index;
+    const kind = inkPlaceKind(field);
+    if (kind === null || !isObj(index)) continue;
+    const { fileId, bytes, strokes, updatedAt, on } = index;
     if (typeof fileId !== 'string' || fileId.length < 1 || fileId.length > 200
       || !isNum(bytes) || bytes < 0 || bytes > 400000
       || !Number.isInteger(strokes) || strokes < 1 || strokes > 2000 || !isNum(updatedAt)) continue;
-    out[field] = { fileId, bytes, strokes, updatedAt };
+    if (kind !== 'field' && (typeof on !== 'string' || on.length < 1 || on.length > 200)) continue;
+    out[field] = { fileId, bytes, strokes, updatedAt, ...(kind !== 'field' ? { on } : {}) };
   }
   return out;
 }
 
 function toInkCleared(value) {
   return Object.fromEntries((isObj(value) ? Object.entries(value) : [])
-    .filter(([field, time]) => CONFIG.inkFields.includes(field) && isNum(time)));
+    .filter(([field, time]) => inkPlaceKind(field) !== null && isNum(time)));
 }
 
 function termSlot(slot) {
@@ -276,17 +279,25 @@ export function createRepo(net) {
       await net.update('', patch);
     },
 
-    async removeAttachment(classId, lessonId, studentId, slot) {
+    async removeAttachment(classId, lessonId, studentId, slot, clearedAt) {
+      if (clearedAt !== undefined && !isNum(clearedAt)) throw new TypeError('手書きを消した時刻が正しくありません。');
       const path = `${key(classId)}/${key(lessonId)}/${key(studentId)}`;
       const aid = attachmentSlot(slot);
-      await net.update('', { [`records/${path}/attachments/${aid}`]: null, [`recThumbs/${path}/${aid}`]: null });
+      const patch = { [`records/${path}/attachments/${aid}`]: null, [`recThumbs/${path}/${aid}`]: null };
+      if (clearedAt !== undefined) {
+        patch[`records/${path}/ink/${aid}`] = null;
+        patch[`records/${path}/inkCleared/${aid}`] = clearedAt;
+      }
+      await net.update('', patch);
     },
 
     // undefined は画像を維持し、null は消す。メモの画像と文字の記録・更新日時・印には触らない。
-    async setInk(classId, lessonId, studentId, field, { fileId, bytes, strokes }, thumb, now) {
+    async setInk(classId, lessonId, studentId, field, { fileId, bytes, strokes, on }, thumb, now) {
       const path = `${key(classId)}/${key(lessonId)}/${key(studentId)}`;
       const name = inkField(field);
-      const patch = { [`records/${path}/ink/${name}`]: { fileId, bytes, strokes, updatedAt: now },
+      const picture = inkPlaceKind(name) !== 'field';
+      if (picture && typeof on !== 'string') throw new TypeError('書きこみ先の写真が正しくありません。');
+      const patch = { [`records/${path}/ink/${name}`]: { fileId, bytes, strokes, updatedAt: now, ...(picture ? { on } : {}) },
         [`records/${path}/inkCleared/${name}`]: null };
       if (CONFIG.inkThumbFields.includes(name) && thumb !== undefined) {
         patch[`inkThumbs/${classId}/${lessonId}/${name}/${studentId}`] = typeof thumb === 'string' ? thumb : null;

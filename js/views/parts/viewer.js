@@ -2,7 +2,7 @@
 import { el } from '../../ui.js';
 import { openPdf } from '../../pdf.js';
 
-export function openViewer({ title, kind, load }) {
+export function openViewer({ title, kind, load, pictureInk = null }) {
   const opener = document.activeElement;
   let closed = false;
   let generation = 0;
@@ -14,9 +14,14 @@ export function openViewer({ title, kind, load }) {
   let pageNo = 1;
   let busy = false;
   let drag = null;
+  let writing = false;
+  let ink = null;
+  let unsubscribeInk = null;
 
   const dlg = el('dialog', { class: 'material-viewer', 'aria-label': title });
   const stage = el('div', { class: 'viewer-stage' });
+  const pictureFrame = el('div', { class: 'viewer-picture' });
+  const inkArea = el('div', { class: 'viewer-ink', hidden: true });
   const viewport = el('div', { class: 'viewer-viewport', tabindex: '0', 'aria-label': '資料の表示。大きな画像は動かせます。' }, stage);
   const message = el('div', { class: 'viewer-message', role: 'status', 'aria-live': 'polite' });
   const minus = el('button', { type: 'button', class: 'btn', text: '－', 'aria-label': '縮小する', onclick: () => changeZoom(-0.25) });
@@ -26,10 +31,28 @@ export function openViewer({ title, kind, load }) {
   const next = el('button', { type: 'button', class: 'btn', text: '次のページ', onclick: () => showPage(pageNo + 1) });
   const pageLabel = el('span', { class: 'viewer-counter', 'aria-live': 'polite' });
   const closeBtn = el('button', { type: 'button', class: 'btn', text: '閉じる', onclick: close });
+  const writeBtn = el('button', { type: 'button', class: 'btn viewer-write', text: '✎ 書きこむ', hidden: true,
+    'aria-pressed': 'false', onclick: () => {
+      if (!ink?.editable) return;
+      writing = !writing;
+      drag = null;
+      ink.setEditing(writing);
+      syncInk();
+      sizePicture();
+    } });
   dlg.append(
     el('header', { class: 'viewer-header' }, el('h2', { text: title }), closeBtn),
-    el('div', { class: 'viewer-controls' }, kind === 'pdf' ? [previous, pageLabel, next] : [minus, zoomLabel, plus]),
-    message, viewport);
+    el('div', { class: 'viewer-controls' }, kind === 'pdf' ? [previous, pageLabel, next] : [minus, zoomLabel, plus, writeBtn]),
+    message, inkArea, viewport);
+
+  function syncInk() {
+    if (closed) return;
+    if (writing && !ink?.editable) { writing = false; ink?.setEditing(false); }
+    writeBtn.hidden = !ink || ink.readOnly;
+    writeBtn.disabled = !ink?.editable;
+    writeBtn.setAttribute('aria-pressed', String(writing));
+    viewport.classList.toggle('viewer-can-drag', zoom > 1 && !writing);
+  }
 
   function syncControls() {
     minus.disabled = busy || !picture || zoom <= 1;
@@ -46,7 +69,7 @@ export function openViewer({ title, kind, load }) {
       Math.max(1, viewport.clientHeight - 16) / picture.naturalHeight);
     picture.style.width = `${Math.round(picture.naturalWidth * scale * zoom)}px`;
     picture.style.height = `${Math.round(picture.naturalHeight * scale * zoom)}px`;
-    viewport.classList.toggle('viewer-can-drag', zoom > 1);
+    viewport.classList.toggle('viewer-can-drag', zoom > 1 && !writing);
   }
 
   function changeZoom(delta) {
@@ -62,6 +85,18 @@ export function openViewer({ title, kind, load }) {
   }
 
   function clearContent() {
+    unsubscribeInk?.();
+    unsubscribeInk = null;
+    if (ink) {
+      ink.setEditing(false);
+      void ink.flush();
+      ink.node.remove();
+      ink.overlay.remove();
+      ink = null;
+    }
+    writing = false;
+    inkArea.hidden = true;
+    writeBtn.hidden = true;
     cancelImage?.();
     cancelImage = null;
     if (picture) {
@@ -134,7 +169,8 @@ export function openViewer({ title, kind, load }) {
       } else {
         url = URL.createObjectURL(blob);
         picture = el('img', { alt: title, draggable: 'false' });
-        stage.replaceChildren(picture);
+        pictureFrame.replaceChildren(picture);
+        stage.replaceChildren(pictureFrame);
         await new Promise((resolve, reject) => {
           cancelImage = () => reject(new Error('表示を閉じました'));
           picture.onload = resolve;
@@ -146,6 +182,19 @@ export function openViewer({ title, kind, load }) {
         picture.onload = null;
         picture.onerror = null;
         message.replaceChildren();
+        if (kind === 'image' && pictureInk && Number.isFinite(picture.naturalWidth) && picture.naturalWidth > 0
+          && Number.isFinite(picture.naturalHeight) && picture.naturalHeight > 0) {
+          ink = pictureInk();
+          if (ink) {
+            ink.setEditing(false);
+            inkArea.replaceChildren(ink.node);
+            inkArea.hidden = false;
+            pictureFrame.append(ink.overlay);
+            unsubscribeInk = ink.subscribe(syncInk);
+            void ink.show({ width: picture.naturalWidth, height: picture.naturalHeight });
+            syncInk();
+          }
+        }
         sizePicture();
         viewport.scrollTop = 0;
         viewport.scrollLeft = 0;
@@ -159,7 +208,7 @@ export function openViewer({ title, kind, load }) {
 
   // 指はブラウザのスクロール、マウスとペンはドラッグで動かす。
   viewport.addEventListener('pointerdown', (ev) => {
-    if (!picture || zoom <= 1 || ev.pointerType === 'touch' || ev.button !== 0) return;
+    if (!picture || writing || zoom <= 1 || ev.pointerType === 'touch' || ev.button !== 0) return;
     drag = { id: ev.pointerId, x: ev.clientX, y: ev.clientY, left: viewport.scrollLeft, top: viewport.scrollTop };
     viewport.setPointerCapture(ev.pointerId);
     ev.preventDefault();
