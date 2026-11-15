@@ -22,6 +22,7 @@ export function inkField({ ctx, classId, lessonId, studentId, field, label, inde
   let ink = null;
   let pad = null;
   let toolState = null;
+  let gesture = false;
   let pending = null;
   let loadId = 0;
   let loadFailed = false;
@@ -141,6 +142,7 @@ export function inkField({ ctx, classId, lessonId, studentId, field, label, inde
     if (toolState) pad.setToolState(toolState);
     pad.setLocked(locked || !editing);
     if (picture) {
+      pad.setGesture(gesture);
       pad.tools.hidden = !editing || readOnly;
       overlay.replaceChildren(pad.paper);
       overlay.classList.toggle('is-editing', editing && !locked && !readOnly);
@@ -229,6 +231,8 @@ export function inkField({ ctx, classId, lessonId, studentId, field, label, inde
   return {
     node, overlay, readOnly,
     get editable() { return alive && !!pad && !readOnly && !locked && !gone; },
+    get penActive() { return pad?.penActive ?? false; },
+    setGesture(value) { if (picture) { gesture = !!value; pad?.setGesture(gesture); } },
     subscribe(fn) { subscribers.add(fn); return () => subscribers.delete(fn); },
     getToolState() { return pad?.getToolState() ?? toolState; },
     setToolState(value) { toolState = value; if (value) pad?.setToolState(value); },

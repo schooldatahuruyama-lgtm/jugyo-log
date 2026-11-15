@@ -7,7 +7,7 @@ import { createRecordQueue } from '../js/record-queue.js';
 import { pendingLessonCount, pendingLessons } from '../js/record-flow.js';
 import { emptyPictureInk, inkPagePlace, splitInkPlace } from '../js/ink-logic.js';
 import { CONFIG } from '../js/config.js';
-import { installDom, all, byClass, buttons, settle, draw } from './helpers/picture-dom.js';
+import { installDom, all, byClass, buttons, settle, draw, touch } from './helpers/picture-dom.js';
 
 const hooks = registerHooks({
   load(url, context, next) {
@@ -21,6 +21,7 @@ const hooks = registerHooks({
 const { attachmentPane } = await import('../js/views/parts/attachment-pane.js');
 const { materialPane } = await import('../js/views/parts/material-pane.js');
 const { pictureInks, canUsePictureInk, hasPictureInk } = await import('../js/views/parts/picture-ink.js');
+const { openViewer } = await import('../js/views/parts/viewer.js');
 const { mount: mountTeacher } = await import('../js/views/teacher-record.js');
 const { mount: mountStudent } = await import('../js/views/student-lesson.js');
 const { mount: mountTeacherLesson } = await import('../js/views/teacher-lesson.js');
@@ -48,21 +49,55 @@ function setup(t) {
   const storage = new Map(), timers = new Map();
   let timerId = 0, time = 100;
   const h = {
-    cleanup: (fn) => cleanups.push(fn), pageCount: 2, renders: [], renderGates: new Map(), sizes: new Map(), closedPdfs: 0,
+    cleanup: (fn) => cleanups.push(fn), pageCount: 2, renders: [], renderCalls: [], copies: [], backups: [], renderGates: new Map(), sizes: new Map(), closedPdfs: 0,
     record: { attachments: [{ slot: 'a1', type: 'pdf', fileId: pdf.fileId, addedAt: 1 }], ink: {}, inkCleared: {} },
     lesson: { title: '動作確認用の授業', date: '2026-01-01', materials: {
       [materialId]: { kind: 'handout', type: 'pdf', fileId: 'test-material', name: '動作確認用の PDF', order: 0, bytes: 10 },
     } },
     files: new Map([['test-ink', JSON.stringify(written())]]), loads: [], saves: [], removals: [], trashes: [],
     openPdf() {
-      return { pageCount: h.pageCount, async renderPage(number) {
+      return { pageCount: h.pageCount, async renderPage(number, edge) {
         h.renders.push(number);
+        h.renderCalls.push([number, edge]);
+        if (edge === 3200) {
+          if (h.sharpGate) await h.sharpGate.promise;
+          if (h.sharpError) throw new Error('test render failed');
+        }
         if (h.renderGates.has(number)) await h.renderGates.get(number).promise;
         const canvas = document.createElement('canvas');
         [canvas.width, canvas.height] = h.sizes.get(number) || (number === 1 ? [1200, 1600] : [1600, 900]);
+        if (edge === 3200) [canvas.width, canvas.height] = h.sharpSize || [canvas.width * 2, canvas.height * 2];
+        canvas.bitmap = { page: number, edge };
+        canvas.getContext = () => h.noContext ? null : {
+          drawImage: (...args) => {
+            h.copies.push({ target: canvas, args, size: [canvas.width, canvas.height] });
+            if (h.copyFailures > 0) { h.copyFailures--; throw new Error('test copy failed'); }
+            canvas.bitmap = args[0].bitmap;
+          },
+        };
         return canvas;
       }, close() { h.closedPdfs++; } };
     },
+  };
+  const createElement = document.createElement;
+  document.createElement = (tag) => {
+    const node = createElement(tag);
+    if (tag === 'canvas') {
+      // 大きさを設定すると、それまでの絵が消えることも再現する。
+      let width = 300, height = 150;
+      Object.defineProperties(node, {
+        width: { get: () => width, set: (value) => { width = value; node.bitmap = null; } },
+        height: { get: () => height, set: (value) => { height = value; node.bitmap = null; } },
+      });
+      node.getContext = () => h.noBackupContext ? null : {
+        drawImage: (...args) => {
+          h.backups.push({ target: node, args });
+          if (h.backupError) throw new Error('test backup failed');
+          node.bitmap = args[0].bitmap;
+        },
+      };
+    }
+    return node;
   };
   globalThis.pdfInkScreenTest = h;
   h.ctx = {
@@ -291,7 +326,7 @@ for (const kind of ['attachment', 'material']) {
     await open(pane, kind); assert.equal(paper(), first); assert.equal(paths(), 1);
     await turn(); assert.equal(paper(), second); assert.equal(paths(), 1);
     assert.equal(h.loads.length, 0);
-    assert.equal(buttons(viewer(), '＋').length, 0);
+    assert.equal(buttons(viewer(), '＋').length, 1);
     assert.equal(buttons(viewer(), '＋ 下に書く場所を足す').length, 0);
     close(); pane.destroy();
     const reloaded = paneFor(h, kind); await open(reloaded, kind); assert.equal(paths(), 1);
@@ -299,6 +334,272 @@ for (const kind of ['attachment', 'material']) {
     close();
   });
 }
+
+test('PDFの倍率: ボタン・ピンチ・ホイール・幅変更、ページをめくると100%と先頭に戻る', async (t) => {
+  const h = setup(t), pane = paneFor(h); await open(pane);
+  const viewport = byClass(viewer(), 'viewer-viewport')[0], frame = byClass(viewer(), 'viewer-picture')[0];
+  const label = byClass(viewer(), 'viewer-counter')[1];
+  assert.equal(frame.style.width, '804px');
+  assert.deepEqual(byClass(viewer(), 'viewer-controls')[0].children.map((node) => node.textContent),
+    ['前のページ', '1 / 2', '次のページ', '－', '100%', '＋', '✎ 書きこむ']);
+  buttons(viewer(), '＋')[0].click(); assert.equal(label.textContent, '125%');
+  assert.equal(frame.style.width, '1005px');
+  touch(viewport, 'touchstart', [[1, 300, 300], [2, 400, 300]]);
+  assert.equal(touch(viewport, 'touchmove', [[1, 300, 300], [2, 500, 300]]).defaultPrevented, true);
+  assert.equal(label.textContent, '250%'); touch(viewport, 'touchend', []);
+  const svg = paper(), box = svg.getAttribute('viewBox');
+  viewport.clientWidth = 600; window.fire('resize');
+  assert.equal(frame.style.width, '1460px'); assert.equal(label.textContent, '250%');
+  assert.equal(svg.getAttribute('viewBox'), box);
+  const wheel = { clientX: 300, clientY: 300, deltaY: -100 };
+  assert.equal(viewport.fire('wheel', wheel).defaultPrevented, false); assert.equal(label.textContent, '250%');
+  assert.equal(viewport.fire('wheel', { ...wheel, ctrlKey: true }).defaultPrevented, true);
+  assert.equal(label.textContent, '305%');
+  await turn(); assert.equal(label.textContent, '100%');
+  assert.equal(viewport.scrollLeft, 0); assert.equal(viewport.scrollTop, 0); close();
+});
+
+test('PDFの書く→ピンチ: 線を取り消し、ページ移動中も残る指では書かない', async (t) => {
+  const h = setup(t), pane = paneFor(h); await open(pane); toggle().click(); buttons(viewer(), '書く')[0].click();
+  const first = paper(), pointer = { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 200 };
+  first.fire('pointerdown', pointer); first.fire('pointermove', { ...pointer, clientX: 300 });
+  touch(first, 'touchstart', [[1, 200, 200], [2, 300, 200]]);
+  touch(first, 'touchmove', [[1, 200, 200], [2, 400, 200]]);
+  first.fire('pointerup', pointer);
+  assert.equal(paths(), 0); assert.equal(getDraft(h), null); assert.equal(buttons(viewer(), '1 つ戻す')[0].disabled, true);
+  h.renderGates.set(2, deferred()); buttons(viewer(), '次のページ')[0].click();
+  const viewport = byClass(viewer(), 'viewer-viewport')[0];
+  touch(viewport, 'touchstart', [[1, 200, 200], [2, 300, 200]]);
+  touch(viewport, 'touchmove', [[1, 200, 200], [2, 500, 200]]);
+  assert.equal(byClass(viewer(), 'viewer-counter')[1].textContent, '200%');
+  h.renderGates.get(2).resolve(); await settle();
+  draw(paper(), { type: 'touch' }); assert.equal(getDraft(h, 2), null);
+  // 元のページの接触が終わってから、新しいページで指を受けつける。
+  document.fire('touchend', { touches: [{ identifier: 1, target: first }] });
+  draw(paper(), { type: 'touch' }); assert.equal(getDraft(h, 2), null);
+  document.fire('touchend', { touches: [] });
+  draw(paper(), { type: 'touch' }); assert.equal(getDraft(h, 2).ink.s.length, 1); close();
+});
+
+test('PDFの高精細化: 150%超の停止300ms後に1回、道具・線・保存状態・倍率・位置を維持', async (t) => {
+  const h = setup(t); t.mock.timers.enable({ apis: ['setTimeout'] });
+  const pane = paneFor(h); await open(pane); toggle().click(); buttons(viewer(), '書く')[0].click();
+  control('赤').click(); control('太い').click();
+  draw(paper(), { type: 'touch' }); await pane.flush();
+  buttons(viewer(), '＋')[0].click(); buttons(viewer(), '＋')[0].click();
+  t.mock.timers.tick(500); await settle(); assert.deepEqual(h.renderCalls, [[1, 1600]]);
+  buttons(viewer(), '＋')[0].click();
+  t.mock.timers.tick(299); await settle(); assert.equal(h.renderCalls.length, 1);
+  buttons(viewer(), '＋')[0].click(); // 動いている間は300msを数え直す。
+  t.mock.timers.tick(299); await settle(); assert.equal(h.renderCalls.length, 1);
+  h.sharpGate = deferred(); t.mock.timers.tick(1); await settle();
+  assert.deepEqual(h.renderCalls, [[1, 1600], [1, 3200]]);
+  assert.equal(buttons(viewer(), '次のページ')[0].disabled, false);
+  assert.equal(toggle().disabled, false);
+  const svg = paper(), box = svg.getAttribute('viewBox'), old = byClass(viewer(), 'viewer-pdf')[0];
+  const size = { ...old.style }, label = old.getAttribute('aria-label');
+  draw(svg, { type: 'touch' });
+  const draft = structuredClone(getDraft(h)), viewport = byClass(viewer(), 'viewer-viewport')[0];
+  viewport.scrollLeft = 150; viewport.scrollTop = 240;
+  const text = viewer().textContent;
+  h.sharpSize = [2399, 3200]; h.sharpGate.resolve(); await settle();
+  const sharp = byClass(viewer(), 'viewer-pdf')[0];
+  assert.equal(sharp, old); assert.equal(sharp.height, 3200);
+  assert.deepEqual(sharp.style, size); assert.equal(sharp.getAttribute('aria-label'), label);
+  assert.equal(sharp.className, 'viewer-pdf');
+  assert.equal(h.copies.length, 1); assert.equal(h.copies[0].target, old);
+  assert.equal(h.copies[0].args[0].height, 3200); assert.deepEqual(h.copies[0].args.slice(1), [0, 0]);
+  assert.deepEqual(sharp.bitmap, { page: 1, edge: 3200 });
+  assert.equal(paper(), svg); assert.equal(svg.getAttribute('viewBox'), box); assert.equal(paths(), 2);
+  assert.deepEqual(getDraft(h), draft); assert.equal(pane.state, 'dirty'); assert.equal(h.saves.length, 1);
+  assert.equal(viewer().textContent, text); assert.equal(control('赤').getAttribute('aria-pressed'), 'true');
+  assert.equal(viewport.scrollLeft, 150); assert.equal(viewport.scrollTop, 240);
+  buttons(viewer(), '＋')[0].click(); t.mock.timers.tick(1000); await settle();
+  assert.equal(h.renderCalls.length, 2);
+  await turn(); await turn('前のページ');
+  assert.equal(byClass(viewer(), 'viewer-pdf')[0], sharp);
+  assert.equal(paper().getAttribute('viewBox'), box);
+  for (let i = 0; i < 3; i++) buttons(viewer(), '＋')[0].click();
+  t.mock.timers.tick(1000); await settle();
+  assert.equal(h.renderCalls.filter(([page, edge]) => page === 1 && edge === 3200).length, 1); close();
+});
+
+for (const failures of [1, 2]) {
+  test(`PDFの高精細化のコピーが${failures}回失敗: 元の絵を${failures === 1 ? '控えから戻す' : '読みこみ直す'}・同じページでは再試行しない`, async (t) => {
+    const h = setup(t); t.mock.timers.enable({ apis: ['setTimeout'] });
+    const pane = paneFor(h); await open(pane);
+    const canvas = byClass(viewer(), 'viewer-pdf')[0], bitmap = canvas.bitmap, svg = paper();
+    h.copyFailures = failures;
+    for (let i = 0; i < 3; i++) buttons(viewer(), '＋')[0].click();
+    const text = viewer().textContent, size = { ...canvas.style }, viewport = byClass(viewer(), 'viewer-viewport')[0];
+    viewport.scrollLeft = 150; viewport.scrollTop = 240;
+    t.mock.timers.tick(300); await settle();
+    assert.equal(h.backups.length, 1);
+    const backup = h.backups[0].target;
+    assert.deepEqual(h.backups[0].args, [canvas, 0, 0]);
+    assert.deepEqual([backup.width, backup.height], [1200, 1600]); assert.equal(backup.bitmap, bitmap);
+    assert.deepEqual([canvas.width, canvas.height], [1200, 1600]);
+    assert.equal(h.copies.length, 2); assert.ok(h.copies.every((copy) => copy.target === canvas));
+    assert.deepEqual(h.copies[0].size, [2400, 3200]);
+    assert.deepEqual(h.copies[0].args[0].bitmap, { page: 1, edge: 3200 });
+    assert.deepEqual(h.copies[1].size, [1200, 1600]); assert.deepEqual(h.copies[1].args, [backup, 0, 0]);
+    const current = byClass(viewer(), 'viewer-pdf')[0];
+    assert.deepEqual([current.width, current.height], [1200, 1600]); assert.deepEqual(current.bitmap, bitmap);
+    assert.equal(paper(), svg); assert.equal(h.saves.length, 0);
+    if (failures === 1) {
+      assert.equal(current, canvas); assert.equal(canvas.bitmap, bitmap);
+      assert.deepEqual(canvas.style, size); assert.equal(viewer().textContent, text);
+      assert.equal(viewport.scrollLeft, 150); assert.equal(viewport.scrollTop, 240);
+      assert.deepEqual(h.renderCalls, [[1, 1600], [1, 3200]]);
+    } else {
+      assert.notEqual(current, canvas); assert.equal(canvas.bitmap, null);
+      assert.deepEqual(h.renderCalls, [[1, 1600], [1, 3200], [1, 1600]]);
+      assert.equal(byClass(viewer(), 'viewer-message')[0].textContent, '');
+    }
+    for (let i = 0; i < 3; i++) buttons(viewer(), '＋')[0].click();
+    t.mock.timers.tick(1000); await settle();
+    assert.equal(h.copies.length, 2);
+    assert.equal(h.renderCalls.filter(([page, edge]) => page === 1 && edge === 3200).length, 1);
+    await turn();
+    for (let i = 0; i < 3; i++) buttons(viewer(), '＋')[0].click();
+    t.mock.timers.tick(300); await settle();
+    assert.deepEqual(byClass(viewer(), 'viewer-pdf')[0].bitmap, { page: 2, edge: 3200 });
+    assert.equal(h.renderCalls.filter(([page, edge]) => page === 2 && edge === 3200).length, 1);
+    await turn('前のページ');
+    for (let i = 0; i < 3; i++) buttons(viewer(), '＋')[0].click();
+    t.mock.timers.tick(1000); await settle();
+    assert.deepEqual(byClass(viewer(), 'viewer-pdf')[0].bitmap, bitmap);
+    assert.equal(h.renderCalls.filter(([page, edge]) => page === 1 && edge === 3200).length, 1); close();
+  });
+}
+
+for (const failure of ['context', 'copy']) {
+  test(`PDFの高精細化の控えの${failure}失敗: 今の絵・大きさを変えず、コピーも再試行もしない`, async (t) => {
+    const h = setup(t); t.mock.timers.enable({ apis: ['setTimeout'] });
+    const pane = paneFor(h); await open(pane);
+    const canvas = byClass(viewer(), 'viewer-pdf')[0], bitmap = canvas.bitmap, svg = paper();
+    h.noBackupContext = failure === 'context'; h.backupError = failure === 'copy';
+    for (let i = 0; i < 3; i++) buttons(viewer(), '＋')[0].click();
+    const text = viewer().textContent;
+    t.mock.timers.tick(300); await settle();
+    assert.equal(byClass(viewer(), 'viewer-pdf')[0], canvas); assert.equal(canvas.bitmap, bitmap);
+    assert.deepEqual([canvas.width, canvas.height], [1200, 1600]);
+    assert.equal(h.backups.length, failure === 'context' ? 0 : 1); assert.equal(h.copies.length, 0);
+    assert.equal(viewer().textContent, text); assert.equal(paper(), svg); assert.equal(h.saves.length, 0);
+    h.noBackupContext = false; h.backupError = false;
+    buttons(viewer(), '＋')[0].click(); t.mock.timers.tick(1000); await settle();
+    assert.deepEqual(h.renderCalls, [[1, 1600], [1, 3200]]); assert.equal(h.copies.length, 0); close();
+  });
+}
+
+for (const ending of ['touchend', 'touchcancel']) {
+  test(`PDFの高精細化: 指が全部${ending}になるまで写さず、同じcanvasでピンチを続けられる`, async (t) => {
+    const h = setup(t); t.mock.timers.enable({ apis: ['setTimeout'] });
+    const pane = paneFor(h); await open(pane);
+    const canvas = byClass(viewer(), 'viewer-pdf')[0], svg = paper();
+    const viewport = byClass(viewer(), 'viewer-viewport')[0], label = byClass(viewer(), 'viewer-counter')[1];
+    touch(canvas, 'touchstart', [[1, 200, 200], [2, 300, 200]]);
+    touch(canvas, 'touchmove', [[1, 200, 200], [2, 400, 200]]);
+    t.mock.timers.tick(300); await settle();
+    assert.equal(label.textContent, '200%'); assert.equal(byClass(viewer(), 'viewer-pdf')[0], canvas);
+    assert.equal(canvas.height, 1600); assert.equal(h.copies.length, 0);
+    for (const x of [450, 500, 550]) {
+      touch(canvas, 'touchmove', [[1, 200, 200], [2, x, 200]]);
+      t.mock.timers.tick(300); await settle();
+      assert.equal(canvas.height, 1600); assert.equal(h.copies.length, 0);
+    }
+    assert.deepEqual(h.renderCalls, [[1, 1600], [1, 3200]]);
+    touch(canvas, 'touchend', [[1, 200, 200]]);
+    assert.equal(canvas.height, 1600); assert.equal(h.copies.length, 0);
+    const size = { ...canvas.style }, text = viewer().textContent;
+    viewport.scrollLeft = 140; viewport.scrollTop = 230;
+    // 枠の外に残る別の指は待たず、document で最後の指の終了を拾う。
+    document.fire(ending, { touches: [{ identifier: 99, target: document.body }] });
+    assert.equal(byClass(viewer(), 'viewer-pdf')[0], canvas); assert.equal(canvas.height, 3200);
+    assert.equal(h.copies.length, 1); assert.equal(h.copies[0].target, canvas);
+    assert.deepEqual(canvas.style, size); assert.equal(viewer().textContent, text); assert.equal(paper(), svg);
+    assert.equal(viewport.scrollLeft, 140); assert.equal(viewport.scrollTop, 230);
+    touch(canvas, 'touchstart', [[3, 200, 200], [4, 400, 200]]);
+    touch(canvas, 'touchmove', [[3, 200, 200], [4, 300, 200]]);
+    assert.equal(label.textContent, '175%'); touch(canvas, 'touchend', []);
+    t.mock.timers.tick(1000); await settle(); assert.equal(h.renderCalls.length, 2); close();
+  });
+}
+
+for (const action of ['turn', 'close', 'shrink', 'shrink-restore']) {
+  test(`PDFの高精細化の保留中に${action}: 指を離しても古い結果は写さない`, async (t) => {
+    const h = setup(t); t.mock.timers.enable({ apis: ['setTimeout'] });
+    const pane = paneFor(h); await open(pane);
+    const canvas = byClass(viewer(), 'viewer-pdf')[0];
+    touch(canvas, 'touchstart', [[1, 200, 200], [2, 300, 200]]);
+    touch(canvas, 'touchmove', [[1, 200, 200], [2, 400, 200]]);
+    t.mock.timers.tick(300); await settle(); assert.equal(h.copies.length, 0);
+    if (action === 'turn') await turn();
+    else if (action === 'close') close();
+    else {
+      buttons(viewer(), '－')[0].click(); buttons(viewer(), '－')[0].click();
+      if (action === 'shrink-restore') buttons(viewer(), '＋')[0].click();
+    }
+    document.fire('touchend', { touches: [] });
+    t.mock.timers.tick(1000); await settle();
+    assert.equal(h.copies.length, 0); assert.equal(canvas.height, 1600);
+    assert.equal(h.renderCalls.filter(([page, edge]) => page === 1 && edge === 3200).length, 1);
+    if (action === 'close') assert.equal(viewer(), undefined);
+    else {
+      assert.equal(byClass(viewer(), 'viewer-pdf')[0].height, action === 'turn' ? 900 : 1600);
+      close();
+    }
+  });
+}
+
+for (const action of ['turn', 'close', 'shrink', 'shrink-restore', 'failure', 'zero', 'nan', 'infinite', 'negative', 'string', 'context']) {
+  test(`PDFの高精細化の${action}: 遅い結果や失敗で今の表示・線を変えない`, async (t) => {
+    const h = setup(t); t.mock.timers.enable({ apis: ['setTimeout'] });
+    const pane = paneFor(h); await open(pane); h.sharpGate = deferred();
+    for (let i = 0; i < 3; i++) buttons(viewer(), '＋')[0].click();
+    t.mock.timers.tick(300); await settle();
+    if (action === 'close') close();
+    if (action === 'turn') await turn();
+    if (action === 'failure') h.sharpError = true;
+    if (action === 'zero') h.sharpSize = [0, 0];
+    if (action === 'nan') h.sharpSize = [NaN, 3200];
+    if (action === 'infinite') h.sharpSize = [2400, Infinity];
+    if (action === 'negative') h.sharpSize = [-1, 3200];
+    if (action === 'string') h.sharpSize = ['2400', 3200];
+    if (action === 'context') h.noContext = true;
+    if (action.startsWith('shrink')) {
+      buttons(viewer(), '－')[0].click();
+      if (action === 'shrink-restore') buttons(viewer(), '＋')[0].click();
+    }
+    const current = viewer() && byClass(viewer(), 'viewer-pdf')[0], text = viewer()?.textContent;
+    const size = current && [current.width, current.height];
+    h.sharpGate.resolve(); await settle();
+    assert.equal(h.copies.length, 0);
+    if (action === 'close') { assert.equal(viewer(), undefined); assert.equal(h.closedPdfs, 1); }
+    else {
+      assert.equal(byClass(viewer(), 'viewer-pdf')[0], current); assert.equal(viewer().textContent, text);
+      assert.deepEqual([current.width, current.height], size);
+      assert.equal(h.saves.length, 0);
+      if (action !== 'turn') {
+        buttons(viewer(), '＋')[0].click(); t.mock.timers.tick(1000); await settle();
+        assert.equal(h.renderCalls.filter(([, edge]) => edge === 3200).length, 1);
+      }
+      close();
+    }
+  });
+}
+
+test('書きこみ部品のないPDF: ピンチ・高精細化・ページ送りを使える', async (t) => {
+  const h = setup(t); t.mock.timers.enable({ apis: ['setTimeout'] });
+  const v = openViewer({ title: '先生の見るだけのPDF', kind: 'pdf', load: async () => new Blob(['fake pdf']) });
+  await settle(); const viewport = byClass(viewer(), 'viewer-viewport')[0];
+  touch(viewport, 'touchstart', [[1, 200, 200], [2, 300, 200]]);
+  touch(viewport, 'touchmove', [[1, 200, 200], [2, 400, 200]]); touch(viewport, 'touchend', []);
+  assert.match(viewer().textContent, /200%/);
+  t.mock.timers.tick(300); await settle(); assert.equal(byClass(viewer(), 'viewer-pdf')[0].height, 3200);
+  assert.equal(byClass(viewer(), 'ink-paper').length, 0); assert.equal(h.saves.length, 0);
+  await turn(); assert.match(viewer().textContent, /100%/); v.close();
+});
 
 test('全消去: 他のページの線は残り、全ページ0本で印と目録が消える', async (t) => {
   const h = setup(t); putDraft(h, 1); putDraft(h, 2);
@@ -495,7 +796,7 @@ test('授業ページ: 全ページの保存状態・再送・離れる確認・
   close(); assert.equal(await h.guard(), true);
 });
 
-test('1ページ・不正な大きさ・999/1000ページの境界。PDFの拡大縮小は増やさない', async (t) => {
+test('1ページ・不正な大きさ・999/1000ページの境界。大きさ不明では拡大しない', async (t) => {
   const h = setup(t); h.pageCount = 1;
   let pane = paneFor(h); await open(pane);
   assert.equal(buttons(viewer(), '前のページ')[0].disabled, true);
@@ -505,13 +806,14 @@ test('1ページ・不正な大きさ・999/1000ページの境界。PDFの拡�
   pane = paneFor(h); await open(pane);
   assert.equal(toggle().hidden, true); assert.equal(byClass(viewer(), 'viewer-pdf').length, 1);
   assert.equal(byClass(viewer(), 'ink-paper').length, 0);
+  assert.equal(buttons(viewer(), '＋')[0].disabled, true);
   for (let i = 2; i <= 999; i++) await turn();
   assert.equal(toggle().disabled, false); toggle().click(); draw(paper());
   assert.ok(getDraft(h, 999)); await turn(); assert.equal(toggle().disabled, true);
   assert.equal(byClass(viewer(), 'ink-paper').length, 0);
   assert.match(viewer().textContent, /1000 \/ 1000/);
   await turn('前のページ'); assert.equal(paths(), 1); assert.equal(toggle().getAttribute('aria-pressed'), 'true');
-  assert.equal(buttons(viewer(), '＋').length, 0); assert.equal(buttons(viewer(), '－').length, 0); close();
+  assert.equal(buttons(viewer(), '＋').length, 1); assert.equal(buttons(viewer(), '－').length, 1); close();
 });
 
 test('PDFのページごとの上限・動かすの指スクロールと上下左右のドラッグ', async (t) => {

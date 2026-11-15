@@ -330,13 +330,12 @@ dialog.material-viewer[open] { display: flex; flex-direction: column; gap: var(-
 .viewer-message:empty { display: none; }
 .viewer-message { flex: none; text-align: center; }
 .viewer-message p { margin-bottom: var(--s-1); }
-.viewer-viewport { flex: 1; min-height: 0; min-width: 0; overflow: auto; background: #E2E7F1; touch-action: pan-x pan-y pinch-zoom; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.viewer-viewport { flex: 1; min-height: 0; min-width: 0; overflow: auto; background: #E2E7F1; touch-action: pan-x pan-y; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 .viewer-stage { display: flex; align-items: center; justify-content: center; width: max-content; min-width: 100%; min-height: 100%; padding: 8px; }
 .viewer-stage img { display: block; flex: none; max-width: none; user-select: none; -webkit-user-select: none; }
 .viewer-can-drag { cursor: grab; }
 .viewer-can-drag:active { cursor: grabbing; }
-.viewer-stage:has(.viewer-pdf) { width: 100%; }
-.viewer-pdf { display: block; max-width: 100%; height: auto; background: #FFFFFF; }
+.viewer-pdf { display: block; max-width: none; background: #FFFFFF; }
 .viewer-picture { position: relative; flex: none; }
 .viewer-ink { flex: none; min-width: 0; max-height: 45%; overflow-y: auto; }
 .picture-ink-overlay { position: absolute; inset: 0; pointer-events: none; }
@@ -497,6 +496,7 @@ button.term-pill:disabled { opacity: 0.55; cursor: not-allowed; }
 .ink-ruler-icon { flex: none; width: 26px; height: 14px; stroke: var(--c-navy); stroke-width: 1.5; }
 .ink-status { min-width: 0; margin-left: auto; font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
 .ink-paper { display: block; width: 100%; height: auto; border: 1px solid var(--soft-line); background: #FFFFFF; }
+.ink-paper * { pointer-events: none; }
 .ink-paper.ink-paper-writing { touch-action: none; }
 .ink-pad:not(.ink-readonly) .ink-paper { user-select: none; -webkit-user-select: none; }
 .ink-writing .ink-paper { border: 2px solid var(--mine); cursor: crosshair; }

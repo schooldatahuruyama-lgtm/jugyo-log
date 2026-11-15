@@ -1,6 +1,7 @@
 // 実在の情報・通信を使わず、写真と保存部品のつなぎ方を DOM の代役で確かめる。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { createInkDrafts } from '../js/ink-drafts.js';
 import { createRecordQueue } from '../js/record-queue.js';
 import { pendingLessonCount, pendingLessons } from '../js/record-flow.js';
@@ -14,7 +15,7 @@ import { openViewer } from '../js/views/parts/viewer.js';
 import { canUsePictureInk, hasPictureInk, pictureInks } from '../js/views/parts/picture-ink.js';
 import { mount as mountTeacher } from '../js/views/teacher-record.js';
 import { mount as mountStudent } from '../js/views/student-lesson.js';
-import { installDom, all, byClass, buttons, settle, draw } from './helpers/picture-dom.js';
+import { installDom, all, byClass, buttons, settle, draw, touch } from './helpers/picture-dom.js';
 
 const ids = { classId: 'test-class', lessonId: 'test-lesson', studentId: 'test-student' };
 const materialId = 'TestPhoto001';
@@ -216,6 +217,165 @@ test('書きこみの切り替えと幅変更で写真を合わせ直し、400%�
   draw(paper(), { type: 'mouse' });
   assert.deepEqual(getDraft(h).ink.s[1].p, stroke.p);
   close();
+});
+
+test('写真のピンチ: まん中を保ち、2本指で移動・半端な倍率・上下限・3本目を扱う', async (t) => {
+  const h = setup(t), pane = attachments(h); h.cleanup(() => pane.destroy());
+  byClass(pane.node, 'attachment-open')[0].click(); await settle();
+  const viewport = byClass(viewer(), 'viewer-viewport')[0], frame = byClass(viewer(), 'viewer-picture')[0];
+  const label = byClass(viewer(), 'viewer-counter')[0];
+  const anchor = { x: 430, y: 340 }, before = frame.getBoundingClientRect();
+  const relative = { x: (anchor.x - before.left) / before.width, y: (anchor.y - before.top) / before.height };
+  assert.equal(touch(viewport, 'touchstart', [[1, 380, 340]]).defaultPrevented, false);
+  assert.equal(touch(viewport, 'touchstart', [[1, 380, 340], [2, 480, 340]]).defaultPrevented, true);
+  assert.equal(touch(viewport, 'touchmove', [[1, 330, 340], [2, 530, 340]]).defaultPrevented, true);
+  assert.equal(label.textContent, '200%');
+  const after = frame.getBoundingClientRect();
+  assert.ok(Math.abs(after.left + relative.x * after.width - anchor.x) < 0.001);
+  assert.ok(Math.abs(after.top + relative.y * after.height - anchor.y) < 0.001);
+  const left = viewport.scrollLeft, top = viewport.scrollTop;
+  touch(viewport, 'touchmove', [[1, 350, 370], [2, 550, 370]]);
+  assert.equal(viewport.scrollLeft, left - 20); assert.equal(viewport.scrollTop, top - 30);
+  touch(viewport, 'touchmove', [[1, 380, 340], [2, 517, 340]]);
+  assert.equal(label.textContent, '137%');
+  touch(viewport, 'touchend', []);
+  buttons(viewer(), '＋')[0].click(); assert.equal(label.textContent, '162%');
+  buttons(viewer(), '－')[0].click(); assert.equal(label.textContent, '137%');
+  touch(viewport, 'touchstart', [[1, 300, 340], [2, 400, 340], [3, 1000, 340]]);
+  touch(viewport, 'touchmove', [[3, 9000, 340], [2, 600, 340], [1, 300, 340]]);
+  assert.equal(label.textContent, '400%'); assert.equal(buttons(viewer(), '＋')[0].disabled, true);
+  touch(viewport, 'touchmove', [[1, 300, 340], [2, 301, 340], [3, 9000, 340]]);
+  assert.equal(label.textContent, '100%'); assert.equal(buttons(viewer(), '－')[0].disabled, true);
+  touch(viewport, 'touchend', [[2, 301, 340], [3, 9000, 340]]);
+  touch(viewport, 'touchmove', [[2, 301, 340], [3, 10000, 340]]);
+  assert.equal(label.textContent, '100%');
+  touch(viewport, 'touchend', []);
+  touch(viewport, 'touchstart', [[1, 100, 100], [2, 200, 100]]);
+  for (const x of [100, NaN, Infinity]) touch(viewport, 'touchmove', [[1, 100, 100], [2, x, 100]]);
+  assert.equal(label.textContent, '100%');
+  touch(viewport, 'touchmove', [[1, 100, 100], [2, 300, 100]]);
+  assert.equal(label.textContent, '200%');
+  touch(viewport, 'touchcancel', []);
+  viewport.fire('touchstart'); viewport.fire('touchmove'); viewport.fire('touchend'); viewport.fire('touchcancel');
+  for (const type of ['gesturestart', 'gesturechange']) assert.equal(viewport.fire(type).defaultPrevented, true);
+  assert.equal(pane.dirty, false); assert.equal(h.saves.length, 0); close();
+});
+
+test('紙の子要素: 線・けい線・見るだけの重ね表示は接触先にならない', () => {
+  const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+  assert.match(css, /\.ink-paper\s+\*\s*\{\s*pointer-events:\s*none\s*;\s*\}/);
+});
+
+for (const ending of ['touchend', 'touchcancel']) {
+  test(`写真の既存の線からピンチ: 取り消し後も動かせ、documentの${ending}で書ける状態に戻る`, async (t) => {
+    const h = setup(t); h.record.ink.a1 = indexFor();
+    const pane = attachments(h); h.cleanup(() => pane.destroy());
+    const svg = await startWriting(byClass(pane.node, 'attachment-open')[0]);
+    buttons(viewer(), '書く')[0].click();
+    const path = all(svg, (node) => node.tagName === 'path')[0];
+    const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+    // 簡易 DOM に接触判定はないので、線の上の接触先を CSS の規則に従って選ぶ。
+    const target = /\.ink-paper\s+\*\s*\{\s*pointer-events:\s*none\s*;\s*\}/.test(css)
+      ? path.closest('.ink-paper') : path;
+    const rect = svg.getBoundingClientRect();
+    const first = { pointerId: 1, pointerType: 'touch', target,
+      clientX: rect.left + rect.width * 0.1, clientY: rect.top + rect.height * 0.2 };
+    svg.fire('pointerdown', first);
+    touch(target, 'touchstart', [[1, first.clientX, first.clientY]]);
+    svg.fire('pointermove', { ...first, clientX: first.clientX + 50 });
+    touch(target, 'touchstart', [[1, first.clientX, first.clientY], [2, first.clientX + 100, first.clientY]]);
+    assert.equal(path.isConnected, false); assert.equal(target, svg); assert.equal(target.isConnected, true);
+    touch(target, 'touchmove', [[1, first.clientX, first.clientY], [2, first.clientX + 200, first.clientY]]);
+    assert.equal(byClass(viewer(), 'viewer-counter')[0].textContent, '200%');
+    svg.fire('pointerup', first);
+    assert.equal(all(svg, (node) => node.tagName === 'path').length, 1);
+    assert.equal(getDraft(h), null); assert.equal(h.saves.length, 0);
+    // 枠を通らない終了でも、残った指で書かず、最後の指の終了で解除する。
+    document.fire(ending, { touches: [{ identifier: 1, target }] });
+    draw(svg, { type: 'touch' }); assert.equal(getDraft(h), null);
+    document.fire(ending, { touches: [] });
+    draw(svg, { type: 'touch' }); assert.equal(getDraft(h).ink.s.length, 2);
+    close();
+  });
+}
+
+for (const erasing of [false, true]) {
+  test(`写真の書く→ピンチ: ${erasing ? '消しかけ' : '書きかけ'}を保存・履歴に入れず、全部離したら書ける`, async (t) => {
+    const h = setup(t), pane = attachments(h); h.cleanup(() => pane.destroy());
+    const svg = await startWriting(byClass(pane.node, 'attachment-open')[0]);
+    buttons(viewer(), '書く')[0].click();
+    draw(svg, { type: 'touch' }); await pane.flush();
+    const original = h.record.ink.a1, saved = h.saves.length;
+    if (erasing) buttons(viewer(), '消しゴム')[0].click();
+    const rect = svg.getBoundingClientRect();
+    const first = { pointerId: 3, pointerType: 'touch', clientX: rect.left + rect.width * 0.1, clientY: rect.top + rect.height * 0.2 };
+    svg.fire('pointerdown', first); svg.fire('pointermove', { ...first, clientX: rect.left + rect.width * 0.8 });
+    touch(svg, 'touchstart', [[3, first.clientX, first.clientY], [4, first.clientX + 100, first.clientY]]);
+    touch(svg, 'touchmove', [[3, first.clientX, first.clientY], [4, first.clientX + 200, first.clientY]]);
+    assert.match(viewer().textContent, /200%/);
+    svg.fire('pointerup', first);
+    assert.equal(all(svg, (node) => node.tagName === 'path').length, 1);
+    touch(svg, 'touchend', [[3, first.clientX, first.clientY]]);
+    assert.equal(touch(svg, 'touchmove', [[3, first.clientX + 20, first.clientY]]).defaultPrevented, false);
+    draw(svg, { type: 'touch' }); await h.advance();
+    assert.equal(h.saves.length, saved); assert.equal(h.record.ink.a1, original); assert.equal(getDraft(h), null);
+    touch(svg, 'touchend', []);
+    // 取り消した線や消しゴムを戻す履歴が挟まっていない。
+    buttons(viewer(), '1 つ戻す')[0].click();
+    assert.equal(all(svg, (node) => node.tagName === 'path').length, 0);
+    assert.equal(buttons(viewer(), '1 つ戻す')[0].disabled, true);
+    if (erasing) buttons(viewer(), '消しゴム')[0].click();
+    draw(svg, { type: 'touch' }); assert.equal(getDraft(h).ink.s.length, 1);
+    close();
+  });
+}
+
+test('写真のペン: 接触中と離れて500ms以内はピンチせず、指を置いても線は残る', async (t) => {
+  const h = setup(t), pane = attachments(h); h.cleanup(() => pane.destroy());
+  const svg = await startWriting(byClass(pane.node, 'attachment-open')[0]);
+  const pen = { pointerId: 1, pointerType: 'pen', clientX: 200, clientY: 200 };
+  svg.fire('pointerdown', pen);
+  touch(svg, 'touchstart', [[2, 100, 100], [3, 200, 100]]);
+  touch(svg, 'touchmove', [[2, 100, 100], [3, 300, 100]]);
+  assert.match(viewer().textContent, /100%/);
+  svg.fire('pointerup', { ...pen, clientX: 400 });
+  assert.equal(getDraft(h).ink.s.length, 1);
+  touch(svg, 'touchend', []);
+  touch(svg, 'touchstart', [[2, 100, 100], [3, 200, 100]]);
+  touch(svg, 'touchmove', [[2, 100, 100], [3, 300, 100]]);
+  assert.match(viewer().textContent, /100%/);
+  touch(svg, 'touchend', []); close();
+});
+
+test('見るだけの写真: Ctrl/⌘ホイールとピンチ。読込中・サイズ0では変えない', async (t) => {
+  setup(t);
+  let resolve;
+  const v = openViewer({ title: '動作確認用の写真', kind: 'image', load: () => new Promise((done) => { resolve = done; }) });
+  const viewport = byClass(viewer(), 'viewer-viewport')[0], label = byClass(viewer(), 'viewer-counter')[0];
+  const wheel = { clientX: 430, clientY: 340, deltaY: -100 };
+  touch(viewport, 'touchstart', [[1, 100, 100], [2, 200, 100]]);
+  touch(viewport, 'touchmove', [[1, 100, 100], [2, 300, 100]]);
+  viewport.fire('wheel', { ...wheel, ctrlKey: true });
+  assert.equal(label.textContent, '100%');
+  touch(viewport, 'touchend', []);
+  resolve(new Blob(['fake image'])); await settle();
+  assert.equal(viewport.fire('wheel', wheel).defaultPrevented, false); assert.equal(label.textContent, '100%');
+  assert.equal(viewport.fire('wheel', { ...wheel, ctrlKey: true }).defaultPrevented, true);
+  assert.equal(label.textContent, '122%');
+  assert.equal(viewport.fire('wheel', { ...wheel, deltaY: 100, metaKey: true }).defaultPrevented, true);
+  assert.equal(label.textContent, '100%');
+  touch(viewport, 'touchstart', [[1, 100, 100], [2, 200, 100]]);
+  touch(viewport, 'touchmove', [[1, 100, 100], [2, 300, 100]]);
+  assert.equal(label.textContent, '200%'); touch(viewport, 'touchend', []);
+  v.close();
+  const create = document.createElement;
+  document.createElement = (tag) => { const node = create(tag); if (tag === 'img') node.naturalHeight = 0; return node; };
+  const invalid = openViewer({ title: '大きさ不明', kind: 'image', load: async () => new Blob(['fake']) }); await settle();
+  const emptyViewport = byClass(viewer(), 'viewer-viewport')[0];
+  touch(emptyViewport, 'touchstart', [[1, 100, 100], [2, 200, 100]]);
+  touch(emptyViewport, 'touchmove', [[1, 100, 100], [2, 300, 100]]);
+  emptyViewport.fire('wheel', { ...wheel, ctrlKey: true });
+  assert.match(viewer().textContent, /100%/); assert.equal(buttons(viewer(), '＋')[0].disabled, true); invalid.close();
 });
 
 test('先生の資料: 書いてすぐ閉じると送信開始。保存中も開き直せる', async (t) => {

@@ -3,11 +3,13 @@ import { setMaxListeners } from 'node:events';
 
 class FakeTarget {
   listeners = new Map();
+  listenerOptions = new Map();
   addEventListener(type, fn, options = {}) {
     if (options.signal?.aborted) return;
     const list = this.listeners.get(type) || new Set();
     list.add(fn);
     this.listeners.set(type, list);
+    this.listenerOptions.set(fn, options);
     if (options.signal) {
       setMaxListeners(0, options.signal);
       options.signal.addEventListener('abort', () => list.delete(fn), { once: true });
@@ -17,7 +19,19 @@ class FakeTarget {
   fire(type, props = {}) {
     const event = { type, target: this, button: 0, detail: 0, defaultPrevented: false,
       preventDefault() { this.defaultPrevented = true; }, ...props };
-    for (const fn of [...(this.listeners.get(type) || [])]) fn(event);
+    const path = [this];
+    if (type.startsWith('touch')) {
+      for (let parent = this.parentNode; parent; parent = parent.parentNode) path.push(parent);
+      if (this.isConnected) path.push(document);
+    }
+    const call = (target, capture) => {
+      for (const fn of [...(target.listeners.get(type) || [])]) {
+        const options = target.listenerOptions.get(fn);
+        if ((options === true || !!options?.capture) === capture) fn(event);
+      }
+    };
+    for (const target of [...path].reverse()) call(target, true);
+    for (const target of path) call(target, false);
     return event;
   }
 }
@@ -81,6 +95,15 @@ export class FakeNode extends FakeTarget {
     if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((node) => node !== this);
     this.parentNode = null;
   }
+  contains(node) { return node === this || this.children.some((child) => child.contains(node)); }
+  replaceWith(node) {
+    const parent = this.parentNode;
+    if (!parent) return;
+    node.remove();
+    parent.children[parent.children.indexOf(this)] = node;
+    node.parentNode = parent;
+    this.parentNode = null;
+  }
   get isConnected() { return this === document.body || !!this.parentNode?.isConnected; }
   focus() { document.activeElement = this; }
   click() { if (!this.disabled) this.fire('click'); }
@@ -96,10 +119,17 @@ export class FakeNode extends FakeTarget {
   querySelectorAll(selector) { return all(this, (node) => node !== this && (selector.startsWith('.')
     ? node.classList.contains(selector.slice(1)) : node.tagName === selector)); }
   getBoundingClientRect() {
-    const photo = this.closest('.viewer-picture')?.children.find((node) => node.tagName === 'img');
+    if (this.classList.contains('viewer-viewport')) return { left: 20, top: 40, width: this.clientWidth, height: this.clientHeight };
+    const frame = this.closest('.viewer-picture');
+    const viewport = frame?.closest('.viewer-viewport');
+    if (frame && viewport) {
+      const width = parseFloat(frame.style.width) || 0, height = parseFloat(frame.style.height) || 0;
+      const rect = viewport.getBoundingClientRect();
+      return { left: rect.left + Math.max(8, (rect.width - width) / 2) - viewport.scrollLeft,
+        top: rect.top + Math.max(8, (rect.height - height) / 2) - viewport.scrollTop, width, height };
+    }
     const h = Number(this.getAttribute('viewBox')?.split(' ')[3]) || 400;
-    return { left: 0, top: 0, width: photo ? parseFloat(photo.style.width) : 800,
-      height: photo ? parseFloat(photo.style.height) : h };
+    return { left: 0, top: 0, width: 800, height: h };
   }
 }
 
@@ -129,8 +159,13 @@ export function installDom() {
 
 export function draw(paper, { type = 'pen', from = [0.1, 0.2], to = [0.8, 0.7], id = 1 } = {}) {
   const rect = paper.getBoundingClientRect();
-  const event = ([x, y]) => ({ pointerId: id, pointerType: type, clientX: x * rect.width, clientY: y * rect.height });
+  const event = ([x, y]) => ({ pointerId: id, pointerType: type, clientX: rect.left + x * rect.width, clientY: rect.top + y * rect.height });
   paper.fire('pointerdown', event(from));
   paper.fire('pointermove', event(to));
   paper.fire('pointerup', event(to));
+}
+
+export function touch(target, type, points) {
+  return target.fire(type, { cancelable: true,
+    touches: points.map(([identifier, clientX, clientY]) => ({ identifier, clientX, clientY, target })) });
 }
