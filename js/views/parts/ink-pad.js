@@ -89,6 +89,7 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
       + (ruler ? '／定規' : erasing ? '／消しゴム' : '');
     paper.style.touchAction = mode === 'write' ? 'none' : picture ? 'pan-x pan-y pinch-zoom' : 'pan-y pinch-zoom';
     node.classList.toggle('ink-writing', mode === 'write' && !locked);
+    paper.classList.toggle('ink-paper-writing', mode === 'write' && canEdit());
   }
 
   function describePaper(value) {
@@ -272,6 +273,13 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
     pointerCancel(ev);
   }
 
+  function preventTouchScroll(ev) {
+    if (!ev.cancelable) return;
+    const stylus = Array.from(ev.changedTouches || []).some((touch) => touch?.touchType === 'stylus');
+    if ((canEdit() && (mode === 'write' || stylus)) || active
+      || penPointer !== null || Date.now() < penUntil) ev.preventDefault();
+  }
+
   if (!readOnly) {
     moveButton = button('動かす', () => { mode = 'move'; }, 'ink-tool ink-mode');
     writeButton = button('書く', () => { mode = 'write'; }, 'ink-tool ink-mode');
@@ -312,9 +320,9 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
     // ロックなどで途中の線を捨てても、ペンが離れるまでは指を受けつけない。
     listen(document, 'pointerup', endPen, true);
     listen(document, 'pointercancel', endPen, true);
-    listen(paper, 'touchstart', (ev) => {
-      if (canEdit() && Array.from(ev.changedTouches).some((touch) => touch.touchType === 'stylus')) ev.preventDefault();
-    }, { passive: false });
+    // SVG の touch-action が効かない環境でも、書く間はスクロールと拡大を止める。
+    listen(paper, 'touchstart', preventTouchScroll, { passive: false });
+    listen(paper, 'touchmove', preventTouchScroll, { passive: false });
   }
 
   render();

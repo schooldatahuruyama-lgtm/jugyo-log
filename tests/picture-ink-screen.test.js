@@ -367,6 +367,105 @@ test('欄の手書き: 横線・下への追加・戻す・保存が従来どお
   assert.equal('on' in h.record.ink.memo, false);
 });
 
+for (const picture of [false, true]) {
+  test(`${picture ? '写真' : '欄の手書き'}: 書く間だけ指のスクロール・拡大を止め、動かす・ロックで戻す`, (t) => {
+    const h = setup(t), pad = inkPad({ picture });
+    h.cleanup(() => pad.destroy());
+    const svg = pad.paper, before = pad.getInk();
+    const fingers = [undefined, [], [{}], [{ touchType: 'direct' }], [{ touchType: 'direct' }, {}]];
+    const stylus = [{ touchType: 'direct' }, { touchType: 'stylus' }];
+    const checkTouches = (expected, touches = fingers) => {
+      for (const type of ['touchstart', 'touchmove']) {
+        for (const changedTouches of touches) {
+          assert.equal(svg.fire(type, { cancelable: true, changedTouches }).defaultPrevented, expected);
+        }
+      }
+    };
+    assert.equal(svg.classList.contains('ink-paper-writing'), false);
+    checkTouches(false);
+    checkTouches(true, [stylus]);
+    buttons(pad.node, '書く')[0].click();
+    assert.equal(svg.classList.contains('ink-paper-writing'), true);
+    assert.equal(svg.style.touchAction, 'none');
+    checkTouches(true);
+    for (const type of ['touchstart', 'touchmove']) {
+      const preventDefault = t.mock.fn();
+      svg.fire(type, { cancelable: false, changedTouches: stylus, preventDefault });
+      assert.equal(preventDefault.mock.callCount(), 0);
+    }
+    pad.setLocked(true);
+    assert.equal(svg.classList.contains('ink-paper-writing'), false);
+    checkTouches(false, [...fingers, stylus]);
+    pad.setLocked(false);
+    assert.equal(svg.classList.contains('ink-paper-writing'), true);
+    buttons(pad.node, '動かす')[0].click();
+    assert.equal(svg.classList.contains('ink-paper-writing'), false);
+    assert.equal(svg.style.touchAction, picture ? 'pan-x pan-y pinch-zoom' : 'pan-y pinch-zoom');
+    checkTouches(false);
+    assert.deepEqual(pad.getInk(), before);
+  });
+}
+
+test('全消去の確認中は書くモードでも接触を止めず、取り消すと書ける状態に戻る', async (t) => {
+  const h = setup(t), pad = inkPad({ picture: true, ink: written() });
+  h.cleanup(() => pad.destroy());
+  document.body.append(pad.node);
+  buttons(pad.node, '書く')[0].click();
+  buttons(pad.node, '全部消す')[0].click();
+  assert.equal(pad.paper.classList.contains('ink-paper-writing'), false);
+  for (const type of ['touchstart', 'touchmove']) {
+    for (const changedTouches of [[{}], [{ touchType: 'stylus' }]]) {
+      assert.equal(pad.paper.fire(type, { cancelable: true, changedTouches }).defaultPrevented, false);
+    }
+  }
+  buttons(byClass(document.body, 'confirm')[0], 'やめる')[0].click(); await settle();
+  assert.equal(pad.paper.classList.contains('ink-paper-writing'), true);
+  assert.equal(pad.paper.fire('touchmove', { cancelable: true }).defaultPrevented, true);
+  assert.equal(pad.getInk().s.length, 1);
+});
+
+test('指で線を書いている途中の接触を止め、2本目の指では線を増やさない', (t) => {
+  const h = setup(t), pad = inkPad({ picture: true, ink: emptyPictureInk(1600, 1200) });
+  h.cleanup(() => pad.destroy());
+  buttons(pad.node, '書く')[0].click();
+  const first = { pointerType: 'touch', pointerId: 1, clientX: 80, clientY: 120 };
+  pad.paper.fire('pointerdown', first);
+  const second = { ...first, pointerId: 2, clientX: 200 };
+  pad.paper.fire('pointerdown', second);
+  for (const type of ['touchstart', 'touchmove']) {
+    assert.equal(pad.paper.fire(type, { cancelable: true, changedTouches: [{}, {}] }).defaultPrevented, true);
+  }
+  pad.paper.fire('pointermove', second); pad.paper.fire('pointerup', second);
+  assert.equal(pad.getInk().s.length, 0);
+  pad.paper.fire('pointerup', { ...first, clientX: 640, clientY: 420 });
+  assert.equal(pad.getInk().s.length, 1);
+  assert.deepEqual(pad.getInk().s[0].p, stroke.p);
+});
+
+for (const ending of ['pointerup', 'pointercancel']) {
+  test(`動かす: ペンの${ending}後500ミリ秒まで手のひらのスクロールを止める`, (t) => {
+    const h = setup(t), pad = inkPad({ picture: true });
+    h.cleanup(() => pad.destroy());
+    let now = 1000;
+    t.mock.method(Date, 'now', () => now);
+    const pen = { pointerType: 'pen', pointerId: 1, clientX: 80, clientY: 120 };
+    const checkPalm = (expected) => {
+      for (const type of ['touchstart', 'touchmove']) {
+        assert.equal(pad.paper.fire(type, { cancelable: true, changedTouches: [{}] }).defaultPrevented, expected);
+      }
+    };
+    pad.paper.fire('pointerdown', pen);
+    now = 2000;
+    checkPalm(true);
+    pad.paper.fire(ending, pen);
+    checkPalm(true);
+    now = 2499; checkPalm(true);
+    now = 2500; checkPalm(false);
+    now = 2501; checkPalm(false);
+    assert.equal(pad.paper.classList.contains('ink-paper-writing'), false);
+  });
+}
+
 test('下書きがあれば開かなくても保存対象になり、Driveを読まない', async (t) => {
   const h = setup(t); h.record.ink.a1 = indexFor(); putDraft(h);
   const pane = attachments(h); h.cleanup(() => pane.destroy());
@@ -447,6 +546,11 @@ test('写真の上限の文・消しゴム・掌の抑止と読むだけの空SV
   draw(pad.paper, { type: 'touch' }); assert.equal(value.s.length, 0);
   const readonly = inkPad({ picture: true, ink: emptyPictureInk(1, 1), readOnly: true });
   assert.equal(readonly.node.textContent, '');
+  readonly.setToolState({ mode: 'write' });
+  assert.equal(readonly.paper.classList.contains('ink-paper-writing'), false);
+  for (const type of ['touchstart', 'touchmove']) {
+    assert.equal(readonly.paper.fire(type, { cancelable: true, changedTouches: [{ touchType: 'stylus' }] }).defaultPrevented, false);
+  }
   assert.equal(readonly.paper.tagName, 'svg'); readonly.destroy();
 });
 

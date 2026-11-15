@@ -212,6 +212,29 @@ test('全消去: 他のページの線は残り、全ページ0本で印と目�
   assert.ok(h.record.inkCleared['a1#p1']); assert.ok(h.record.inkCleared['a1#p2']); close();
 });
 
+test('PDFの接触: ページを移っても書く間だけ止め、動かす・書きこみ終了で戻す', async (t) => {
+  const h = setup(t), pane = paneFor(h);
+  await open(pane); toggle().click();
+  const checkTouches = (expected) => {
+    assert.equal(paper().classList.contains('ink-paper-writing'), expected);
+    for (const type of ['touchstart', 'touchmove']) {
+      for (const changedTouches of [undefined, [{}], [{ touchType: 'direct' }, {}]]) {
+        assert.equal(paper().fire(type, { cancelable: true, changedTouches }).defaultPrevented, expected);
+      }
+    }
+  };
+  checkTouches(false);
+  buttons(viewer(), '書く')[0].click(); checkTouches(true);
+  await turn(); checkTouches(true);
+  buttons(viewer(), '動かす')[0].click(); checkTouches(false);
+  assert.equal(paper().style.touchAction, 'pan-x pan-y pinch-zoom');
+  buttons(viewer(), '書く')[0].click(); checkTouches(true);
+  toggle().click(); checkTouches(false);
+  toggle().click(); checkTouches(true);
+  assert.equal(paths(), 0); assert.equal(pane.dirty, false);
+  close();
+});
+
 test('未表示ページの下書きも保存対象。別の授業・onの下書きは混ぜない', async (t) => {
   const h = setup(t); putDraft(h, 999); putDraft(h, 2, 'a1', 'other-pdf');
   h.ctx.inkDrafts.put(ids.studentId, ids.classId, 'other-lesson', 'a1#p3',
