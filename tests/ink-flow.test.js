@@ -845,6 +845,8 @@ function teacherSetup(text = '') {
     reviewPeople: (_, records) => [{ studentId: 's26-001', number: 1, inRoster: true, record: records['s26-001'] }],
     neighbors: () => ({ prev: null, next: null }), levelLabel: () => '',
     teacherNav: () => el('nav'), materialPane: pane, attachmentPane: pane, termRow: pane, headingIcon: () => el('span'),
+    replyBox: () => ({ ...pane(), dirty: false, okToLeave: () => true }),
+    window: { addEventListener() {}, removeEventListener() {} },
     inkPad: (options) => { pads.push(options); return { node: el('paper'), destroy() {} }; },
   });
   const ctx = { params: { classId: 'c1', lessonId: 'l1', studentId: 's26-001' }, navigate() {},

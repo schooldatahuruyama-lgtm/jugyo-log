@@ -19,7 +19,8 @@ function snapshot(value, parent = null) {
     val: () => value ?? null,
     isString: () => typeof value === 'string',
     isNumber: () => typeof value === 'number' && Number.isFinite(value),
-    hasChildren: (keys) => keys.every((key) => Object.hasOwn(value, key)),
+    hasChildren: (keys) => value !== null && typeof value === 'object' && keys.every((key) => Object.hasOwn(value, key)),
+    hasChild: (key) => value?.[key] !== undefined && value?.[key] !== null,
     child: (key) => snapshot(value?.[key], node),
     parent: () => parent,
   };
@@ -175,12 +176,62 @@ test('最上位の場所が決まりどおり', () => {
   const keys = Object.keys(rules).filter((k) => !k.startsWith('.')).sort();
   assert.deepEqual(keys, [
     'check', 'teacherList', 'gen', 'accounts', 'students', 'counters', 'initialPw',
-    'classes', 'members', 'memberOf', 'units', 'lessons', 'thumbs', 'records', 'recThumbs', 'inkThumbs', 'marks', 'terms',
+    'classes', 'members', 'memberOf', 'units', 'lessons', 'thumbs', 'records', 'recThumbs', 'inkThumbs', 'marks', 'terms', 'replies', 'replyMarks',
   ].sort());
 });
 
 test('check は段階 0 の規則と同じ', () => {
   assert.deepEqual(rules.check, check);
+});
+
+test('返事の規則: 先生だけが書き、先生はクラス全体、本人は自分の返事と目印だけ読める', () => {
+  const cls = rules.replies.$classId;
+  const sid = cls.$lessonId.$sid;
+  const mark = rules.replyMarks.$sid;
+  const teacher = rules.records.$classId['.read'];
+  assert.deepEqual(rulesIn(rules.replies).filter(([, k]) => k === '.write'), [['$classId', '.write', teacher]]);
+  assert.deepEqual(rulesIn(rules.replies).filter(([, k]) => k === '.read'), [
+    ['$classId', '.read', teacher], ['$classId/$lessonId/$sid', '.read', rules.records.$classId.$lessonId.$sid['.read']],
+  ]);
+  assert.deepEqual(rulesIn(rules.replyMarks).filter(([, k]) => k === '.write'), [['$sid', '.write', teacher]]);
+  assert.deepEqual(rulesIn(rules.replyMarks).filter(([, k]) => k === '.read'), [['$sid', '.read', rules.marks.$sid['.read']]]);
+  const root = snapshot({ teacherList: { teacher: true }, accounts: { own: 's00-001', other: 's00-002' } });
+  const evaluate = (rule, auth) => new Function('root', 'auth', '$sid', `return (${rule});`)(root, auth, 's00-001');
+  for (const uid of [null, 'teacher', 'own', 'other', 'unknown']) {
+    const auth = uid === null ? null : { uid };
+    assert.equal(evaluate(cls['.write'], auth), uid === 'teacher');
+    assert.equal(evaluate(mark['.write'], auth), uid === 'teacher');
+    assert.equal(evaluate(cls['.read'], auth), uid === 'teacher');
+    assert.equal(evaluate(sid['.read'], auth), uid === 'own');
+    assert.equal(evaluate(mark['.read'], auth), uid === 'teacher' || uid === 'own');
+  }
+});
+
+test('返事の規則: 文は 1〜400 文字、印は true、時刻は数。文か印が必要で余分な項目は拒否', () => {
+  const reply = rules.replies.$classId.$lessonId.$sid;
+  const evaluate = (rule, value) => new Function('newData', `return (${rule});`)(snapshot(value));
+  assert.deepEqual(Object.keys(reply).sort(), ['.read', '.validate', 'text', 'seen', 'updatedAt', '$other'].sort());
+  assert.equal(reply.$other['.validate'], false);
+  for (const value of [{ text: '文', updatedAt: 0 }, { seen: true, updatedAt: 10 }, { text: '文', seen: true, updatedAt: 20 }]) {
+    assert.equal(evaluate(reply['.validate'], value), true);
+    for (const [key, child] of Object.entries(value)) assert.equal(evaluate(reply[key]['.validate'], child), true);
+  }
+  for (const value of [null, 1, '文', {}, { updatedAt: 10 }, { text: '文' }, { seen: true }]) {
+    assert.equal(evaluate(reply['.validate'], value), false);
+  }
+  for (const text of ['あ', 'あ'.repeat(400), '😀'.repeat(200)]) assert.equal(evaluate(reply.text['.validate'], text), true);
+  for (const text of ['', 'あ'.repeat(401), null, 1, true, [], {}]) assert.equal(evaluate(reply.text['.validate'], text), false);
+  for (const seen of [false, 'true', 1, null, [], {}]) assert.equal(evaluate(reply.seen['.validate'], seen), false);
+  const mark = rules.replyMarks.$sid.$classId.$lessonId;
+  assert.equal(mark['.validate'], 'newData.isNumber()');
+  for (const value of [0, 10, -1, 0.5]) {
+    assert.equal(evaluate(reply.updatedAt['.validate'], value), true);
+    assert.equal(evaluate(mark['.validate'], value), true);
+  }
+  for (const value of ['10', null, true, NaN, Infinity, [], {}]) {
+    assert.equal(evaluate(reply.updatedAt['.validate'], value), false);
+    assert.equal(evaluate(mark['.validate'], value), false);
+  }
 });
 
 test('terms は先生と本人が読み、所属する本人だけが実在する授業に 8 個・20 文字まで書ける', () => {

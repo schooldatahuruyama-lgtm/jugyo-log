@@ -1,5 +1,6 @@
-// 生徒一人の記録を、先生が読む画面。入力欄や保存の操作は置かない。
+// 生徒一人の記録を先生が読み、記録とは別に返事を書く画面。
 import { el } from '../ui.js';
+import { isStudentId } from '../ids.js';
 import { CONFIG } from '../config.js';
 import { dateLabel } from '../lesson-logic.js';
 import { normalizeRecord } from '../record-logic.js';
@@ -11,6 +12,7 @@ import { attachmentPane } from './parts/attachment-pane.js';
 import { headingIcon } from './parts/heading-icon.js';
 import { termRow } from './parts/term-row.js';
 import { inkPad } from './parts/ink-pad.js';
+import { replyBox } from './parts/reply-box.js';
 
 function updatedLabel(value) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '';
@@ -28,6 +30,7 @@ export function mount(root, ctx) {
   let materials = null;
   let attachments = null;
   let terms = null;
+  let reply = null;
   let inkQueue = Promise.resolve();
   const inkPads = new Set();
   let adjacent = { prev: null, next: null };
@@ -60,11 +63,20 @@ export function mount(root, ctx) {
       el('header', { class: 'lesson-section-band' },
         el('h2', { id: 'record-reflection-heading' }, headingIcon('reflect'), el('span', { text: '振り返り' })), reflectionStatus),
       el('div', { class: 'lesson-section-body' }, reflectionArea)));
-  root.replaceChildren(teacherNav(ctx, 'review'),
+  root.replaceChildren(teacherNav({ ...ctx, okToLeave }, 'review'),
     el('div', { class: 'student-page' }, el('main', { class: 'student-lesson-page teacher-record-page' },
       el('div', { class: 'page-actions' },
         el('button', { type: 'button', class: 'btn', text: '‹ 一覧へ', onclick: goList }), previous, next),
       titleArea, pageMessage, content)));
+
+  function okToLeave() { return reply ? reply.okToLeave() : true; }
+  const onBeforeUnload = (event) => {
+    if (!reply?.dirty) return;
+    event.preventDefault();
+    event.returnValue = '';
+  };
+  ctx.setLeaveGuard?.(okToLeave);
+  window.addEventListener('beforeunload', onBeforeUnload);
 
   function destroyInk() {
     for (const pad of inkPads) pad.destroy();
@@ -163,8 +175,9 @@ export function mount(root, ctx) {
     content.hidden = true;
     pageMessage.textContent = '読みこんでいます…';
     try {
-      const [lessonResult, membersResult, recordsResult] = await Promise.allSettled([
+      const [lessonResult, membersResult, recordsResult, repliesResult] = await Promise.allSettled([
         ctx.repo.getLesson(classId, lessonId), ctx.repo.getMembers(classId), ctx.repo.listRecords(classId, lessonId),
+        Promise.resolve().then(() => ctx.repo.listReplies(classId, lessonId)),
       ]);
       if (stale()) return;
       if (lessonResult.status === 'fulfilled' && !lessonResult.value) {
@@ -172,7 +185,17 @@ export function mount(root, ctx) {
         return;
       }
       if ([lessonResult, membersResult, recordsResult].some((result) => result.status === 'rejected')) throw new Error('読みこめませんでした');
-      const people = reviewPeople(membersResult.value, recordsResult.value);
+      let people = reviewPeople(membersResult.value, recordsResult.value);
+      const knownIds = new Set(people.map((person) => person.studentId));
+      const replies = repliesResult.status === 'fulfilled' ? repliesResult.value : {};
+      const outside = people.filter((person) => !person.inRoster);
+      for (const studentId of Object.keys(replies)) {
+        if (isStudentId(studentId) && !knownIds.has(studentId)) {
+          outside.push({ studentId, number: null, inRoster: false, record: null });
+        }
+      }
+      outside.sort((a, b) => a.studentId < b.studentId ? -1 : a.studentId > b.studentId ? 1 : 0);
+      people = [...people.filter((person) => person.inRoster), ...outside];
       const person = people.find((p) => p.studentId === studentId);
       if (!person) {
         pageMessage.replaceChildren(el('p', { text: 'この生徒は見つかりません。' }),
@@ -195,6 +218,10 @@ export function mount(root, ctx) {
       terms?.destroy();
       terms = termRow({ ctx, classId, lessonId, studentId, lesson, readOnly: true });
       termsArea.replaceChildren(terms.node);
+      reply?.destroy();
+      reply?.node.remove();
+      reply = replyBox({ ctx, classId, lessonId, studentId });
+      content.append(reply.node);
       pageMessage.replaceChildren();
       titleArea.hidden = false;
       content.hidden = false;
@@ -212,5 +239,10 @@ export function mount(root, ctx) {
   }
 
   void load();
-  return () => { alive = false; loadId += 1; destroyInk(); materials?.destroy(); attachments?.destroy(); terms?.destroy(); };
+  return () => {
+    alive = false; loadId += 1;
+    destroyInk(); materials?.destroy(); attachments?.destroy(); terms?.destroy(); reply?.destroy();
+    ctx.setLeaveGuard?.(null);
+    window.removeEventListener('beforeunload', onBeforeUnload);
+  };
 }

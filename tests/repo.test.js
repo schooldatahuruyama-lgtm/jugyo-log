@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRepo } from '../js/repo.js';
 import { createMemoryNet } from '../js/dev/memory-net.js';
+import { createDemoBackend } from '../js/dev/demo.js';
 import { fileRefs } from '../js/lesson-logic.js';
 import { NetError } from '../js/errors.js';
 
@@ -52,6 +53,182 @@ function setup(initial = null) {
 }
 
 const writes = (calls) => calls.set.length + calls.update.length + calls.remove.length;
+
+test('返事の読み取り: 指定の道だけを読み、不正な返事・目印を落とす', async () => {
+  const first = { text: ' 文\r\n文 ', updatedAt: 10 };
+  const second = { seen: true, updatedAt: 0 };
+  const { repo, calls, mem } = setup({ replies: { c1: { l1: { s1: first, s2: second,
+    bad: { updatedAt: 20 }, long: { text: 'あ'.repeat(401), updatedAt: 20 }, wrong: '文' } } },
+  replyMarks: { s1: { c1: { l1: 10, l2: 0, bad: '20', wrong: true, obj: {} } } } });
+  const before = mem.dump();
+  const expected = { s1: { text: '文\n文', seen: false, updatedAt: 10 }, s2: { text: '', seen: true, updatedAt: 0 } };
+  assert.deepEqual(await repo.getReply('c1', 'l1', 's1'), expected.s1);
+  assert.deepEqual(await repo.listReplies('c1', 'l1'), expected);
+  assert.deepEqual(await repo.getReplyMarks('s1', 'c1'), { l1: 10, l2: 0 });
+  assert.deepEqual(calls.get, [['replies/c1/l1/s1'], ['replies/c1/l1'], ['replyMarks/s1/c1']]);
+  assert.equal(await repo.getReply('c1', 'l1', 'missing'), null);
+  assert.deepEqual(await repo.listReplies('c1', 'missing'), {});
+  assert.deepEqual(await repo.getReplyMarks('s1', 'missing'), {});
+  assert.equal(writes(calls), 0);
+  assert.deepEqual(mem.dump(), before);
+  for (const value of [null, undefined, 3, '文', [], { bad: NaN, wrong: Infinity }]) {
+    const direct = createRepo({ get: async () => value });
+    assert.equal(await direct.getReply('c1', 'l1', 's1'), null);
+    assert.deepEqual(await direct.listReplies('c1', 'l1'), {});
+    assert.deepEqual(await direct.getReplyMarks('s1', 'c1'), {});
+  }
+});
+
+test('setReply: 文と印を整え、本文と目印を 1 回で保存する。再保存は時刻だけ変わる', async () => {
+  const { repo, mem, calls } = setup();
+  const input = { text: ' 文\r\n文 ', seen: true, extra: true };
+  await repo.setReply('c1', 'l1', 's1', input, 10);
+  assert.equal(writes(calls), 1);
+  assert.deepEqual(calls.update[0], ['', { 'replies/c1/l1/s1': { text: '文\n文', seen: true, updatedAt: 10 }, 'replyMarks/s1/c1/l1': 10 }]);
+  await repo.setReply('c1', 'l1', 's1', input, 20);
+  assert.deepEqual(await repo.getReply('c1', 'l1', 's1'), { text: '文\n文', seen: true, updatedAt: 20 });
+  assert.deepEqual(await repo.getReplyMarks('s1', 'c1'), { l1: 20 });
+  await repo.setReply('c1', 'l1', 's1', { text: ' \n', seen: true }, 30);
+  assert.deepEqual(await mem.get('replies/c1/l1/s1'), { seen: true, updatedAt: 30 });
+  await repo.setReply('c1', 'l1', 's1', { text: 'あ'.repeat(400), seen: 'true' }, 40);
+  assert.deepEqual(await mem.get('replies/c1/l1/s1'), { text: 'あ'.repeat(400), updatedAt: 40 });
+  await repo.setReply('c1', 'l1', 's2', { text: 1, seen: true }, 50);
+  assert.deepEqual(await mem.get('replies/c1/l1/s2'), { seen: true, updatedAt: 50 });
+  assert.equal(await mem.get('records'), null);
+  assert.equal(calls.update.length, 5);
+  assert.deepEqual(input, { text: ' 文\r\n文 ', seen: true, extra: true });
+});
+
+test('setReply: 不正な入力・時刻は書く前に TypeError。空は削除せず removeReply に任せる', async () => {
+  const { repo, mem, calls } = setup();
+  await repo.setReply('c1', 'l1', 's1', { seen: true }, 10);
+  const before = mem.dump();
+  for (const value of [null, undefined, [], 1, '文', {}, { text: ' \r\n' }, { text: 1 }, { seen: 'true' },
+    { seen: 1 }, { text: 'あ'.repeat(401) }, { text: 'あ'.repeat(401), seen: true }]) {
+    await assert.rejects(repo.setReply('c1', 'l1', 's1', value, 20), TypeError);
+  }
+  for (const now of [undefined, null, '20', false, NaN, Infinity, {}, []]) {
+    await assert.rejects(repo.setReply('c1', 'l1', 's1', { seen: true }, now), TypeError);
+  }
+  assert.equal(writes(calls), 1);
+  assert.deepEqual(mem.dump(), before);
+});
+
+test('removeReply: 本文と目印を 1 回で消し、無くても成功。他の生徒・授業は残す', async () => {
+  const { repo, mem, calls } = setup();
+  for (const [lid, sid] of [['l1', 's1'], ['l1', 's2'], ['l2', 's1']]) {
+    await repo.setReply('c1', lid, sid, { seen: true }, 10);
+  }
+  for (let i = 0; i < 2; i++) {
+    await repo.removeReply('c1', 'l1', 's1');
+    assert.deepEqual(calls.update.at(-1), ['', { 'replies/c1/l1/s1': null, 'replyMarks/s1/c1/l1': null }]);
+  }
+  assert.equal(writes(calls), 5);
+  assert.equal(await repo.getReply('c1', 'l1', 's1'), null);
+  assert.deepEqual(await repo.getReplyMarks('s1', 'c1'), { l2: 10 });
+  assert.deepEqual(await mem.get('replies'), { c1: { l1: { s2: { seen: true, updatedAt: 10 } }, l2: { s1: { seen: true, updatedAt: 10 } } } });
+});
+
+test('返事の通信: 不正な ID は通信前に断り、通信失敗はそのまま伝える', async () => {
+  const { repo, calls } = setup();
+  for (const bad of ['', 'bad/key', 'bad.key', '#', '$', '[', ']', null, 1]) {
+    for (let i = 0; i < 3; i++) {
+      const ids = ['c1', 'l1', 's1'];
+      ids[i] = bad;
+      await assert.rejects(repo.getReply(...ids), TypeError);
+      await assert.rejects(repo.setReply(...ids, { seen: true }, 10), TypeError);
+      await assert.rejects(repo.removeReply(...ids), TypeError);
+      if (i < 2) {
+        await assert.rejects(repo.listReplies(...ids.slice(0, 2)), TypeError);
+        await assert.rejects(repo.getReplyMarks(...ids.slice(0, 2)), TypeError);
+      }
+    }
+  }
+  assert.equal(calls.get.length, 0);
+  assert.equal(writes(calls), 0);
+  for (const code of ['network', 'denied']) {
+    const error = new NetError(code);
+    const fail = async () => { throw error; };
+    const failed = createRepo({ get: fail, update: fail });
+    for (const operation of [() => failed.getReply('c1', 'l1', 's1'), () => failed.listReplies('c1', 'l1'),
+      () => failed.getReplyMarks('s1', 'c1'), () => failed.setReply('c1', 'l1', 's1', { seen: true }, 10),
+      () => failed.removeReply('c1', 'l1', 's1')]) {
+      await assert.rejects(operation(), (e) => e === error);
+    }
+  }
+});
+
+test('deleteLesson: 浅く読んだ全員の返事と目印を授業と同時に消す。不正な返事も残さない', async () => {
+  const { repo, mem, calls } = setup({ lessons: { c1: { l1: { title: '削除' }, l2: { title: '残す' } } },
+    replies: { c1: { l1: { s1: { text: '文', updatedAt: 10 }, s2: { broken: true } }, l2: { s1: { seen: true, updatedAt: 20 } } } },
+    replyMarks: { s1: { c1: { l1: 10, l2: 20 }, c2: { l1: 30 } }, s2: { c1: { l1: 10 } } } });
+  await repo.deleteLesson('c1', 'l1');
+  assert.deepEqual(calls.get, [['replies/c1/l1', { shallow: true }]]);
+  assert.deepEqual(calls.update, [['', { 'lessons/c1/l1': null, 'thumbs/c1/l1': null, 'replies/c1/l1': null,
+    'replyMarks/s1/c1/l1': null, 'replyMarks/s2/c1/l1': null }]]);
+  assert.equal(writes(calls), 1);
+  assert.equal(await mem.get('lessons/c1/l1'), null);
+  assert.equal(await mem.get('replies/c1/l1'), null);
+  assert.deepEqual(await mem.get('replyMarks'), { s1: { c1: { l2: 20 }, c2: { l1: 30 } } });
+  assert.deepEqual(await repo.getReply('c1', 'l2', 's1'), { text: '', seen: true, updatedAt: 20 });
+});
+
+test('deleteLesson: 浅い読みが失敗したら、何も消さずに失敗を伝える', async () => {
+  for (const code of ['network', 'denied']) {
+    const mem = createMemoryNet({ initial: { lessons: { c1: { l1: { title: '残す' } } } } });
+    const { net, calls } = counted(mem);
+    const before = mem.dump();
+    const error = new NetError(code);
+    const repo = createRepo({ ...net, get: async (...args) => {
+      assert.deepEqual(args, ['replies/c1/l1', { shallow: true }]);
+      throw error;
+    } });
+    await assert.rejects(repo.deleteLesson('c1', 'l1'), (e) => e === error);
+    assert.equal(writes(calls), 0);
+    assert.deepEqual(mem.dump(), before);
+  }
+});
+
+test('返事の更新・削除: 保存先が失敗したら本文と目印・授業は変更されない', async () => {
+  const initial = { lessons: { c1: { l1: { title: '残す' } } },
+    replies: { c1: { l1: { s1: { text: '元の返事', updatedAt: 10 } } } },
+    replyMarks: { s1: { c1: { l1: 10 } } } };
+  const error = new NetError('network');
+  const mem = createMemoryNet({ initial, onChange: () => { throw error; } });
+  const repo = createRepo(mem);
+  for (const operation of [() => repo.setReply('c1', 'l1', 's1', { text: '新しい返事', seen: true }, 20),
+    () => repo.removeReply('c1', 'l1', 's1'), () => repo.deleteLesson('c1', 'l1')]) {
+    await assert.rejects(operation(), (e) => e === error);
+    assert.deepEqual(mem.dump(), initial);
+  }
+});
+
+test('練習モードの返事: 先生と生徒の切り替え・再作成後も同じデータを読み、削除も保存する', async () => {
+  const saved = new Map();
+  const storage = { getItem: (k) => saved.get(k) ?? null, setItem: (k, v) => saved.set(k, v), removeItem: (k) => saved.delete(k) };
+  const options = { storage, random: () => 0.1, now: () => 10 };
+  let demo = createDemoBackend(options);
+  let repo = createRepo(demo.net);
+  const password = 'demo-only';
+  const email = 's00-001.g1@jugyolog.invalid';
+  await demo.auth.signIn('teacher@example.invalid', password);
+  const { uid } = await demo.auth.createAccount(email, password);
+  await repo.linkAccount('s00-001', { uid, generation: 1, password });
+  await repo.setReply('c1', 'l1', 's00-001', { text: '確認用の返事', seen: true }, 10);
+  demo.auth.signOut();
+  await demo.auth.signIn(email, password);
+  assert.deepEqual(await repo.getReply('c1', 'l1', 's00-001'), { text: '確認用の返事', seen: true, updatedAt: 10 });
+  demo = createDemoBackend(options);
+  repo = createRepo(demo.net);
+  assert.equal((await demo.auth.restore()).uid, uid);
+  assert.deepEqual(await repo.getReplyMarks('s00-001', 'c1'), { l1: 10 });
+  demo.auth.signOut();
+  await demo.auth.signIn('teacher@example.invalid', password);
+  await repo.removeReply('c1', 'l1', 's00-001');
+  const restored = createRepo(createDemoBackend(options).net);
+  assert.equal(await restored.getReply('c1', 'l1', 's00-001'), null);
+  assert.deepEqual(await restored.getReplyMarks('s00-001', 'c1'), {});
+});
 
 test('PDF の目録: 入れ子へ保存・削除し、平らな場所で読み直す。小さい画像は書かない', async () => {
   const { repo, mem, calls } = setup();
@@ -705,7 +882,7 @@ test('deleteLesson: 授業とサムネイルを 1 回で消し、ほかの授業
   const { repo, mem, calls } = setup({ lessons: { c1: { l1: { title: '電流' }, l2: { title: '電圧' } } }, thumbs: { c1: { l1: { m1: '画像' }, l2: { m2: '画像2' } } }, records: { c1: { l2: { s1: { memo: '記録' } } } } });
   await repo.deleteLesson('c1', 'l1');
   assert.equal(writes(calls), 1);
-  assert.deepEqual(calls.update, [['', { 'lessons/c1/l1': null, 'thumbs/c1/l1': null }]]);
+  assert.deepEqual(calls.update, [['', { 'lessons/c1/l1': null, 'thumbs/c1/l1': null, 'replies/c1/l1': null }]]);
   assert.equal(await mem.get('lessons/c1/l1'), null);
   assert.equal(await mem.get('thumbs/c1/l1'), null);
   assert.deepEqual(await mem.get('lessons/c1/l2'), { title: '電圧' });

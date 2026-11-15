@@ -1,5 +1,5 @@
 // 規則の確認: 本物の Firebase の規則が、生徒に読ませてはいけないものを読ませていないかを確かめる
-// （docs/superpowers/specs/2026-11-13-jugyo-log-1a-data.md の 4 章。1b-1 と重要用語の範囲）。
+// （docs/superpowers/specs/2026-11-13-jugyo-log-1a-data.md の 4 章。添付・手書き・重要用語・先生の返事を含む）。
 // 通信の道具は引数で受け取る。画面や fetch は知らない。
 // 規則そのものを試すので、データベースの場所をここに直接書く（repo.js の例外。確かめる場所の一覧）。
 // パスワードとトークンは、結果・console・例外の文に出さない。
@@ -139,6 +139,9 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       const path = `${inkThumbs}/${field}/${studentId}`;
       return trackWrite({ [path]: null }, () => net.set(path, PROBE_THUMB));
     };
+    const ownReply = `replies/${inId}/${inLessonId}/${sid}`;
+    const ownReplyMark = `replyMarks/${sid}/${inId}/${inLessonId}`;
+    const reply = { text: 'あ'.repeat(CONFIG.reply.textMax), updatedAt: now() };
 
     const checks = [
       ['gen/s00-999 を読む（ログインなし）', 'ok', () => net.getPublic(`gen/${sid}`)],
@@ -210,6 +213,19 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       ['21 文字の用語を terms/t1 に書く', 'denied', () => writeTerm('t1', 'あ'.repeat(21))],
       ['ほかの生徒（s00-998）の terms を読む', 'denied', () => net.get('terms/s00-998')],
       ['lessons/（入っているクラス）/（授業）/terms/（用語）を書く', 'denied', () => net.set(`lessons/${inId}/${inLessonId}/terms/${materialId}`, '光の反射')],
+      // 返事の規則を個別に試すため、ここだけ本文と目印を別々に書く。片付けは先生として一緒に行う。
+      ['先生として確認用の生徒の replies に文を書く', 'ok', () => teacherNet.set(ownReply, reply)],
+      ['先生として確認用の生徒の replies に見ましたの印を書く', 'ok', () => teacherNet.set(ownReply, { seen: true, updatedAt: reply.updatedAt })],
+      ['先生として updatedAt だけの replies を書く', 'denied', () => teacherNet.set(ownReply, { updatedAt: reply.updatedAt })],
+      ['先生として text が 401 文字の replies を書く', 'denied', () => teacherNet.set(ownReply, { ...reply, text: 'あ'.repeat(CONFIG.reply.textMax + 1) })],
+      ['先生として seen が false の replies を書く', 'denied', () => teacherNet.set(ownReply, { ...reply, seen: false })],
+      ['先生として確認用の生徒の replyMarks に数を書く', 'ok', () => teacherNet.set(ownReplyMark, reply.updatedAt)],
+      ['自分の replies を読む', 'ok', () => net.get(ownReply)],
+      ['自分の replies を書く', 'denied', () => net.set(ownReply, reply)],
+      ['自分の replyMarks を読む', 'ok', () => net.get(`replyMarks/${sid}/${inId}`)],
+      ['自分の replyMarks を書く', 'denied', () => net.set(ownReplyMark, reply.updatedAt)],
+      ['ほかの生徒（s00-998）の replies を読む', 'denied', () => net.get(`replies/${inId}/${inLessonId}/s00-998`)],
+      ['replies/（入っているクラス）/（授業）全体を読む', 'denied', () => net.get(`replies/${inId}/${inLessonId}`)],
       ['classes/（入っているクラス）/name を書く', 'denied', () => net.set(`classes/${inId}/name`, '書きかえ')],
       ['memberOf/s00-999/（入っていないクラス）に true を書く', 'denied', () => net.set(`memberOf/${sid}/${outId}`, true)],
       ['accounts/（自分の uid）を別の ID に書きかえる', 'denied', () => net.set(`accounts/${uid}`, 's00-998')],
@@ -309,6 +325,8 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       patch[`classes/${c.id}`] = null;
       patch[`members/${c.id}`] = null;
       patch[`thumbs/${c.id}`] = null;
+      patch[`replies/${c.id}`] = null;
+      patch[`replyMarks/${sid}/${c.id}`] = null;
       // lessons は授業 1 件から下だけを書ける規則なので、クラスの場所をまるごと消さない
       const lessons = await teacherNet.get(`lessons/${c.id}`, { shallow: true });
       const lessonIds = lessons !== null && typeof lessons === 'object' && !Array.isArray(lessons) ? Object.keys(lessons) : [];
@@ -338,6 +356,13 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
   async function removeKnown(recordsRemoved) {
     try {
       const patch = {};
+      // 拒否のはずの書きこみが通った場合や、応答だけ失われた場合も、先生として返事と目印を消す。
+      if (classesMade) {
+        for (const { classId } of targets) {
+          patch[`replies/${classId}`] = null;
+          patch[`replyMarks/${sid}/${classId}`] = null;
+        }
+      }
       // 生徒の片付けに失敗したときは、次の回に必要なクラス・授業・所属を残す。
       if (classesMade && recordsRemoved) {
         for (const { classId: id, lessonId } of targets) {

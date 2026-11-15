@@ -4,7 +4,7 @@ import { dateLabel, thumbOrder } from '../../lesson-logic.js';
 import { swipeDecision, stepIndex } from '../../student-list-logic.js';
 import { mergedTerms, termKey } from '../../term-logic.js';
 
-export function lessonTile({ lesson, myTerms, query = '', mark, pending, loadThumbs, onOpen, swipe }) {
+export function lessonTile({ lesson, myTerms, query = '', mark, hasReply = false, pending, loadThumbs, onOpen, swipe }) {
   let alive = true;
   let loaded = false;
   let opened = false;
@@ -38,6 +38,7 @@ export function lessonTile({ lesson, myTerms, query = '', mark, pending, loadThu
     el('div', { class: 'lesson-tile-marks' },
       mark === 'done' ? statusChip('ok', '記録あり') : null,
       mark === 'todo' ? statusChip('warn', '振り返りがまだ') : null,
+      hasReply ? el('span', { class: 'reply-mark', text: '💬 先生から' }) : null,
       pending ? statusChip('danger', 'まだ保存できていません') : null));
   const node = el('article', { class: 'lesson-tile' },
     el('div', { class: 'lesson-tile-materials' }, frame, controls),

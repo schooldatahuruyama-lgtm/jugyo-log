@@ -65,6 +65,14 @@ function fakeTeacherRepo({ generation = null, students = [], classes = [], units
 
 // 先生の net の代役（片付けの書きこみを記録する）。failUpdate(patch) が true ならその update を失敗させる
 // data: { 場所: 値 }（get で返す。無ければ null）
+function validReply(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) && Number.isFinite(value.updatedAt)
+    && ('text' in value || 'seen' in value)
+    && (!('text' in value) || typeof value.text === 'string' && value.text.length >= 1 && value.text.length <= 400)
+    && (!('seen' in value) || value.seen === true)
+    && Object.keys(value).every((key) => ['text', 'seen', 'updatedAt'].includes(key));
+}
+
 function fakeTeacherNet({ failUpdate = () => false, data = {}, answer = () => undefined } = {}) {
   const calls = [];
   return {
@@ -78,7 +86,8 @@ function fakeTeacherNet({ failUpdate = () => false, data = {}, answer = () => un
     },
     async set(path, value) {
       calls.push(['set', path, value]);
-      const a = answer('set', path, value) ?? (path.startsWith('records/') ? 'denied' : 'ok');
+      const a = answer('set', path, value) ?? (path.startsWith('records/')
+        || path.startsWith('replies/') && !validReply(value) ? 'denied' : 'ok');
       if (a instanceof Error) throw a;
       if (a === 'denied') throw new NetError('denied', '権限がありません');
     },
@@ -118,7 +127,8 @@ function correctAnswer(method, path, repo, value) {
     const okPaths = [`accounts/${STUDENT_UID}`, `classes/${inId}`, `members/${inId}/s00-999`, 'memberOf/s00-999'];
     const lesson = repo.state.lessons.find((l) => l.classId === inId);
     if (lesson) okPaths.push(`lessons/${inId}`, `thumbs/${inId}/${lesson.id}`, 'units',
-      `records/${inId}/${lesson.id}/s00-999`, `marks/s00-999/${inId}`, `recThumbs/${inId}/${lesson.id}/s00-999`, `terms/s00-999/${inId}`);
+      `records/${inId}/${lesson.id}/s00-999`, `marks/s00-999/${inId}`, `recThumbs/${inId}/${lesson.id}/s00-999`, `terms/s00-999/${inId}`,
+      `replies/${inId}/${lesson.id}/s00-999`, `replyMarks/s00-999/${inId}`);
     return okPaths.includes(path) ? 'ok' : 'denied';
   }
   if (method === 'remove') return path === 'initialPw/s00-999' ? 'ok' : 'denied';
@@ -360,7 +370,63 @@ function pageChecks(repo) {
   ];
 }
 
-const LABEL_COUNT = 90;
+const LABEL_COUNT = 102;
+
+function replyChecks(repo) {
+  const cid = repo.state.members[0].classId;
+  const lid = repo.state.lessons.find((l) => l.classId === cid).id;
+  const own = `replies/${cid}/${lid}/s00-999`;
+  const mark = `replyMarks/s00-999/${cid}/${lid}`;
+  return [
+    ['teacher', 'set', own, 'ok', (v) => v.text?.length === 400 && !('seen' in v) && v.updatedAt === 1000],
+    ['teacher', 'set', own, 'ok', (v) => v.seen === true && !('text' in v) && v.updatedAt === 1000],
+    ['teacher', 'set', own, 'denied', (v) => Object.keys(v).length === 1 && v.updatedAt === 1000],
+    ['teacher', 'set', own, 'denied', (v) => v.text?.length === 401 && v.updatedAt === 1000],
+    ['teacher', 'set', own, 'denied', (v) => v.seen === false && v.text?.length === 400 && v.updatedAt === 1000],
+    ['teacher', 'set', mark, 'ok', (v) => v === 1000],
+    ['student', 'get', own, 'ok'],
+    ['student', 'set', own, 'denied', (v) => validReply(v)],
+    ['student', 'get', `replyMarks/s00-999/${cid}`, 'ok'],
+    ['student', 'set', mark, 'denied', (v) => v === 1000],
+    ['student', 'get', `replies/${cid}/${lid}/s00-998`, 'denied'],
+    ['student', 'get', `replies/${cid}/${lid}`, 'denied'],
+  ];
+}
+
+test('runRulesProbe: 返事の 12 行は指定の権限・形を確かめ、逆の答えと通信失敗は不合格', async (t) => {
+  for (let i = 0; i < 12; i++) {
+    for (const failure of [null, '逆の答え', '通信失敗']) {
+      await t.test(`返事の行 ${i + 1}: ${failure || '正しい答え'}`, async () => {
+        let called = 0;
+        const override = (who) => (m, p, repo, v) => {
+          if (repo.state.lessons.length === 0) return undefined;
+          const [role, ...check] = replyChecks(repo)[i];
+          if (who !== role || !matchesRecordCheck(check, m, p, v)) return undefined;
+          called += 1;
+          return failure === '通信失敗' ? new NetError('network')
+            : failure === '逆の答え' ? (check[2] === 'ok' ? 'denied' : 'ok') : undefined;
+        };
+        const s = setup({ override: override('student'), overrideTeacher: override('teacher') });
+        const rows = await runRulesProbe(s.args);
+        const [who, ...check] = replyChecks(s.teacherRepo)[i];
+        const calls = who === 'teacher' ? s.teacherNet.calls : s.studentNet().calls;
+        assert.equal(called, 1);
+        assert.equal(rows.length, LABEL_COUNT);
+        assert.equal(rows[65 + i].expect, check[2]);
+        assert.equal(rows[65 + i].pass, failure === null);
+        assert.equal(rows[65 + i].got, failure === '通信失敗' ? 'error'
+          : failure === '逆の答え' ? (check[2] === 'ok' ? 'denied' : 'ok') : check[2]);
+        assert.equal(rows.filter((r) => !r.pass).length, failure ? 1 : 0);
+        assert.ok(calls.some(([m, p, v]) => matchesRecordCheck(check, m, p, v)));
+        const cid = s.teacherRepo.state.members[0].classId;
+        assert.ok(s.teacherNet.calls.some(([m, , patch]) => m === 'update'
+          && patch[`replies/${cid}`] === null && patch[`replyMarks/s00-999/${cid}`] === null));
+        assert.ok(!s.studentNet().calls.some(([m, , patch]) => m === 'update'
+          && Object.keys(patch).some((p) => /^(replies|replyMarks)\//.test(p))));
+      });
+    }
+  }
+});
 
 test('runRulesProbe: PDF の 7 行は PDF・on・ページ・時刻を確かめ、逆の答えと通信失敗を検出する', async () => {
   for (let i = 0; i < 7; i++) {
@@ -377,8 +443,8 @@ test('runRulesProbe: PDF の 7 行は PDF・on・ページ・時刻を確かめ�
       const rows = await runRulesProbe(s.args);
       assert.equal(rows.length, LABEL_COUNT);
       assert.equal(called, 1);
-      assert.equal(rows[83 + i].expect, pageChecks(s.teacherRepo)[i][2]);
-      assert.equal(rows[83 + i].pass, failure === null);
+      assert.equal(rows[95 + i].expect, pageChecks(s.teacherRepo)[i][2]);
+      assert.equal(rows[95 + i].pass, failure === null);
       assert.equal(rows.filter((row) => !row.pass).length, failure ? 1 : 0);
       const [, path, expect] = pageChecks(s.teacherRepo)[i];
       const cleanup = s.studentNet().calls.some(([m, , v]) => m === 'update' && v[path] === null);
@@ -396,7 +462,7 @@ test('runRulesProbe: PDF の準備とページの応答が失われても生徒�
       && v.type !== 'video' && (v.fileId === 'probe-pdf' || v.on === 'probe-pdf' && v.updatedAt === 1000)
       ? new NetError('network') : undefined });
     const rows = await runRulesProbe(s.args);
-    assert.equal(rows[83].got, 'error');
+    assert.equal(rows[95].got, 'error');
     assert.equal(rows.some((row) => row.label === '片付け'), false);
     assert.ok(s.studentNet().calls.some(([m, , v]) => m === 'update' && Object.keys(v).some((p) => p.endsWith(suffix) && v[p] === null)));
   }
@@ -417,8 +483,8 @@ test('runRulesProbe: 写真の 6 行は on・写真・資料の対応を確か�
       const rows = await runRulesProbe(s.args);
       assert.equal(rows.length, LABEL_COUNT);
       assert.equal(called, 1);
-      assert.equal(rows[77 + i].expect, pictureChecks(s.teacherRepo)[i][2]);
-      assert.equal(rows[77 + i].pass, failure === null);
+      assert.equal(rows[89 + i].expect, pictureChecks(s.teacherRepo)[i][2]);
+      assert.equal(rows[89 + i].pass, failure === null);
       assert.equal(rows.filter((row) => !row.pass).length, failure ? 1 : 0);
       assertLessonCleanup(s);
     }
@@ -429,8 +495,8 @@ test('runRulesProbe: 写真の目録は応答が失われても生徒として�
   for (const loseRecordReply of [false, true]) {
     const s = recordCleanupSetup({ loseRecordReply });
     const rows = await runRulesProbe(s.args);
-    for (const i of [77, 81]) assert.equal(rows[i].got, loseRecordReply ? 'error' : 'ok');
-    for (const i of [78, 79, 80, 82]) assert.equal(rows[i].got, 'denied');
+    for (const i of [89, 93]) assert.equal(rows[i].got, loseRecordReply ? 'error' : 'ok');
+    for (const i of [90, 91, 92, 94]) assert.equal(rows[i].got, 'denied');
     assert.equal(await s.mem.get('records'), null);
     assert.equal(await s.mem.get('lessons'), null);
     assert.equal(rows.some((row) => row.label === '片付け'), false);
@@ -444,7 +510,7 @@ test('runRulesProbe: 写真の目録は応答が失われても生徒として�
 });
 
 test('runRulesProbe: 古い目録・削除時刻の 2 行は拒否を試し、逆の答えと通信失敗を検出する', async () => {
-  for (const [i, kind] of [[73, 'ink'], [74, 'inkCleared']]) {
+  for (const [i, kind] of [[85, 'ink'], [86, 'inkCleared']]) {
     for (const failure of [null, '逆の答え', '通信失敗']) {
       let called = 0;
       const s = setup({ override: (m, p, repo, v) => {
@@ -483,7 +549,7 @@ test('runRulesProbe: 形の拒否を試す時刻と、通す削除時刻は目�
 });
 
 test('runRulesProbe: 削除時刻の 2 行は数を書き、逆の答えと通信失敗を検出する', async () => {
-  for (const [i, field, expect] of [[75, 'memo', 'ok'], [76, 'other', 'denied']]) {
+  for (const [i, field, expect] of [[87, 'memo', 'ok'], [88, 'other', 'denied']]) {
     for (const failure of [null, '逆の答え', '通信失敗']) {
       let called = 0;
       const s = setup({ override: (m, p, repo, v) => {
@@ -508,8 +574,8 @@ test('runRulesProbe: 削除時刻は応答が失われても所属・授業を�
   for (const loseRecordReply of [false, true]) {
     const s = recordCleanupSetup({ loseRecordReply });
     const rows = await runRulesProbe(s.args);
-    assert.equal(rows[75].got, loseRecordReply ? 'error' : 'ok');
-    assert.ok(rows.slice(73, 75).every((r) => r.pass));
+    assert.equal(rows[87].got, loseRecordReply ? 'error' : 'ok');
+    assert.ok(rows.slice(85, 87).every((r) => r.pass));
     const write = s.events.findIndex(([who, m, p, v]) => who === '生徒' && m === 'set' && p.endsWith('/inkCleared/memo') && v === 1003);
     const path = s.events[write][2];
     const remove = s.events.findIndex(([who, m, , v]) => who === '生徒' && m === 'update' && v[path] === null);
@@ -711,7 +777,7 @@ test('runRulesProbe: 小さい画像を片付けられないときは、片付�
   assert.equal(await s.mem.get('accounts'), null);
 });
 
-test('runRulesProbe: 規則が正しければ、全部の行が pass: true（90 行）', async () => {
+test('runRulesProbe: 規則が正しければ、全部の行が pass: true（102 行）', async () => {
   const s = setup();
   const rows = await runRulesProbe(s.args);
   assert.equal(rows.length, LABEL_COUNT);
@@ -731,6 +797,7 @@ test('runRulesProbe: 規則が正しければ、全部の行が pass: true（90 
     'ok', 'denied', 'denied',
     'ok', 'denied', 'denied', 'denied', 'denied', 'ok', 'denied', 'denied', 'denied', 'ok',
     'ok', 'ok', 'denied', 'denied', 'denied', 'denied',
+    'ok', 'ok', 'denied', 'denied', 'denied', 'ok', 'ok', 'denied', 'ok', 'denied', 'denied', 'denied',
     'denied', 'denied', 'denied', 'denied', 'denied', 'ok',
     'ok', 'ok',
     'denied', 'denied',
@@ -752,7 +819,7 @@ test('runRulesProbe: 先生が記録一覧と印を読む 2 行は、拒否や�
         } });
         const rows = await runRulesProbe(s.args);
         assert.equal(rows.length, LABEL_COUNT);
-        const row = rows[71 + i];
+        const row = rows[83 + i];
         assert.equal(row.expect, 'ok');
         assert.equal(row.got, got);
         assert.equal(row.pass, got === 'ok');
@@ -831,7 +898,7 @@ test('runRulesProbe: メモは 2000 文字・level なし、理解度は records
 // 実際にデータを残す代役。先生は記録を消せず、記録のある授業も消せない。
 function recordCleanupSetup({ initial = {}, failStudentCleanup = false, failTeacherCleanup = false,
   allowForbidden = false, loseRecordReply = false, allowRecords = false, allowMarks = false,
-  failCleanup = () => false } = {}) {
+  failCleanup = () => false, loseReplyResponse = false, failReplyCleanup = false, allowStudentReply = false } = {}) {
   const mem = createMemoryNet({ now: () => 1000, initial });
   const events = [];
   const denied = () => { throw new NetError('denied', '権限がありません'); };
@@ -840,11 +907,14 @@ function recordCleanupSetup({ initial = {}, failStudentCleanup = false, failTeac
     async set(path, value) {
       events.push(['先生', 'set', path, value]);
       if (path.startsWith('records/')) denied();
-      return mem.set(path, value);
+      if (path.startsWith('replies/') && !validReply(value)) denied();
+      await mem.set(path, value);
+      if (loseReplyResponse && /^(replies|replyMarks)\//.test(path)) throw new NetError('network');
     },
     async update(path, patch) {
       events.push(['先生', 'update', path, patch]);
       for (const [p, v] of Object.entries(patch)) {
+        if (failReplyCleanup && /^(replies|replyMarks)\//.test(p) && v === null) throw new NetError('network');
         if (p.startsWith('records/')) denied();
         if (p.startsWith('lessons/') && v === null
           && (failTeacherCleanup || await mem.get(p.replace('lessons/', 'records/')))) denied();
@@ -856,6 +926,7 @@ function recordCleanupSetup({ initial = {}, failStudentCleanup = false, failTeac
   async function canWrite(path, value) {
     const parts = path.split('/');
     const [kind] = parts;
+    if (allowStudentReply && ['replies', 'replyMarks'].includes(kind)) return true;
     if ((kind === 'records' && allowRecords) || (kind === 'marks' && allowMarks)) return true;
     const byStudent = kind === 'marks' || kind === 'terms';
     const sid = byStudent ? parts[1] : kind === 'inkThumbs' ? parts[4] : parts[3];
@@ -919,6 +990,8 @@ function recordCleanupSetup({ initial = {}, failStudentCleanup = false, failTeac
     async get(path) {
       const parts = path.split('/');
       if (parts[0] === 'records' && (parts.length !== 4 || parts[3] !== 's00-999')) denied();
+      if (parts[0] === 'replies' && (parts.length !== 4 || parts[3] !== 's00-999')) denied();
+      if (parts[0] === 'replyMarks' && parts[1] !== 's00-999') denied();
       if (parts[0] === 'recThumbs' && parts[3] !== 's00-999') denied();
       if (parts[0] === 'inkThumbs' && (parts.length !== 5 || parts[4] !== 's00-999')) denied();
       if (parts[0] === 'terms' && parts[1] !== 's00-999') denied();
@@ -950,6 +1023,47 @@ function recordCleanupSetup({ initial = {}, failStudentCleanup = false, failTeac
   return { args, mem, events };
 }
 
+test('runRulesProbe: 返事の応答が失われても、禁止の生徒の書きこみが通っても、先生として両方を片付ける', async () => {
+  for (const options of [{}, { loseReplyResponse: true }, { allowStudentReply: true }, { allowStudentReply: true, loseRecordReply: true }]) {
+    const s = recordCleanupSetup(options);
+    const rows = await runRulesProbe(s.args);
+    assert.equal(rows.length, LABEL_COUNT);
+    assert.equal(rows.some((r) => r.label === '片付け'), false);
+    assert.equal(rows[65].got, options.loseReplyResponse ? 'error' : 'ok');
+    assert.equal(rows[66].got, options.loseReplyResponse ? 'error' : 'ok');
+    assert.equal(rows[70].got, options.loseReplyResponse ? 'error' : 'ok');
+    if (options.allowStudentReply) {
+      for (const i of [72, 74]) {
+        assert.equal(rows[i].got, options.loseRecordReply ? 'error' : 'ok');
+        assert.equal(rows[i].pass, false);
+      }
+    }
+    for (const path of ['replies', 'replyMarks', 'classes', 'lessons']) assert.equal(await s.mem.get(path), null, path);
+    const writes = s.events.filter(([who, method, path]) => who === '先生' && method === 'set' && path.startsWith('replies/'));
+    const cid = writes[0][2].split('/')[1];
+    assert.ok(s.events.some(([who, m, , patch]) => who === '先生' && m === 'update'
+      && patch[`replies/${cid}`] === null && patch[`replyMarks/s00-999/${cid}`] === null));
+  }
+});
+
+test('runRulesProbe: 返事の片付けに失敗したら不合格とし、次の実行で前回分を消す', async () => {
+  const first = recordCleanupSetup({ failReplyCleanup: true });
+  const rows = await runRulesProbe(first.args);
+  assert.deepEqual(rows.at(-1), { label: '片付け', expect: 'ok', got: 'error', pass: false });
+  assert.ok(await first.mem.get('replies'));
+  assert.ok(await first.mem.get('replyMarks'));
+  const initial = first.mem.dump();
+  initial.classes.real = { year: 2026, name: '残すクラス' };
+  initial.replies.real = { lesson: { 's00-001': { text: '残す返事', updatedAt: 10 } } };
+  initial.replyMarks['s00-001'] = { real: { lesson: 10 } };
+  const second = recordCleanupSetup({ initial });
+  const retried = await runRulesProbe(second.args);
+  assert.equal(retried.length, LABEL_COUNT);
+  assert.ok(retried.slice(65, 77).every((r) => r.pass));
+  assert.deepEqual(await second.mem.get('replies'), { real: initial.replies.real });
+  assert.deepEqual(await second.mem.get('replyMarks'), { 's00-001': initial.replyMarks['s00-001'] });
+});
+
 test('runRulesProbe: 生徒の記録と印を先に消し、そのあと先生が授業を消す。続けて 2 回でも残らない', async () => {
   const s = recordCleanupSetup();
   const first = await runRulesProbe(s.args);
@@ -959,8 +1073,8 @@ test('runRulesProbe: 生徒の記録と印を先に消し、そのあと先生�
   assert.ok(first.slice(23, 38).every((r) => r.pass));
   assert.ok(first.slice(38, 49).every((r) => r.pass));
   assert.ok(first.slice(49, 59).every((r) => r.pass));
-  assert.ok(first.slice(73, 77).every((r) => r.pass));
-  for (const path of ['records', 'marks', 'recThumbs', 'inkThumbs', 'lessons', 'classes', 'accounts']) assert.equal(await s.mem.get(path), null, path);
+  assert.ok(first.slice(85, 89).every((r) => r.pass));
+  for (const path of ['records', 'marks', 'replies', 'replyMarks', 'recThumbs', 'inkThumbs', 'lessons', 'classes', 'accounts']) assert.equal(await s.mem.get(path), null, path);
   const removeRecords = s.events.findIndex(([who, m, , v]) => who === '生徒' && m === 'update'
     && Object.keys(v).some((p) => p.startsWith('records/')) && Object.values(v).every((x) => x === null));
   const removeLessons = s.events.findIndex(([who, m, , v]) => who === '先生' && m === 'update'
@@ -992,7 +1106,7 @@ test('runRulesProbe: 手書きと画像は応答が失われても片付け、�
 test('runRulesProbe: 先生の記録一覧と印の読み取りは、生徒が書いたあと・消す前に 1 回ずつ行う', async () => {
   const s = recordCleanupSetup();
   const rows = await runRulesProbe(s.args);
-  assert.ok(rows.slice(71, 73).every((r) => r.pass));
+  assert.ok(rows.slice(83, 85).every((r) => r.pass));
   const write = s.events.findIndex(([who, m, , v]) => who === '生徒' && m === 'update'
     && Object.entries(v).some(([p, x]) => p.startsWith('records/') && x?.level === 3));
   const own = Object.keys(s.events[write][3]).find((p) => p.startsWith('records/'));
@@ -1360,6 +1474,7 @@ test('runRulesProbe: 確認用の生徒としてする読み書き（表の順�
       assert.ok(call);
       return call.slice(0, 2);
     }),
+    ...replyChecks(s.teacherRepo).filter(([who]) => who === 'student').map(([, m, p]) => [m, p]),
     ['set', `classes/${inId}/name`],
     ['set', `memberOf/s00-999/${outId}`],
     ['set', `accounts/${STUDENT_UID}`],
@@ -1378,7 +1493,7 @@ test('runRulesProbe: 確認用の生徒としてする読み書き（表の順�
     ['set', `records/${inId}/${s.teacherRepo.state.lessons.find((l) => l.classId === inId).id}/s00-999/attachments/a2`],
     ...pageChecks(s.teacherRepo).map(([m, p]) => [m, p]),
   ]);
-  const sets = s.studentNet().calls.filter(([m, p]) => m === 'set' && !/^(lessons|thumbs|units|records|marks|recThumbs|inkThumbs|terms)\//.test(p));
+  const sets = s.studentNet().calls.filter(([m, p]) => m === 'set' && !/^(lessons|thumbs|units|records|marks|recThumbs|inkThumbs|terms|replies|replyMarks)\//.test(p));
   assert.equal(sets[1][2], true);                       // memberOf に true
   assert.equal(typeof sets[2][2], 'string');            // accounts を別の ID に
   assert.notEqual(sets[2][2], 's00-999');
@@ -1669,7 +1784,7 @@ test('runRulesProbe: 書きこみがすべて通っても、確認用データ�
     const key = Object.keys(initial[path])[0];
     assert.deepEqual(await mem.get(path), { [key]: initial[path][key] }, path);
   }
-  for (const path of ['members', 'memberOf', 'accounts', 'initialPw', 'records', 'marks', 'recThumbs', 'terms']) assert.equal(await mem.get(path), null, path);
+  for (const path of ['members', 'memberOf', 'accounts', 'initialPw', 'records', 'marks', 'replies', 'replyMarks', 'recThumbs', 'terms']) assert.equal(await mem.get(path), null, path);
   assert.equal(await mem.get('gen/s00-999'), 1);
   assert.equal(await mem.get('students/s00-999/createdAt'), 1000);
 });

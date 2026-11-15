@@ -251,6 +251,41 @@
         }
       }
     },
+    "replies": {
+      "$classId": {
+        ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+        ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+        "$lessonId": {
+          "$sid": {
+            ".read": "auth != null && root.child('accounts').child(auth.uid).val() === $sid",
+            ".validate": "newData.hasChildren(['updatedAt']) && (newData.hasChild('text') || newData.hasChild('seen'))",
+            "text": {
+              ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 400"
+            },
+            "seen": {
+              ".validate": "newData.val() === true"
+            },
+            "updatedAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        }
+      }
+    },
+    "replyMarks": {
+      "$sid": {
+        ".read": "auth != null && (root.child('teacherList').child(auth.uid).val() === true || root.child('accounts').child(auth.uid).val() === $sid)",
+        ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+        "$classId": {
+          "$lessonId": {
+            ".validate": "newData.isNumber()"
+          }
+        }
+      }
+    },
     "marks": {
       "$sid": {
         ".read": "auth != null && (root.child('teacherList').child(auth.uid).val() === true || root.child('accounts').child(auth.uid).val() === $sid)",

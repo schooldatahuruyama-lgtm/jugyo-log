@@ -18,6 +18,7 @@ export function mount(root, ctx) {
   let lessons = [];
   let units = [];
   let marks = null;
+  let replyMarks = {};
   let myTerms = {};
   let termsReady = false;
   let query = '';
@@ -229,6 +230,7 @@ export function mount(root, ctx) {
           lesson,
           myTerms: myTerms[lesson.id], query,
           mark: marks !== null ? tileMark(marks[lesson.id]) : undefined,
+          hasReply: Object.hasOwn(replyMarks, lesson.id),
           pending: pending.has(lesson.id),
           loadThumbs: () => ctx.thumbs.load(lesson),
           onOpen: () => go('lesson', { classId, lessonId: lesson.id }),
@@ -311,14 +313,16 @@ export function mount(root, ctx) {
       sub.textContent = current.number === null ? current.name : `${current.name}　出席番号 ${current.number}`;
       yearSelect.value = current.id;
       filters.hidden = false;
-      const [lessonResult, markResult, unitResult, termResult] = await Promise.allSettled([
+      const [lessonResult, markResult, unitResult, termResult, replyMarkResult] = await Promise.allSettled([
         ctx.repo.listLessons(current.id), ctx.repo.getMarks(studentId, current.id), ctx.repo.listUnits(current.year),
         ctx.repo.getMyTerms(studentId, current.id),
+        ctx.repo.getReplyMarks(studentId, current.id),
       ]);
       if (stale()) return;
       if (lessonResult.status === 'rejected') throw lessonResult.reason;
       lessons = lessonResult.value;
       marks = markResult.status === 'fulfilled' ? markResult.value : null;
+      replyMarks = replyMarkResult.status === 'fulfilled' ? replyMarkResult.value : {};
       unitsReady = unitResult.status === 'fulfilled';
       units = unitsReady ? sortUnits(unitResult.value) : [];
       termsReady = termResult.status === 'fulfilled';

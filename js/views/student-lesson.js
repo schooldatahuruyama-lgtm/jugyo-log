@@ -9,6 +9,7 @@ import { attachmentPane } from './parts/attachment-pane.js';
 import { headingIcon } from './parts/heading-icon.js';
 import { termRow } from './parts/term-row.js';
 import { inkField } from './parts/ink-field.js';
+import { replyBox } from './parts/reply-box.js';
 
 export function mount(root, ctx) {
   const { classId, lessonId } = ctx.params;
@@ -27,6 +28,7 @@ export function mount(root, ctx) {
   let materials = null;
   let attachments = null;
   let terms = null;
+  let reply = null;
   const dialogs = new AbortController();
   const fields = {};
   const counts = {};
@@ -273,6 +275,8 @@ export function mount(root, ctx) {
       attachmentsArea.replaceChildren(attachments.node);
       terms = termRow({ ctx, classId, lessonId, studentId, lesson, readOnly: false });
       termsArea.replaceChildren(terms.node);
+      reply = replyBox({ ctx, classId, lessonId, studentId, readOnly: true });
+      content.append(reply.node);
     } catch {
       if (alive) pageMessage.replaceChildren(
         el('p', { class: 'error', text: 'つながりません。電波を確かめて、もう一度ためしてください。' }),
@@ -282,6 +286,7 @@ export function mount(root, ctx) {
 
   async function refreshRecord() {
     if (!alive || !ready || document.visibilityState !== 'visible') return;
+    void reply?.reload();
     const current = ++refreshId;
     const startedRevision = revision;
     try {
@@ -365,5 +370,6 @@ export function mount(root, ctx) {
     materials?.destroy();
     attachments?.destroy();
     terms?.destroy();
+    reply?.destroy();
   };
 }
