@@ -35,6 +35,7 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
   let active = null;
   let penPointer = null;
   let penUntil = 0;
+  let gesture = false;
   let confirmation = null;
   const listeners = [];
   const buttons = [];
@@ -87,9 +88,9 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
     status.textContent = (mode === 'write' ? 'いま: 書く（指でもペンでも書けます）'
       : 'いま: 動かす（指では書けません。ペンは書けます）')
       + (ruler ? '／定規' : erasing ? '／消しゴム' : '');
-    paper.style.touchAction = mode === 'write' ? 'none' : picture ? 'pan-x pan-y pinch-zoom' : 'pan-y pinch-zoom';
+    paper.style.touchAction = mode === 'write' && !gesture ? 'none' : picture ? 'pan-x pan-y pinch-zoom' : 'pan-y pinch-zoom';
     node.classList.toggle('ink-writing', mode === 'write' && !locked);
-    paper.classList.toggle('ink-paper-writing', mode === 'write' && canEdit());
+    paper.classList.toggle('ink-paper-writing', mode === 'write' && !gesture && canEdit());
   }
 
   function describePaper(value) {
@@ -230,7 +231,7 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
     if (!canEdit() || active) return;
     if (ev.pointerType === 'mouse' && ev.button !== 0) return;
     if (ev.pointerType !== 'pen' && mode !== 'write') return;
-    if (ev.pointerType === 'touch' && (penPointer !== null || Date.now() < penUntil)) return;
+    if (ev.pointerType === 'touch' && (gesture || penPointer !== null || Date.now() < penUntil)) return;
     const point = pointAt(ev);
     if (!point) return;
     ev.preventDefault();
@@ -276,6 +277,7 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
   function preventTouchScroll(ev) {
     if (!ev.cancelable) return;
     const stylus = Array.from(ev.changedTouches || []).some((touch) => touch?.touchType === 'stylus');
+    if (gesture && !stylus && !active && penPointer === null && Date.now() >= penUntil) return;
     if ((canEdit() && (mode === 'write' || stylus)) || active
       || penPointer !== null || Date.now() < penUntil) ev.preventDefault();
   }
@@ -328,6 +330,13 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
   render();
   return {
     node, paper, tools,
+    get penActive() { return penPointer !== null || Date.now() < penUntil; },
+    setGesture(value) {
+      if (!alive || !picture) return;
+      gesture = !!value;
+      if (gesture && active?.pointerType === 'touch') cancelActive();
+      syncControls();
+    },
     getToolState() { return { mode, color, width, ruler, erasing }; },
     setToolState(value) {
       if (!alive || !value) return;
