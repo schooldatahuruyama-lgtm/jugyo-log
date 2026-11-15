@@ -6,6 +6,8 @@ import { dateLabel, sortLessons } from '../lesson-logic.js';
 import { reviewPeople, reviewRows, levelCounts, levelShares, filterRows, levelLabel, defaultLesson, copyText } from '../review-logic.js';
 import { teacherNav } from './parts/teacher-nav.js';
 import { replyMarkLabel } from '../reply-logic.js';
+import { lessonTerms } from '../term-logic.js';
+import { summaryBox } from './parts/summary-box.js';
 
 export function mount(root, ctx) {
   let alive = true;
@@ -29,6 +31,7 @@ export function mount(root, ctx) {
   let field = 'question';
   let sort = 'level';
   let levelKey = null;
+  let summary = null;
   const fieldButtons = new Map();
   const sortButtons = new Map();
   const levelButtons = new Map();
@@ -41,6 +44,7 @@ export function mount(root, ctx) {
   const copy = el('button', { type: 'button', class: 'btn', text: '全員分をコピー', onclick: copyAll });
   const pageMessage = el('div', { class: 'page-message', role: 'status', 'aria-live': 'polite' });
   const chartArea = el('div');
+  const summaryArea = el('div', { class: 'review-summary' });
   const listArea = el('div');
   const replyMessage = el('p', { class: 'notice', role: 'status', hidden: true });
   const filterStatus = el('div', { class: 'review-filter-status', role: 'status' });
@@ -63,6 +67,7 @@ export function mount(root, ctx) {
   const content = el('div', { class: 'review-columns', hidden: true },
     el('section', { class: 'review-chart card', 'aria-labelledby': 'review-level-heading' },
       el('h2', { id: 'review-level-heading', text: '理解度' }), chartArea),
+    summaryArea,
     el('section', { class: 'review-records', 'aria-labelledby': 'review-records-heading' },
       el('h2', { id: 'review-records-heading', text: '生徒の記録' }),
       choices('読む項目', [['question', '疑問'], ['learned', '分かったこと']], fieldButtons, (value) => {
@@ -288,6 +293,9 @@ export function mount(root, ctx) {
     inkThumbs.clear();
     inkViews.clear();
     content.hidden = true;
+    summary?.destroy();
+    summary = null;
+    summaryArea.replaceChildren();
     clearCopy();
     pageMessage.textContent = '読みこんでいます…';
     syncControls();
@@ -333,6 +341,9 @@ export function mount(root, ctx) {
       people = reviewPeople(membersResult.value, recordsResult.value);
       // 返事だけの生徒は表示するが、人数とコピーの対象は名簿と記録のままにする。
       countedIds = new Set(people.map((person) => person.studentId));
+      summary = summaryBox({ students: people, records: recordsResult.value,
+        terms: lessonTerms(lessonResult.value).map((term) => term.text) });
+      summaryArea.replaceChildren(summary.node);
       replies = repliesResult.status === 'fulfilled' ? repliesResult.value : {};
       const outside = people.filter((person) => !person.inRoster);
       for (const studentId of Object.keys(replies)) {
@@ -363,5 +374,5 @@ export function mount(root, ctx) {
   }
 
   void load({ chooseClass: !classId });
-  return () => { alive = false; loadId += 1; copyId += 1; };
+  return () => { alive = false; loadId += 1; copyId += 1; summary?.destroy(); };
 }
