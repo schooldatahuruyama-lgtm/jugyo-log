@@ -5,6 +5,7 @@
 import { formatStudentId } from './ids.js';
 import { sortLessons, sortUnits } from './lesson-logic.js';
 import { normalizeRecord, tileMark, attachmentList } from './record-logic.js';
+import { cleanReply, checkReply, toReply } from './reply-logic.js';
 import { CONFIG } from './config.js';
 import { inkPlaceKind, inkPagePlace, splitInkPlace } from './ink-logic.js';
 
@@ -360,6 +361,42 @@ export function createRepo(net) {
         .filter(([, level]) => tileMark(level) === 'done'));
     },
 
+    async getReply(classId, lessonId, studentId) {
+      return toReply(await net.get(`replies/${key(classId)}/${key(lessonId)}/${key(studentId)}`));
+    },
+
+    async listReplies(classId, lessonId) {
+      return Object.fromEntries(entriesOf(await net.get(`replies/${key(classId)}/${key(lessonId)}`))
+        .map(([id, value]) => [id, toReply(value)])
+        .filter(([, reply]) => reply !== null));
+    },
+
+    async getReplyMarks(studentId, classId) {
+      return Object.fromEntries(entriesOf(await net.get(`replyMarks/${key(studentId)}/${key(classId)}`))
+        .filter(([, time]) => isNum(time)));
+    },
+
+    // 返事と一覧の目印を、1 回のルート update で一緒に書く。
+    async setReply(classId, lessonId, studentId, value, now) {
+      const cid = key(classId);
+      const lid = key(lessonId);
+      const sid = key(studentId);
+      const reply = cleanReply(value);
+      if (!reply || !checkReply(reply).ok) throw new TypeError('先生の返事が空か、文字数の上限を超えています。');
+      if (!isNum(now)) throw new TypeError('返事の更新時刻が正しくありません。');
+      const data = { updatedAt: now };
+      if (reply.text !== '') data.text = reply.text;
+      if (reply.seen) data.seen = true;
+      await net.update('', { [`replies/${cid}/${lid}/${sid}`]: data, [`replyMarks/${sid}/${cid}/${lid}`]: now });
+    },
+
+    async removeReply(classId, lessonId, studentId) {
+      const cid = key(classId);
+      const lid = key(lessonId);
+      const sid = key(studentId);
+      await net.update('', { [`replies/${cid}/${lid}/${sid}`]: null, [`replyMarks/${sid}/${cid}/${lid}`]: null });
+    },
+
     // 記録の本文を受け取らず、生徒 ID の数だけを数える
     async countRecords(classId, lessonId) {
       const records = await net.get(`records/${key(classId)}/${key(lessonId)}`, { shallow: true });
@@ -370,7 +407,10 @@ export function createRepo(net) {
     async deleteLesson(classId, lessonId) {
       const cid = key(classId);
       const lid = key(lessonId);
-      await net.update('', { [`lessons/${cid}/${lid}`]: null, [`thumbs/${cid}/${lid}`]: null });
+      const replies = await net.get(`replies/${cid}/${lid}`, { shallow: true });
+      const patch = { [`lessons/${cid}/${lid}`]: null, [`thumbs/${cid}/${lid}`]: null, [`replies/${cid}/${lid}`]: null };
+      for (const [sid] of entriesOf(replies)) patch[`replyMarks/${key(sid)}/${cid}/${lid}`] = null;
+      await net.update('', patch);
     },
 
     // 同じ資料を複数の授業に付ける。授業ごとの順番・画像・更新日時も一緒に書く

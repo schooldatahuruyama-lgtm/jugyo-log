@@ -1,9 +1,11 @@
 // 先生が生徒の記録を読む一覧。読み直すまでは、同じ記録を表示する。
 import { el, toast, statusChip } from '../ui.js';
+import { isStudentId } from '../ids.js';
 import { schoolYear } from '../roster-logic.js';
 import { dateLabel, sortLessons } from '../lesson-logic.js';
 import { reviewPeople, reviewRows, levelCounts, levelShares, filterRows, levelLabel, defaultLesson, copyText } from '../review-logic.js';
 import { teacherNav } from './parts/teacher-nav.js';
+import { replyMarkLabel } from '../reply-logic.js';
 
 export function mount(root, ctx) {
   let alive = true;
@@ -20,6 +22,8 @@ export function mount(root, ctx) {
   let classes = [];
   let lessons = [];
   let people = [];
+  let countedIds = new Set();
+  let replies = {};
   let attachmentCounts = new Map();
   let rows = [];
   let field = 'question';
@@ -38,6 +42,7 @@ export function mount(root, ctx) {
   const pageMessage = el('div', { class: 'page-message', role: 'status', 'aria-live': 'polite' });
   const chartArea = el('div');
   const listArea = el('div');
+  const replyMessage = el('p', { class: 'notice', role: 'status', hidden: true });
   const filterStatus = el('div', { class: 'review-filter-status', role: 'status' });
   const showAll = el('button', { type: 'button', class: 'btn', text: '全員を出す', onclick: () => {
     const selected = levelButtons.get(levelKey);
@@ -65,7 +70,7 @@ export function mount(root, ctx) {
         void loadInkThumbs(field);
       }),
       choices('並び順', [['level', '理解度が低い順'], ['number', '出席番号順']], sortButtons, (value) => { sort = value; }),
-      el('div', { class: 'page-actions' }, copy), copyArea, filterStatus, listArea));
+      el('div', { class: 'page-actions' }, copy), copyArea, filterStatus, replyMessage, listArea));
   root.replaceChildren(teacherNav(ctx, 'review'),
     el('main', { class: 'page-main review-page' },
       el('h1', { text: '記録' }),
@@ -131,7 +136,7 @@ export function mount(root, ctx) {
 
   function renderChart() {
     levelButtons.clear();
-    const shares = levelShares(levelCounts(people));
+    const shares = levelShares(levelCounts(people.filter((person) => countedIds.has(person.studentId))));
     const present = shares.filter((item) => item.count > 0);
     if (present.length === 0) {
       chartArea.replaceChildren(el('p', { text: 'このクラスには、まだ生徒がいません。' }));
@@ -163,7 +168,7 @@ export function mount(root, ctx) {
     filterStatus.replaceChildren();
     if (levelKey === null) return;
     filterStatus.append(el('span', {
-      text: `『${levelLabel(levelKey)}』の ${rows.length} 人を出しています。`,
+      text: `『${levelLabel(levelKey)}』の ${rows.filter((row) => countedIds.has(row.studentId)).length} 人を出しています。`,
     }), showAll);
   }
 
@@ -225,6 +230,7 @@ export function mount(root, ctx) {
       const label = !row.inRoster ? '名簿にいない' : row.number === null ? '出席番号なし' : `${row.number} 番`;
       const name = !row.inRoster || row.number === null ? `${label} ${row.studentId}` : label;
       const kind = row.level === null ? 'info' : row.level >= 3 ? 'ok' : 'warn';
+      const replyLabel = replyMarkLabel(replies[row.studentId]);
       const ink = row.hasInk ? el('span', { class: 'review-ink' }) : null;
       if (ink) {
         inkViews.set(row.studentId, ink);
@@ -235,6 +241,7 @@ export function mount(root, ctx) {
         onclick: () => ctx.navigate('t-record', { classId, lessonId, studentId: row.studentId }) },
       el('span', { class: 'review-row-heading' },
         el('span', { class: 'review-person', text: label }), statusChip(kind, levelLabel(row.level)),
+        replyLabel ? el('span', { class: 'reply-mark', text: replyLabel }) : null,
         attachmentCounts.get(row.studentId) > 0 ? el('span', { class: 'small', text: `添付 ${attachmentCounts.get(row.studentId)}` }) : null,
         !row.inRoster || row.number === null ? el('span', { class: 'small', text: row.studentId }) : null),
       row.text.trim() || !row.hasInk ? el('span', { class: 'review-text', text: row.text.trim() ? row.text : '（まだ書いていません）' }) : null,
@@ -244,7 +251,7 @@ export function mount(root, ctx) {
 
   async function copyAll() {
     if (!alive || loading || !ready || copying) return;
-    const result = copyText(rows);
+    const result = copyText(rows.filter((row) => countedIds.has(row.studentId)));
     if (result.count === 0) {
       toast(result.inkCount > 0 ? `コピーできる文章がありません（手書き ${result.inkCount} 件）。` : 'コピーする文章がありません。');
       return;
@@ -313,8 +320,9 @@ export function mount(root, ctx) {
       }
       navigatePending = false;
       void loadInkThumbs(field);
-      const [lessonResult, membersResult, recordsResult] = await Promise.allSettled([
+      const [lessonResult, membersResult, recordsResult, repliesResult] = await Promise.allSettled([
         ctx.repo.getLesson(classId, lessonId), ctx.repo.getMembers(classId), ctx.repo.listRecords(classId, lessonId),
+        Promise.resolve().then(() => ctx.repo.listReplies(classId, lessonId)),
       ]);
       if (stale()) return;
       if (lessonResult.status === 'fulfilled' && !lessonResult.value) {
@@ -323,6 +331,19 @@ export function mount(root, ctx) {
       }
       if ([lessonResult, membersResult, recordsResult].some((result) => result.status === 'rejected')) throw new Error('読みこめませんでした');
       people = reviewPeople(membersResult.value, recordsResult.value);
+      // 返事だけの生徒は表示するが、人数とコピーの対象は名簿と記録のままにする。
+      countedIds = new Set(people.map((person) => person.studentId));
+      replies = repliesResult.status === 'fulfilled' ? repliesResult.value : {};
+      const outside = people.filter((person) => !person.inRoster);
+      for (const studentId of Object.keys(replies)) {
+        if (isStudentId(studentId) && !countedIds.has(studentId)) {
+          outside.push({ studentId, number: null, inRoster: false, record: null });
+        }
+      }
+      outside.sort((a, b) => a.studentId < b.studentId ? -1 : a.studentId > b.studentId ? 1 : 0);
+      people = [...people.filter((person) => person.inRoster), ...outside];
+      replyMessage.hidden = repliesResult.status === 'fulfilled';
+      replyMessage.textContent = repliesResult.status === 'rejected' ? '返事の印を読みこめませんでした。' : '';
       attachmentCounts = new Map(people.map((person) => {
         const attachments = recordsResult.value?.[person.studentId]?.attachments;
         return [person.studentId, Array.isArray(attachments) ? attachments.length : 0];
