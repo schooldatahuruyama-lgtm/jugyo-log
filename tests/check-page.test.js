@@ -30,7 +30,7 @@ test('check.html に innerHTML が無い', () => {
 
 test('check.html が必要なモジュールを import している', () => {
   const html = read('check.html');
-  for (const m of ['./js/check-steps.js', './js/check-logic.js', './js/firebase-config.js', './js/gas-config.js']) {
+  for (const m of ['./js/check-steps.js', './js/check-logic.js', './js/reach-targets.js', './js/reach-check.js', './js/firebase-config.js', './js/gas-config.js']) {
     assert.match(html, new RegExp(`import\\s[^;]*from\\s+['"]${m.replace(/[.\/]/g, '\\$&')}['"]`), `${m} を import していません`);
   }
 });
@@ -90,4 +90,28 @@ test('index.html はアプリの入り口（js/main.js を読みこむ）', () =
   const html = read('index.html');
   assert.match(html, /<script\s+type="module"\s+src="js\/main\.js"><\/script>/);
   assert.ok(html.includes('<div id="app">'));
+});
+
+test('どこに届くかは既存の結果の下、端末の情報の上にあり、指定の文と表を出す', () => {
+  const html = read('check.html');
+  assert.ok(html.indexOf('id="report-area"') < html.indexOf('id="reach-title"'));
+  assert.ok(html.indexOf('id="reach-title"') < html.indexOf('<h2>端末の情報</h2>'));
+  for (const text of [
+    '保存の仕組みを選ぶために、この回線から、いくつかの行き先に届くかを調べます。何も保存せず、データも送りません。30 秒ほどかかります。',
+    'どこに届くかを調べる', 'もう一度調べる', '行き先の名前', 'アドレス（ホスト名）',
+    '－ まだ調べていません', '○ 届きました', '× 届きませんでした', '△ 返事がありませんでした（10 秒）',
+    '調べる行き先がありません。',
+  ]) assert.ok(html.includes(text), `「${text}」がありません`);
+  assert.match(html, /<table[^>]*id="reach-table"/);
+  assert.match(html, /<tbody[^>]*id="reach-list"/);
+});
+
+test('新しい確認も、既存のコピーと同じ成功・失敗の知らせを出す', () => {
+  const html = read('check.html');
+  for (const text of [
+    '○ コピーしました。Claude Code に貼り付けてください。',
+    '× 自動ではコピーできませんでした。下の欄の文章をすべて選んでコピーしてください。',
+  ]) assert.equal(html.split(text).length - 1, 2);
+  assert.match(html, /place:\s*reachPlace/);
+  assert.match(html, /browser:\s*navigator\.userAgent/);
 });
