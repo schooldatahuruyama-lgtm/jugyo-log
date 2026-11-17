@@ -77,7 +77,15 @@ export function createFiles({ gas, cache, atob = globalThis.atob, btoa = globalT
       return { fileId: result.id, bytes: result.bytes };
     },
     async loadInk(fileId) {
-      return (await loadStudentFile(fileId)).text();
+      const blob = await loadStudentFile(fileId);
+      if (typeof blob.text === 'function') return blob.text();
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error ?? new Error('手書きを読みこめませんでした。'));
+        reader.onabort = () => reject(new Error('手書きの読みこみを中止しました。'));
+        reader.readAsText(blob);
+      });
     },
     async trashStudent(fileId) {
       const result = await gas.call('trashStudentFile', { fileId });
