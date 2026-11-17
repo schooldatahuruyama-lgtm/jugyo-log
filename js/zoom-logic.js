@@ -1,4 +1,11 @@
-// 写真・PDF の倍率と、指の下の位置を保つスクロールの計算。
+// 写真・PDF の倍率と、指の動きに合わせるスクロールの計算。
+export function touchScroll(before, after) {
+  const points = [before?.[0], before?.[1], after?.[0], after?.[1]];
+  if (!points.every((point) => Number.isFinite(point?.clientX) && Number.isFinite(point?.clientY))) return 0;
+  const delta = before[0].clientY / 2 + before[1].clientY / 2 - after[0].clientY / 2 - after[1].clientY / 2;
+  return Number.isFinite(delta) ? delta : 0;
+}
+
 export function clampZoom(value, current = 1) {
   const fallback = typeof current === 'number' && !Number.isNaN(current) ? current : 1;
   return Math.max(1, Math.min(4, typeof value === 'number' && !Number.isNaN(value) ? value : fallback));

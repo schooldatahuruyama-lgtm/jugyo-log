@@ -2,7 +2,7 @@
 // データベースの場所（'classes/…' など。docs/superpowers/specs/2026-11-13-jugyo-log-1a-data.md の 3 章）を
 // 知っているのはこのモジュールだけ。通信は引数の net（js/net.js の createNet、または js/dev/memory-net.js）で行う。
 // 読んだデータは形を確かめてから返す（欠けや型の違いがあっても落ちない）。
-import { formatStudentId } from './ids.js';
+import { formatStudentId, isStudentId } from './ids.js';
 import { sortLessons, sortUnits } from './lesson-logic.js';
 import { normalizeRecord, tileMark, attachmentList } from './record-logic.js';
 import { cleanReply, checkReply, toReply } from './reply-logic.js';
@@ -388,6 +388,42 @@ export function createRepo(net) {
       if (reply.text !== '') data.text = reply.text;
       if (reply.seen) data.seen = true;
       await net.update('', { [`replies/${cid}/${lid}/${sid}`]: data, [`replyMarks/${sid}/${cid}/${lid}`]: now });
+    },
+
+    async stampReplies(classId, lessonId, studentIds, now) {
+      const cid = key(classId);
+      const lid = key(lessonId);
+      if (!Array.isArray(studentIds) || studentIds.length === 0 || studentIds.length > 60
+        || !Array.from(studentIds).every(isStudentId)) throw new TypeError('スタンプの対象は、正しい生徒 ID の 1〜60 人です。');
+      if (!isNum(now)) throw new TypeError('返事の更新時刻が正しくありません。');
+      const patch = {};
+      for (const sid of studentIds) {
+        patch[`replies/${cid}/${lid}/${sid}/seen`] = true;
+        patch[`replies/${cid}/${lid}/${sid}/updatedAt`] = now;
+        patch[`replyMarks/${sid}/${cid}/${lid}`] = now;
+      }
+      await net.update('', patch);
+    },
+
+    // 先生 1 人の利用を前提に、読み取りから書きこみまでの短い間に別端末が更新する競合は許容する。
+    async unstampReply(classId, lessonId, studentId, now) {
+      const cid = key(classId);
+      const lid = key(lessonId);
+      const sid = key(studentId);
+      if (!isNum(now)) throw new TypeError('返事の更新時刻が正しくありません。');
+      const path = `replies/${cid}/${lid}/${sid}`;
+      const reply = toReply(await net.get(path));
+      const mark = `replyMarks/${sid}/${cid}/${lid}`;
+      if (!reply) {
+        await net.update('', { [mark]: null });
+        return { reply: null };
+      }
+      if (reply.text) {
+        await net.update('', { [`${path}/seen`]: null, [`${path}/updatedAt`]: now, [mark]: now });
+        return { reply: { ...reply, seen: false, updatedAt: now } };
+      }
+      await net.update('', { [path]: null, [mark]: null });
+      return { reply: null };
     },
 
     async removeReply(classId, lessonId, studentId) {

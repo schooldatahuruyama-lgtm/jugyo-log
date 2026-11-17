@@ -1,11 +1,11 @@
 // 先生が生徒の記録を読む一覧。読み直すまでは、同じ記録を表示する。
-import { el, toast, statusChip } from '../ui.js';
+import { el, toast, statusChip, confirmDialog } from '../ui.js';
 import { isStudentId } from '../ids.js';
 import { schoolYear } from '../roster-logic.js';
 import { dateLabel, sortLessons } from '../lesson-logic.js';
 import { reviewPeople, reviewRows, levelCounts, levelShares, filterRows, levelLabel, defaultLesson, copyText } from '../review-logic.js';
 import { teacherNav } from './parts/teacher-nav.js';
-import { replyMarkLabel } from '../reply-logic.js';
+import { replyMarkLabel, stampKind, stampTargets } from '../reply-logic.js';
 import { lessonTerms } from '../term-logic.js';
 import { summaryBox } from './parts/summary-box.js';
 
@@ -14,6 +14,9 @@ export function mount(root, ctx) {
   let loading = false;
   let ready = false;
   let copying = false;
+  let stamping = false;
+  let repliesReady = false;
+  const dialogs = new AbortController();
   let navigatePending = false;
   let loadId = 0;
   let copyId = 0;
@@ -26,6 +29,7 @@ export function mount(root, ctx) {
   let people = [];
   let countedIds = new Set();
   let replies = {};
+  let records = {};
   let attachmentCounts = new Map();
   let rows = [];
   let field = 'question';
@@ -42,6 +46,9 @@ export function mount(root, ctx) {
   const lessonSelect = el('select', { id: 'review-lesson', onchange: () => changeSelection('lesson') });
   const reload = el('button', { type: 'button', class: 'btn', text: '読み直す', onclick: () => load({ chooseClass: !classId }) });
   const copy = el('button', { type: 'button', class: 'btn', text: '全員分をコピー', onclick: copyAll });
+  const stampAll = el('button', { type: 'button', class: 'btn', text: '全員にスタンプを押す', onclick: stampAllReplies });
+  const stampEmpty = el('span', { class: 'small', text: '（押す相手がいません）', hidden: true });
+  const stampStatus = el('p', { class: 'reply-status', role: 'status', 'aria-live': 'polite' });
   const pageMessage = el('div', { class: 'page-message', role: 'status', 'aria-live': 'polite' });
   const chartArea = el('div');
   const summaryArea = el('div', { class: 'review-summary' });
@@ -75,7 +82,7 @@ export function mount(root, ctx) {
         void loadInkThumbs(field);
       }),
       choices('並び順', [['level', '理解度が低い順'], ['number', '出席番号順']], sortButtons, (value) => { sort = value; }),
-      el('div', { class: 'page-actions' }, copy), copyArea, filterStatus, replyMessage, listArea));
+      el('div', { class: 'page-actions' }, copy, stampAll, stampEmpty), stampStatus, copyArea, filterStatus, replyMessage, listArea));
   root.replaceChildren(teacherNav(ctx, 'review'),
     el('main', { class: 'page-main review-page' },
       el('h1', { text: '記録' }),
@@ -87,10 +94,13 @@ export function mount(root, ctx) {
 
   function syncControls() {
     if (!alive) return;
-    yearSelect.disabled = loading;
-    classSelect.disabled = loading || !classes.some((c) => c.year === year);
-    lessonSelect.disabled = loading || lessons.length === 0;
-    reload.disabled = loading;
+    yearSelect.disabled = loading || stamping;
+    classSelect.disabled = loading || stamping || !classes.some((c) => c.year === year);
+    lessonSelect.disabled = loading || stamping || lessons.length === 0;
+    reload.disabled = loading || stamping;
+    const targets = stampTargets({ students: people, records, replies });
+    stampAll.disabled = loading || !ready || !repliesReady || stamping || targets.length === 0;
+    stampEmpty.hidden = !ready || !repliesReady || targets.length !== 0;
     copy.disabled = loading || !ready || copying;
     showAll.disabled = loading || !ready;
     for (const [value, button] of levelButtons) {
@@ -124,7 +134,7 @@ export function mount(root, ctx) {
   }
 
   function changeSelection(which) {
-    if (!alive || loading) return;
+    if (!alive || loading || stamping) return;
     levelKey = null;
     if (which === 'lesson') {
       if (lessonSelect.value) void ctx.navigate('t-review', { classId, lessonId: lessonSelect.value });
@@ -235,7 +245,8 @@ export function mount(root, ctx) {
       const label = !row.inRoster ? '名簿にいない' : row.number === null ? '出席番号なし' : `${row.number} 番`;
       const name = !row.inRoster || row.number === null ? `${label} ${row.studentId}` : label;
       const kind = row.level === null ? 'info' : row.level >= 3 ? 'ok' : 'warn';
-      const replyLabel = replyMarkLabel(replies[row.studentId]);
+      const reply = replies[row.studentId];
+      const replyLabel = reply?.text ? replyMarkLabel(reply) : '';
       const ink = row.hasInk ? el('span', { class: 'review-ink' }) : null;
       if (ink) {
         inkViews.set(row.studentId, ink);
@@ -247,11 +258,48 @@ export function mount(root, ctx) {
       el('span', { class: 'review-row-heading' },
         el('span', { class: 'review-person', text: label }), statusChip(kind, levelLabel(row.level)),
         replyLabel ? el('span', { class: 'reply-mark', text: replyLabel }) : null,
+        reply?.seen ? el('span', { class: 'reply-mark reply-stamp-mark' },
+          el('img', { src: `assets/stamps/seen-${stampKind({ studentId: row.studentId, lessonId, updatedAt: reply.updatedAt })}.svg`,
+            width: 24, height: 24, alt: '' }), el('span', { text: 'スタンプ' })) : null,
         attachmentCounts.get(row.studentId) > 0 ? el('span', { class: 'small', text: `添付 ${attachmentCounts.get(row.studentId)}` }) : null,
         !row.inRoster || row.number === null ? el('span', { class: 'small', text: row.studentId }) : null),
       row.text.trim() || !row.hasInk ? el('span', { class: 'review-text', text: row.text.trim() ? row.text : '（まだ書いていません）' }) : null,
       ink));
     })));
+  }
+
+  async function stampAllReplies() {
+    if (!alive || loading || !ready || !repliesReady || stamping) return;
+    const targets = stampTargets({ students: people, records, replies });
+    if (targets.length === 0) return;
+    stampStatus.textContent = '';
+    stampStatus.setAttribute('role', 'status');
+    if (targets.length > 60) {
+      stampStatus.textContent = '一度に押せるのは 60 人までです。';
+      stampStatus.setAttribute('role', 'alert');
+      return;
+    }
+    const current = loadId;
+    stamping = true;
+    syncControls();
+    try {
+      const ok = await confirmDialog({ title: 'スタンプを押しますか？',
+        body: `振り返りを書いた ${targets.length} 人に、スタンプを押します。`, okLabel: '押す', signal: dialogs.signal });
+      if (!ok || !alive || current !== loadId) return;
+      stampStatus.textContent = 'スタンプを押しています…';
+      const now = ctx.now();
+      await ctx.repo.stampReplies(classId, lessonId, targets, now);
+      if (!alive || current !== loadId) return;
+      for (const id of targets) replies[id] = { ...replies[id], seen: true, updatedAt: now };
+      renderRows();
+      stampStatus.textContent = `${targets.length} 人にスタンプを押しました。`;
+    } catch {
+      if (!alive || current !== loadId) return;
+      stampStatus.textContent = 'スタンプを押せませんでした。もう一度押してください。';
+      stampStatus.setAttribute('role', 'alert');
+    } finally {
+      if (alive && current === loadId) { stamping = false; syncControls(); }
+    }
   }
 
   async function copyAll() {
@@ -285,11 +333,13 @@ export function mount(root, ctx) {
   }
 
   async function load(options = {}) {
-    if (!alive) return;
+    if (!alive || stamping) return;
     const current = ++loadId;
     const stale = () => !alive || current !== loadId;
     loading = true;
     ready = false;
+    repliesReady = false;
+    stampStatus.textContent = '';
     inkThumbs.clear();
     inkViews.clear();
     content.hidden = true;
@@ -339,12 +389,14 @@ export function mount(root, ctx) {
       }
       if ([lessonResult, membersResult, recordsResult].some((result) => result.status === 'rejected')) throw new Error('読みこめませんでした');
       people = reviewPeople(membersResult.value, recordsResult.value);
+      records = recordsResult.value;
       // 返事だけの生徒は表示するが、人数とコピーの対象は名簿と記録のままにする。
       countedIds = new Set(people.map((person) => person.studentId));
       summary = summaryBox({ students: people, records: recordsResult.value,
         terms: lessonTerms(lessonResult.value).map((term) => term.text) });
       summaryArea.replaceChildren(summary.node);
       replies = repliesResult.status === 'fulfilled' ? repliesResult.value : {};
+      repliesReady = repliesResult.status === 'fulfilled';
       const outside = people.filter((person) => !person.inRoster);
       for (const studentId of Object.keys(replies)) {
         if (isStudentId(studentId) && !countedIds.has(studentId)) {
@@ -374,5 +426,5 @@ export function mount(root, ctx) {
   }
 
   void load({ chooseClass: !classId });
-  return () => { alive = false; loadId += 1; copyId += 1; summary?.destroy(); };
+  return () => { alive = false; loadId += 1; copyId += 1; dialogs.abort(); summary?.destroy(); };
 }
