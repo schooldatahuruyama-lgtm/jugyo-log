@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>確認用の板書 — 1か月分</title>
+  <style>
+    :root { font-family: 'Yu Gothic', sans-serif; color: #243b32; background: #f1f3ef; }
+    body { max-width: 1280px; margin: 0 auto; padding: 24px; }
+    h1 { font-size: 1.6rem; }
+    h2 { margin: 0; font-size: 1.15rem; }
+    p { line-height: 1.7; }
+    article { margin: 28px 0; padding: 18px; border: 1px solid #d2dcd4; border-radius: 10px; background: #fff; }
+    article p { margin: 8px 0 14px; }
+    img { display: block; width: 100%; height: auto; border-radius: 4px; }
+    .error { color: #b12028; font-weight: bold; }
+    a { color: #16553d; }
+    @media (max-width: 600px) { body { padding: 12px; } article { padding: 10px; } }
+  </style>
+</head>
+<body>
+  <h1>確認用の板書 — 1か月分</h1>
+  <p>中学1年・光と音／力の架空の授業です。画像を右クリックして保存できます。</p>
+  <p id="status" role="status">データを読みこんでいます。</p>
+  <main id="boards" aria-label="授業ごとの板書"></main>
+  <noscript><p class="error">描けませんでした: JavaScript を有効にしてください。</p></noscript>
+  <script src="./boards.js"></script>
+  <script>
+    (() => {
+      const status = document.getElementById('status');
+      const list = document.getElementById('boards');
+      const reason = (error) => error instanceof Error ? error.message : String(error);
+      const showError = (node, error) => {
+        node.className = 'error';
+        node.textContent = `描けませんでした: ${reason(error)}`;
+      };
+
+      async function preview() {
+        let lessons;
+        try {
+          const response = await fetch('./month.json');
+          if (!response.ok) throw new Error(`month.json の読みこみに失敗しました（HTTP ${response.status}）。`);
+          const data = await response.json();
+          if (!Array.isArray(data.lessons) || !data.lessons.length) throw new Error('授業の一覧がありません。');
+          lessons = data.lessons;
+        } catch (error) {
+          showError(status, error);
+          return;
+        }
+        let succeeded = 0;
+        let failed = 0;
+        for (const [index, lesson] of lessons.entries()) {
+          const article = document.createElement('article');
+          const heading = document.createElement('h2');
+          const info = document.createElement('p');
+          const date = typeof lesson?.date === 'string' ? lesson.date : '日付なし';
+          const title = typeof lesson?.title === 'string' ? lesson.title : '授業名なし';
+          heading.textContent = `${date}　${title}`;
+          info.textContent = '描いています。';
+          article.append(heading, info);
+          list.append(article);
+          let url;
+          try {
+            if (typeof globalThis.drawDummyBoard !== 'function') throw new Error('boards.js を読みこめませんでした。');
+            const blob = await globalThis.drawDummyBoard(lesson?.board);
+            url = URL.createObjectURL(blob);
+            const img = document.createElement('img');
+            img.alt = `${title}の板書`;
+            img.width = 1600;
+            img.height = 900;
+            await new Promise((resolve, reject) => {
+              img.onload = resolve;
+              img.onerror = () => reject(new Error('板書の画像を表示できませんでした。'));
+              img.src = url;
+            });
+            info.textContent = `JPEG・1600 × 900 px・${(blob.size / 1024).toFixed(1)} KB`;
+            const download = document.createElement('a');
+            download.href = url;
+            download.download = `${date.replace(/[^0-9-]/g, '') || index + 1}-board.jpg`;
+            download.textContent = 'JPEGを保存';
+            article.append(img, download);
+            // 保存リンクを使えるよう、成功した画像の URL はページを閉じるまで残す。
+            succeeded += 1;
+          } catch (error) {
+            if (url) URL.revokeObjectURL(url);
+            showError(info, error);
+            failed += 1;
+          }
+          status.textContent = `${index + 1} / ${lessons.length} 回を確認（表示 ${succeeded} 回・失敗 ${failed} 回）。`;
+        }
+      }
+
+      preview().catch((error) => showError(status, error));
+    })();
+  </script>
+</body>
+</html>
