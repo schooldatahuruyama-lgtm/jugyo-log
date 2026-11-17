@@ -30,7 +30,7 @@ test('check.html に innerHTML が無い', () => {
 
 test('check.html が必要なモジュールを import している', () => {
   const html = read('check.html');
-  for (const m of ['./js/check-steps.js', './js/check-logic.js', './js/reach-targets.js', './js/reach-check.js', './js/firebase-config.js', './js/gas-config.js']) {
+  for (const m of ['./js/check-steps.js', './js/check-logic.js', './js/reach-targets.js', './js/reach-check.js', './js/firebase-config.js', './js/gas-endpoint.js', './js/gas-config.js']) {
     assert.match(html, new RegExp(`import\\s[^;]*from\\s+['"]${m.replace(/[.\/]/g, '\\$&')}['"]`), `${m} を import していません`);
   }
 });
@@ -40,6 +40,10 @@ test('check.html に 12 個の項目の名前がすべてある', () => {
   for (const label of LABELS) {
     assert.ok(html.includes(label), `「${label}」がありません`);
   }
+});
+
+test('中つぎの案内は確認の結果の見出し直下にあり、最初は隠す', () => {
+  assert.match(read('check.html'), /<h2>確認の結果<\/h2>\s*<p id="relay-note" hidden>保存の仕組みへは、中つぎを通して送っています。<\/p>/);
 });
 
 test('check.html は外から読み込まない', () => {

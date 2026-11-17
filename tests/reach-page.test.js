@@ -6,6 +6,7 @@ import vm from 'node:vm';
 import { reportText, PARALLEL_COUNT } from '../js/check-logic.js';
 import { createReachTargets } from '../js/reach-targets.js';
 import { runReach, reachText } from '../js/reach-check.js';
+import { gasEndpoint } from '../js/gas-endpoint.js';
 
 const html = readFileSync(new URL('../check.html', import.meta.url), 'utf8');
 const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)[1].replace(/^import .*;\r?\n/gm, '');
@@ -35,7 +36,7 @@ class Element {
   emit(name) { return this.events.get(name)?.(); }
 }
 
-function setup({ fetch = () => Promise.resolve({}), copyFails = false, origin = 'https://app.example.test', firebase, targets, readPing } = {}) {
+function setup({ fetch = () => Promise.resolve({}), copyFails = false, origin = 'https://app.example.test', firebase, targets, readPing, relayUrl = '', checkTest } = {}) {
   const elements = new Map();
   for (const match of html.matchAll(/<[^>]*\bid="([^"]+)"[^>]*>/g)) {
     const element = new Element();
@@ -49,10 +50,12 @@ function setup({ fetch = () => Promise.resolve({}), copyFails = false, origin = 
   const window = new Element();
   window.AbortController = AbortController;
   window.devicePixelRatio = 2;
+  window.__CHECK_TEST__ = checkTest;
   window.setTimeout = (fn, ms) => { const id = nextTimer++; timers.set(id, { fn, ms }); return id; };
   window.clearTimeout = (id) => timers.delete(id);
   const calls = [];
   const copies = [];
+  const checkOptions = [];
   const steps = {
     readPing: readPing || (async () => ''),
     signUp: async () => '', signIn: async () => '', writeAndRead: async () => '', refresh: async () => '',
@@ -70,16 +73,72 @@ function setup({ fetch = () => Promise.resolve({}), copyFails = false, origin = 
     URL, setTimeout: window.setTimeout, clearTimeout: window.clearTimeout,
     fetch: (url, init) => { calls.push({ url, init }); return fetch(url, init); },
     FIREBASE: firebase === undefined ? { databaseURL: 'https://db.example.test/', projectId: 'example-project', apiKey: 'test-only-key' } : firebase,
-    GAS: { url: 'https://gas.example.test/' },
-    createCheckSteps: () => steps, reportText, PARALLEL_COUNT,
+    GAS: { url: 'https://gas.example.test/', relayUrl }, gasEndpoint,
+    createCheckSteps: (options) => { checkOptions.push(options); return steps; }, reportText, PARALLEL_COUNT,
     createReachTargets: targets === undefined ? createReachTargets : () => targets,
     runReach, reachText,
   });
   function fireTimers() {
     for (const [id, timer] of [...timers]) { timers.delete(id); timer.fn(); }
   }
-  return { get, calls, copies, window, timers, fireTimers, rows: get('reach-list').children.map((row) => row.children[2]) };
+  return { get, calls, copies, checkOptions, window, timers, fireTimers, rows: get('reach-list').children.map((row) => row.children[2]) };
 }
+
+test('確認ページは中つぎの有無で送信先・案内・両方のコピー文を切りかえる', async () => {
+  for (const relayUrl of ['', null, 42, 'https://relay.example.test///', 'http://localhost:8792/', 'http://127.0.0.1:8792']) {
+    for (const copyFails of [false, true]) {
+      const enabled = typeof relayUrl === 'string' && relayUrl !== '';
+      const base = enabled ? relayUrl.replace(/\/+$/, '') : '';
+      const h = setup({ relayUrl, copyFails });
+      assert.equal(h.get('relay-note').hidden, !enabled);
+      await h.get('start').emit('click');
+      assert.equal(h.checkOptions.length, 1);
+      assert.equal(h.checkOptions[0].gasUrl, enabled ? base + '/gas/check' : 'https://gas.example.test/');
+      await h.get('copy').emit('click');
+      const report = copyFails ? h.get('report-text').value : h.copies.at(-1);
+      assert.ok(report.endsWith('中つぎ: ' + (enabled ? '使っている' : '使っていない')));
+      assert.equal(report.includes('test-only-key'), false);
+
+      const names = h.get('reach-list').children.map((row) => row.children[0].textContent);
+      assert.equal(names.includes('先生が置いた中つぎ'), enabled);
+      if (enabled) assert.equal(names.indexOf('先生が置いた中つぎ') + 1, names.indexOf('今の保存の仕組み（script.google.com）'));
+      await h.get('reach-start').emit('click');
+      assert.equal(h.calls.some((c) => c.url === base + '/ping'), enabled);
+      assert.equal(h.calls.length, enabled ? 14 : 13);
+      await h.get('reach-copy').emit('click');
+      const reachReport = copyFails ? h.get('reach-report-text').value : h.copies.at(-1);
+      assert.ok(reachReport.endsWith('中つぎ: ' + (enabled ? '使っている' : '使っていない')));
+      assert.equal(h.timers.size, 0);
+    }
+  }
+});
+
+test('手元だけの既存の送信先差しかえは保ち、中つぎを通すと表示しない', async () => {
+  const checkTest = { gasUrl: 'https://override.example.test' };
+  for (const origin of ['http://localhost:8791', 'https://app.example.test']) {
+    const local = origin.startsWith('http://localhost:');
+    const h = setup({ origin, relayUrl: 'https://relay.example.test', checkTest });
+    await h.get('start').emit('click');
+    assert.equal(h.checkOptions[0].gasUrl, local ? checkTest.gasUrl : 'https://relay.example.test/gas/check');
+    assert.equal(h.get('relay-note').hidden, local);
+    await h.get('copy').emit('click');
+    assert.ok(h.copies[0].endsWith('中つぎ: ' + (local ? '使っていない' : '使っている')));
+  }
+});
+
+test('中つぎの行だけを追加し、ほかの到達先と順序は変えない', () => {
+  const options = { firebase: { databaseURL: 'https://abc-default-rtdb.example.test' }, origin: 'https://app.example.test' };
+  const direct = createReachTargets(options);
+  for (const relayUrl of ['https://relay.example.test', 'https://relay.example.test/nested///', 'http://localhost:8792', 'http://127.0.0.1:8792/']) {
+    const targets = createReachTargets({ ...options, relayUrl });
+    assert.deepEqual(targets[2], { name: '先生が置いた中つぎ', url: relayUrl.replace(/\/+$/, '') + '/ping' });
+    assert.deepEqual(targets.filter((t) => t.name !== '先生が置いた中つぎ'), direct);
+  }
+  for (const relayUrl of ['', null, 42]) assert.deepEqual(createReachTargets({ ...options, relayUrl }), direct);
+  for (const relayUrl of ['http://example.test', 'http://localhost.example.test', 'http://localhost@other.example.test', 'https://relay.example.test?test=value', 'https://relay.example.test/#test']) {
+    assert.throws(() => createReachTargets({ ...options, relayUrl }), TypeError);
+  }
+});
 
 test('ホスティングを指定の位置に表示し、取れないホスティングと Deno は表に出さない', () => {
   for (const [databaseURL, hosting] of [
@@ -158,7 +217,8 @@ test('コピーは開始時の場所とブラウザを含み、失敗時は選�
     assert.match(text, /^確認した日時: .+/);
     assert.ok(text.includes('（db.example.test）'));
     assert.ok(text.includes('ブラウザ: テストブラウザ'));
-    assert.ok(text.endsWith('場所: 学校'));
+    assert.ok(text.includes('\n場所: 学校\n'));
+    assert.ok(text.endsWith('中つぎ: 使っていない'));
     assert.equal(text.includes('test-only-key'), false);
     if (copyFails) {
       assert.equal(h.get('reach-copy-note').textContent, '× 自動ではコピーできませんでした。下の欄の文章をすべて選んでコピーしてください。');

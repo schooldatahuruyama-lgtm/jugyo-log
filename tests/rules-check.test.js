@@ -36,7 +36,10 @@ test('設定ファイルの形が決まりどおりで、値は文字列', async
   assert.equal(typeof fb.FIREBASE.apiKey, 'string');
 
   const gas = await import(pathToFileURL(at('js/gas-config.js')).href);
-  assert.deepEqual(Object.keys(gas.GAS).sort(), ['appUrl', 'url']);
+  assert.deepEqual(Object.keys(gas.GAS).sort(), ['appUrl', 'relayUrl', 'url']);
   assert.equal(typeof gas.GAS.appUrl, 'string');
+  assert.equal(typeof gas.GAS.relayUrl, 'string', 'relayUrl は文字列にしてください');
+  assert.ok(gas.GAS.relayUrl === '' || gas.GAS.relayUrl.startsWith('https://'), 'relayUrl は空か https:// で始まる文字列にしてください');
+  assert.equal(gas.GAS.relayUrl.endsWith('/'), false, 'relayUrl の末尾に / は付けないでください');
   assert.equal(typeof gas.GAS.url, 'string');
 });
