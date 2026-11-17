@@ -10,6 +10,7 @@ import { headingIcon } from './parts/heading-icon.js';
 import { termRow } from './parts/term-row.js';
 import { inkField } from './parts/ink-field.js';
 import { replyBox } from './parts/reply-box.js';
+import { stampKind } from '../reply-logic.js';
 
 export function mount(root, ctx) {
   const { classId, lessonId } = ctx.params;
@@ -29,6 +30,9 @@ export function mount(root, ctx) {
   let attachments = null;
   let terms = null;
   let reply = null;
+  let stampTime = null;
+  let stampShown = false;
+  const stamp = el('span', { class: 'student-seen-stamp', hidden: true });
   const dialogs = new AbortController();
   const fields = {};
   const counts = {};
@@ -118,6 +122,26 @@ export function mount(root, ctx) {
         el('div', { class: 'student-reflection-fields' },
           textField('learned', '分かったこと・学んだこと', 4),
           textField('question', '疑問・まだ分からないこと', 4)))));
+  const reflectionBand = content.querySelectorAll('.student-lesson-reflection')[0].querySelectorAll('.lesson-section-band')[0];
+  reflectionBand.append(stamp);
+
+  function showStamp(value) {
+    if (!alive) return;
+    const seen = value?.seen === true;
+    stamp.hidden = !seen;
+    reflectionBand.classList.toggle('has-seen-stamp', seen);
+    if (!seen) { stampTime = null; stamp.replaceChildren(); return; }
+    if (stampTime === value.updatedAt) return;
+    stampTime = value.updatedAt;
+    const image = el('img', { class: stampShown ? '' : 'stamp-enter', width: 64, height: 64,
+      src: `assets/stamps/seen-${stampKind({ studentId, lessonId, updatedAt: value.updatedAt })}.svg`, alt: '先生が見ました' });
+    image.addEventListener('error', () => {
+      if (!alive || !stamp.contains(image)) return;
+      stamp.replaceChildren(el('span', { class: 'student-stamp-fallback', text: '✓ 先生が見ました' }));
+    }, { once: true });
+    stampShown = true;
+    stamp.replaceChildren(image);
+  }
   const goHome = () => ctx.navigate('home', { classId });
   root.replaceChildren(el('div', { class: 'student-page' }, el('main', { class: 'student-lesson-page' },
     el('header', { class: 'student-lesson-header' },
@@ -275,7 +299,7 @@ export function mount(root, ctx) {
       attachmentsArea.replaceChildren(attachments.node);
       terms = termRow({ ctx, classId, lessonId, studentId, lesson, readOnly: false });
       termsArea.replaceChildren(terms.node);
-      reply = replyBox({ ctx, classId, lessonId, studentId, readOnly: true });
+      reply = replyBox({ ctx, classId, lessonId, studentId, readOnly: true, onReply: showStamp });
       content.append(reply.node);
     } catch {
       if (alive) pageMessage.replaceChildren(

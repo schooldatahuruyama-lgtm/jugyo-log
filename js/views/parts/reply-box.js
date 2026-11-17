@@ -1,10 +1,10 @@
 // 先生の返事。記録の保存状態とは別に読みこみ・保存を扱う。
 import { el, confirmDialog } from '../../ui.js';
 import { CONFIG } from '../../config.js';
-import { cleanReply, replyEditState, replyDateLabel } from '../../reply-logic.js';
+import { cleanReply, replyEditState, replyDateLabel, stampKind } from '../../reply-logic.js';
 import { headingIcon } from './heading-icon.js';
 
-export function replyBox({ ctx, classId, lessonId, studentId, readOnly = false }) {
+export function replyBox({ ctx, classId, lessonId, studentId, readOnly = false, onReply = () => {} }) {
   let alive = true;
   let loadId = 0;
   let ready = false;
@@ -18,27 +18,27 @@ export function replyBox({ ctx, classId, lessonId, studentId, readOnly = false }
   const limit = el('p', { id: 'reply-limit', class: 'error', role: 'alert', hidden: true, text: `${max} 文字までです。` });
   const count = el('span', { id: 'reply-count' });
   const text = el('textarea', { id: 'reply-text', rows: 4, 'aria-describedby': 'reply-help reply-count reply-limit', oninput: edit });
-  const seen = el('input', { type: 'checkbox', id: 'reply-seen', onchange: edit });
+  const stamp = el('div', { class: 'reply-stamp' });
+  const stampButton = el('button', { type: 'button', class: 'btn', text: 'スタンプを押す', onclick: toggleStamp });
   const save = el('button', { type: 'button', class: 'btn btn-primary', text: '保存する', onclick: saveReply });
   const remove = el('button', { type: 'button', class: 'btn btn-danger-text', text: '返事を取り消す', onclick: removeReply });
   const editor = el('div', { class: 'reply-editor' },
     el('label', { class: 'label', for: 'reply-text', text: '返事' }), text,
     el('p', { class: 'small reply-count' }, el('span', { id: 'reply-help', text: `${max} 文字まで` }), count), limit,
-    el('label', { class: 'reply-seen', for: 'reply-seen' }, seen,
-      el('span', { text: '見ました（文を書かずに、印だけ付けられます）' })),
+    el('div', { class: 'reply-stamp-controls' }, stamp, stampButton),
     el('div', { class: 'page-actions' }, save, remove));
   const body = el('div', { class: 'lesson-section-body' });
   const node = el('section', { class: 'reply-box', hidden: readOnly, 'aria-labelledby': 'reply-heading' },
     el('header', { class: 'lesson-section-band' },
       el('h2', { id: 'reply-heading' }, headingIcon('teacher'), el('span', { text: '先生から' }))), body);
 
-  const draft = () => ({ text: text.value, seen: seen.checked === true });
+  const draft = () => ({ text: text.value, seen: saved?.seen === true });
   const state = () => replyEditState(draft(), saved, busy || confirming || !ready);
   const dirty = () => !readOnly && ready && state().dirty;
 
   function syncControls() {
     const value = state();
-    text.disabled = seen.disabled = busy || confirming || !ready;
+    text.disabled = stampButton.disabled = busy || confirming || !ready;
     save.disabled = !value.canSave;
     remove.disabled = busy || confirming || !ready;
     remove.hidden = !saved;
@@ -54,18 +54,24 @@ export function replyBox({ ctx, classId, lessonId, studentId, readOnly = false }
     syncControls();
   }
 
-  function showReply() {
-    node.hidden = readOnly && !saved;
+  function showReply(preserveDraft = false) {
+    node.hidden = readOnly && !saved?.text;
     if (readOnly) {
-      body.replaceChildren(...(saved ? [
-        saved.text ? el('p', { class: 'reply-text', text: saved.text }) : null,
-        saved.seen ? el('p', { class: 'reply-seen-mark', text: '✓ 先生が見ました' }) : null,
+      body.replaceChildren(...(saved?.text ? [
+        el('p', { class: 'reply-text', text: saved.text }),
         el('p', { class: 'small reply-date', text: replyDateLabel(saved.updatedAt) }),
-      ].filter(Boolean) : []));
+      ] : []));
+      onReply(saved);
       return;
     }
-    text.value = saved?.text ?? '';
-    seen.checked = saved?.seen === true;
+    if (!preserveDraft) text.value = saved?.text ?? '';
+    stamp.hidden = !saved?.seen;
+    stamp.replaceChildren(...(saved?.seen ? [
+      el('img', { class: 'reply-stamp-image', src: `assets/stamps/seen-${stampKind({ studentId, lessonId, updatedAt: saved.updatedAt })}.svg`,
+        width: 56, height: 56, alt: '' }),
+      el('span', { text: 'スタンプを押してあります' }),
+    ] : []));
+    stampButton.textContent = saved?.seen ? 'スタンプを取り消す' : 'スタンプを押す';
     body.replaceChildren(editor, status, error);
     syncControls();
   }
@@ -100,20 +106,20 @@ export function replyBox({ ctx, classId, lessonId, studentId, readOnly = false }
     }
   }
 
-  async function write(removing) {
+  async function write(value, message) {
     const current = loadId;
-    const value = cleanReply(draft());
     busy = true;
     error.hidden = true;
     status.textContent = '保存しています…';
     syncControls();
     try {
-      if (removing) await ctx.repo.removeReply(classId, lessonId, studentId);
-      else await ctx.repo.setReply(classId, lessonId, studentId, value, ctx.now());
+      const now = ctx.now();
+      if (!value) await ctx.repo.removeReply(classId, lessonId, studentId);
+      else await ctx.repo.setReply(classId, lessonId, studentId, value, now);
       if (!alive || current !== loadId) return;
-      saved = removing ? null : value;
+      saved = value ? { ...value, updatedAt: now } : null;
       showReply();
-      status.textContent = removing ? '返事を取り消しました' : '✓ 保存しました（生徒に見えています）';
+      status.textContent = message;
     } catch {
       if (!alive || current !== loadId) return;
       status.textContent = '';
@@ -126,7 +132,47 @@ export function replyBox({ ctx, classId, lessonId, studentId, readOnly = false }
 
   async function saveReply() {
     if (!alive || readOnly || !state().canSave) return;
-    await write(false);
+    await write(cleanReply(draft()), '✓ 保存しました（生徒に見えています）');
+  }
+
+  async function toggleStamp() {
+    if (!alive || readOnly || !ready || busy || confirming) return;
+    const current = loadId;
+    const seen = saved?.seen !== true;
+    const preserveDraft = dirty();
+    // スタンプだけを変える。保存済みの文と、入力欄の書きかけは別々に残す。
+    busy = true;
+    error.hidden = true;
+    status.textContent = '保存しています…';
+    syncControls();
+    let failed = false;
+    let result = null;
+    try {
+      try {
+        const now = ctx.now();
+        if (seen) await ctx.repo.stampReplies(classId, lessonId, [studentId], now);
+        else result = await ctx.repo.unstampReply(classId, lessonId, studentId, now);
+      } catch {
+        failed = true;
+      }
+      if (!alive || current !== loadId) return;
+      // 取り消しは戻り値を使い、押した場合や失敗時は最新の返事を読み直す。
+      try {
+        const reply = result ? result.reply : await ctx.repo.getReply(classId, lessonId, studentId);
+        if (!alive || current !== loadId) return;
+        saved = reply;
+        showReply(preserveDraft);
+      } catch {
+        failed = true;
+      }
+      if (!alive || current !== loadId) return;
+      status.textContent = failed ? '' : seen
+        ? 'スタンプを押しました（生徒に見えています）' : 'スタンプを取り消しました';
+      error.textContent = '保存できませんでした。もう一度押してください。';
+      error.hidden = !failed;
+    } finally {
+      if (alive && current === loadId) { busy = false; syncControls(); }
+    }
   }
 
   async function removeReply() {
@@ -136,7 +182,7 @@ export function replyBox({ ctx, classId, lessonId, studentId, readOnly = false }
     try {
       const ok = await confirmDialog({ title: '返事を取り消しますか？',
         body: '生徒の画面から、この返事が消えます。', okLabel: '取り消す', danger: true, signal: dialogs.signal });
-      if (ok && alive) await write(true);
+      if (ok && alive) await write(null, '返事を取り消しました');
     } finally {
       confirming = false;
       if (alive) syncControls();

@@ -114,6 +114,170 @@ test('setReply: 不正な入力・時刻は書く前に TypeError。空は削除
   assert.deepEqual(mem.dump(), before);
 });
 
+test('stampReplies: 文の道に触れず、seen・updatedAt・目印だけを 1 回のルート update で保存する', async () => {
+  const existing = { 's26-001': { text: '保存済み\nの返事', updatedAt: 1 },
+    's26-002': { text: 'あ'.repeat(400), seen: true, updatedAt: 1 }, 's26-004': { text: '対象外', updatedAt: 1 } };
+  const { repo, mem, calls } = setup({ replies: { c1: { l1: existing } } });
+  const ids = [1, 2, 3].map((n) => `s26-00${n}`);
+  await repo.stampReplies('c1', 'l1', ids, 20);
+  const expected = {};
+  for (const sid of ids) {
+    expected[`replies/c1/l1/${sid}/seen`] = true;
+    expected[`replies/c1/l1/${sid}/updatedAt`] = 20;
+    expected[`replyMarks/${sid}/c1/l1`] = 20;
+  }
+  assert.deepEqual(calls.update, [['', expected]]);
+  assert.equal(writes(calls), 1);
+  assert.equal(calls.get.length, 0);
+  for (const sid of ids) {
+    assert.deepEqual(await mem.get(`replies/c1/l1/${sid}`), { ...(existing[sid] ?? {}), seen: true, updatedAt: 20 });
+    assert.deepEqual(await repo.getReplyMarks(sid, 'c1'), { l1: 20 });
+  }
+  assert.deepEqual(await mem.get('replies/c1/l1/s26-004'), existing['s26-004']);
+});
+
+test('stampReplies: 一覧を読んだ後に別の端末で追加・修正した文も残る', async () => {
+  const { repo, mem, calls } = setup({ replies: { c1: { l1: { 's26-001': { text: '古い返事', updatedAt: 1 } } } } });
+  const existing = await repo.listReplies('c1', 'l1');
+  await mem.set('replies/c1/l1/s26-001', { text: '別の端末で修正した返事', updatedAt: 10 });
+  await mem.set('replies/c1/l1/s26-002', { text: '別の端末で追加した返事', updatedAt: 10 });
+  await repo.stampReplies('c1', 'l1', ['s26-001', 's26-002'], 20);
+  assert.equal(writes(calls), 1);
+  assert.deepEqual(await repo.listReplies('c1', 'l1'), {
+    's26-001': { text: '別の端末で修正した返事', seen: true, updatedAt: 20 },
+    's26-002': { text: '別の端末で追加した返事', seen: true, updatedAt: 20 },
+  });
+  assert.deepEqual(existing, { 's26-001': { text: '古い返事', seen: false, updatedAt: 1 } });
+});
+
+test('stampReplies: 60 人まで 1 回で保存し、文が無い・対象が重複した場合も書ける', async () => {
+  const { repo, calls } = setup();
+  const ids = Array.from({ length: 60 }, (_, i) => `s26-${String(i + 1).padStart(3, '0')}`);
+  await repo.stampReplies('c1', 'l1', ids, 10);
+  assert.equal(calls.update.length, 1);
+  assert.equal(Object.keys(calls.update[0][1]).length, 180);
+  assert.equal(Object.keys(await repo.listReplies('c1', 'l1')).length, 60);
+  await repo.stampReplies('c1', 'l1', [ids[0], ids[0]], 20);
+  assert.equal(Object.keys(calls.update[1][1]).length, 3);
+  assert.deepEqual(await repo.getReply('c1', 'l1', ids[0]), { text: '', seen: true, updatedAt: 20 });
+});
+
+test('stampReplies: 空・配列以外・61 人・不正な ID や時刻は書く前に TypeError', async () => {
+  const { repo, calls } = setup();
+  for (const ids of [null, undefined, {}, 's26-001', [], Array(1), Array(61).fill('s26-001'),
+    ['s26-001', null], ['s1'], ['s26-001/other'], [123], ['s26-001', '']]) {
+    await assert.rejects(repo.stampReplies('c1', 'l1', ids, 1), TypeError);
+  }
+  for (const now of [undefined, null, '1', NaN, Infinity, true]) {
+    await assert.rejects(repo.stampReplies('c1', 'l1', ['s26-001'], now), TypeError);
+  }
+  for (const [cid, lid] of [[null, 'l1'], ['c1', ''], ['bad/path', 'l1'], ['c1', 'bad.path']]) {
+    await assert.rejects(repo.stampReplies(cid, lid, ['s26-001'], 1), TypeError);
+  }
+  assert.equal(writes(calls), 0);
+});
+
+test('stampReplies: update の失敗で一部だけ保存されない', async () => {
+  const initial = { replies: { c1: { l1: { 's26-001': { text: '残す文', updatedAt: 1 } } } } };
+  const error = new NetError('network');
+  const mem = createMemoryNet({ initial, onChange: () => { throw error; } });
+  const repo = createRepo(mem);
+  await assert.rejects(repo.stampReplies('c1', 'l1', ['s26-001', 's26-002'], 20), (e) => e === error);
+  assert.deepEqual(mem.dump(), initial);
+});
+
+for (const initialText of ['', '古い返事']) {
+  test(`unstampReply: 別の端末で${initialText ? '修正' : '追加'}した最新の文を残し、seen・時刻・目印だけを 1 回で更新する`, async () => {
+    const { repo, mem, calls } = setup({ replies: { c1: { l1: { s1: { text: initialText, seen: true, updatedAt: 1 } } } } });
+    const saved = await repo.getReply('c1', 'l1', 's1');
+    await mem.set('replies/c1/l1/s1', { text: '別の端末で保存した返事', seen: true, updatedAt: 10 });
+    const result = await repo.unstampReply('c1', 'l1', 's1', 20);
+    assert.deepEqual(calls.get, [['replies/c1/l1/s1'], ['replies/c1/l1/s1']]);
+    assert.deepEqual(calls.update, [['', {
+      'replies/c1/l1/s1/seen': null, 'replies/c1/l1/s1/updatedAt': 20, 'replyMarks/s1/c1/l1': 20,
+    }]]);
+    assert.equal(writes(calls), 1);
+    assert.deepEqual(result, { reply: { text: '別の端末で保存した返事', seen: false, updatedAt: 20 } });
+    assert.deepEqual(await mem.get('replies/c1/l1/s1'), { text: '別の端末で保存した返事', updatedAt: 20 });
+    assert.deepEqual(await repo.getReplyMarks('s1', 'c1'), { l1: 20 });
+    assert.equal(saved.text, initialText);
+  });
+}
+
+test('unstampReply: 文なしなら返事と目印を 1 回で消し、続けて取り消しても成功する。他の返事は残す', async () => {
+  for (const text of [undefined, '', ' \r\n　']) {
+    const keep = { text: '別の返事', seen: true, updatedAt: 1 };
+    const { repo, mem, calls } = setup({ replies: { c1: { l1: { s1: { text, seen: true, updatedAt: 1 }, s2: keep }, l2: { s1: keep } } },
+      replyMarks: { s1: { c1: { l1: 1, l2: 1 } }, s2: { c1: { l1: 1 } } } });
+    assert.deepEqual(await repo.unstampReply('c1', 'l1', 's1', 20), { reply: null });
+    assert.deepEqual(calls.update[0], ['', { 'replies/c1/l1/s1': null, 'replyMarks/s1/c1/l1': null }]);
+    assert.deepEqual(await repo.unstampReply('c1', 'l1', 's1', 30), { reply: null });
+    assert.deepEqual(calls.update[1], ['', { 'replyMarks/s1/c1/l1': null }]);
+    assert.deepEqual(calls.get, [['replies/c1/l1/s1'], ['replies/c1/l1/s1']]);
+    assert.equal(writes(calls), 2);
+    assert.deepEqual(await mem.get('replies'), { c1: { l1: { s2: keep }, l2: { s1: keep } } });
+    assert.deepEqual(await mem.get('replyMarks'), { s1: { c1: { l2: 1 } }, s2: { c1: { l1: 1 } } });
+  }
+});
+
+test('unstampReply: 返事が無い・形が不正なら、目印だけ消して成功する', async () => {
+  for (const value of [null, '文', [], { text: '文' }, { updatedAt: 1 }, { text: 'あ'.repeat(401), seen: true, updatedAt: 1 }]) {
+    const { repo, mem, calls } = setup({ replies: { c1: { l1: { s1: value } } }, replyMarks: { s1: { c1: { l1: 1, l2: 2 } } } });
+    const before = await mem.get('replies');
+    assert.deepEqual(await repo.unstampReply('c1', 'l1', 's1', 20), { reply: null });
+    assert.deepEqual(calls.get, [['replies/c1/l1/s1']]);
+    assert.deepEqual(calls.update, [['', { 'replyMarks/s1/c1/l1': null }]]);
+    assert.equal(writes(calls), 1);
+    assert.deepEqual(await mem.get('replies'), before);
+    assert.deepEqual(await mem.get('replyMarks'), { s1: { c1: { l2: 2 } } });
+  }
+});
+
+test('unstampReply: すでに文だけの返事も文を残して時刻と目印を進める', async () => {
+  const { repo, mem, calls } = setup({ replies: { c1: { l1: { s1: { text: '残す文', updatedAt: 1 } } } } });
+  for (const now of [20, 30]) {
+    assert.deepEqual(await repo.unstampReply('c1', 'l1', 's1', now), { reply: { text: '残す文', seen: false, updatedAt: now } });
+    assert.deepEqual(calls.update.at(-1), ['', {
+      'replies/c1/l1/s1/seen': null, 'replies/c1/l1/s1/updatedAt': now, 'replyMarks/s1/c1/l1': now,
+    }]);
+    assert.deepEqual(await mem.get('replies/c1/l1/s1'), { text: '残す文', updatedAt: now });
+    assert.deepEqual(await mem.get('replyMarks/s1/c1'), { l1: now });
+  }
+  assert.equal(writes(calls), 2);
+});
+
+test('unstampReply: 読みこみ失敗はそのまま投げ、何も書かない', async () => {
+  for (const code of ['network', 'denied']) {
+    const error = new NetError(code);
+    const mem = createMemoryNet({ initial: { replies: { c1: { l1: { s1: { seen: true, updatedAt: 1 } } } },
+      replyMarks: { s1: { c1: { l1: 1 } } } } });
+    const before = mem.dump();
+    const { net, calls } = counted({ ...mem, get: async () => { throw error; } });
+    await assert.rejects(createRepo(net).unstampReply('c1', 'l1', 's1', 20), (e) => e === error);
+    assert.deepEqual(calls.get, [['replies/c1/l1/s1']]);
+    assert.equal(writes(calls), 0);
+    assert.deepEqual(mem.dump(), before);
+  }
+});
+
+test('unstampReply: 不正な時刻は通信前に TypeError。書きこみ失敗でも一部だけ保存されない', async () => {
+  const { repo, calls } = setup();
+  for (const now of [undefined, null, '20', false, NaN, Infinity, {}, []]) {
+    await assert.rejects(repo.unstampReply('c1', 'l1', 's1', now), TypeError);
+  }
+  assert.equal(calls.get.length, 0);
+  assert.equal(writes(calls), 0);
+  for (const value of [null, { seen: true, updatedAt: 1 }, { text: '残す文', seen: true, updatedAt: 1 }]) {
+    const initial = { replies: { c1: { l1: { s1: value } } },
+      replyMarks: { s1: { c1: { l1: 1 } } } };
+    const error = new NetError('network');
+    const mem = createMemoryNet({ initial, onChange: () => { throw error; } });
+    const before = mem.dump();
+    await assert.rejects(createRepo(mem).unstampReply('c1', 'l1', 's1', 20), (e) => e === error);
+    assert.deepEqual(mem.dump(), before);
+  }
+});
+
 test('removeReply: 本文と目印を 1 回で消し、無くても成功。他の生徒・授業は残す', async () => {
   const { repo, mem, calls } = setup();
   for (const [lid, sid] of [['l1', 's1'], ['l1', 's2'], ['l2', 's1']]) {
@@ -138,6 +302,7 @@ test('返事の通信: 不正な ID は通信前に断り、通信失敗はそ�
       await assert.rejects(repo.getReply(...ids), TypeError);
       await assert.rejects(repo.setReply(...ids, { seen: true }, 10), TypeError);
       await assert.rejects(repo.removeReply(...ids), TypeError);
+      await assert.rejects(repo.unstampReply(...ids, 10), TypeError);
       if (i < 2) {
         await assert.rejects(repo.listReplies(...ids.slice(0, 2)), TypeError);
         await assert.rejects(repo.getReplyMarks(...ids.slice(0, 2)), TypeError);
@@ -152,7 +317,8 @@ test('返事の通信: 不正な ID は通信前に断り、通信失敗はそ�
     const failed = createRepo({ get: fail, update: fail });
     for (const operation of [() => failed.getReply('c1', 'l1', 's1'), () => failed.listReplies('c1', 'l1'),
       () => failed.getReplyMarks('s1', 'c1'), () => failed.setReply('c1', 'l1', 's1', { seen: true }, 10),
-      () => failed.removeReply('c1', 'l1', 's1')]) {
+      () => failed.removeReply('c1', 'l1', 's1'),
+      () => failed.unstampReply('c1', 'l1', 's1', 10)]) {
       await assert.rejects(operation(), (e) => e === error);
     }
   }

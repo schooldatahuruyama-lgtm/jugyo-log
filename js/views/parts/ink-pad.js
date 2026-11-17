@@ -1,6 +1,7 @@
 // 手書きの紙と道具。保存は呼び出した画面が行う。
 import { el, confirmDialog } from '../../ui.js';
 import { CONFIG } from '../../config.js';
+import { touchScroll } from '../../zoom-logic.js';
 import { cleanInk, cleanStroke, makeStroke, strokePath, snapLine, eraseAt,
   addStroke, addPage, canAddPage, createHistory } from '../../ink-logic.js';
 
@@ -27,7 +28,6 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
   let history = createHistory(CONFIG.ink.undoMax);
   let alive = true;
   let locked = false;
-  let mode = 'move';
   let color = 0;
   let width = 0;
   let ruler = false;
@@ -36,6 +36,8 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
   let penPointer = null;
   let penUntil = 0;
   let gesture = false;
+  let scrollGesture = null;
+  const touchIds = new Set();
   let confirmation = null;
   const listeners = [];
   const buttons = [];
@@ -50,7 +52,7 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
   const status = el('span', { class: 'ink-status', role: 'status' });
   const message = el('p', { class: 'error ink-message', role: 'alert' });
   const node = el('div', { class: readOnly ? 'ink-pad ink-readonly' : 'ink-pad' });
-  let moveButton, writeButton, rulerButton, eraserButton, undoButton, clearButton, moreButton;
+  let rulerButton, eraserButton, undoButton, clearButton, moreButton;
   let colorButtons = [], widthButtons = [];
 
   function listen(target, type, handler, options) {
@@ -79,18 +81,17 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
     undoButton.disabled ||= !history.canUndo();
     clearButton.disabled ||= current.s.length === 0;
     if (moreButton) moreButton.disabled ||= !canAddPage(current);
-    moveButton.setAttribute('aria-pressed', String(mode === 'move'));
-    writeButton.setAttribute('aria-pressed', String(mode === 'write'));
     colorButtons.forEach((control, i) => control.setAttribute('aria-pressed', String(color === i)));
     widthButtons.forEach((control, i) => control.setAttribute('aria-pressed', String(width === i)));
     rulerButton.setAttribute('aria-pressed', String(ruler));
     eraserButton.setAttribute('aria-pressed', String(erasing));
-    status.textContent = (mode === 'write' ? 'いま: 書く（指でもペンでも書けます）'
-      : 'いま: 動かす（指では書けません。ペンは書けます）')
+    status.textContent = (picture ? '指 1 本かペンで書けます。指 2 本で動かす・拡大。'
+      : '指 1 本かペンで書けます。指 2 本でページを動かす。')
       + (ruler ? '／定規' : erasing ? '／消しゴム' : '');
-    paper.style.touchAction = mode === 'write' && !gesture ? 'none' : picture ? 'pan-x pan-y pinch-zoom' : 'pan-y pinch-zoom';
-    node.classList.toggle('ink-writing', mode === 'write' && !locked);
-    paper.classList.toggle('ink-paper-writing', mode === 'write' && !gesture && canEdit());
+    const writing = (!picture || !gesture) && canEdit();
+    paper.style.touchAction = writing ? 'none' : picture ? 'pan-x pan-y pinch-zoom' : 'pan-y pinch-zoom';
+    node.classList.toggle('ink-writing', !locked);
+    paper.classList.toggle('ink-paper-writing', writing);
   }
 
   function describePaper(value) {
@@ -142,6 +143,7 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
   async function clearAll() {
     const request = new AbortController();
     confirmation = request;
+    scrollGesture = null;
     syncControls();
     try {
       const ok = await confirmDialog({ title: picture ? '書きこみを全部消しますか？' : '手書きを全部消しますか？',
@@ -230,13 +232,12 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
   function pointerDown(ev) {
     if (!canEdit() || active) return;
     if (ev.pointerType === 'mouse' && ev.button !== 0) return;
-    if (ev.pointerType !== 'pen' && mode !== 'write') return;
     if (ev.pointerType === 'touch' && (gesture || penPointer !== null || Date.now() < penUntil)) return;
     const point = pointAt(ev);
     if (!point) return;
     ev.preventDefault();
     paper.setPointerCapture(ev.pointerId);
-    if (ev.pointerType === 'pen') penPointer = ev.pointerId;
+    if (ev.pointerType === 'pen') { penPointer = ev.pointerId; scrollGesture = null; }
     active = { pointerId: ev.pointerId, pointerType: ev.pointerType, color, width, ruler, erasing,
       points: [], ink: current, path: erasing ? null : inkPath({ c: color, w: width, p: [] }) };
     if (active.path) lines.append(active.path);
@@ -277,14 +278,64 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
   function preventTouchScroll(ev) {
     if (!ev.cancelable) return;
     const stylus = Array.from(ev.changedTouches || []).some((touch) => touch?.touchType === 'stylus');
-    if (gesture && !stylus && !active && penPointer === null && Date.now() >= penUntil) return;
-    if ((canEdit() && (mode === 'write' || stylus)) || active
+    if (picture && gesture && !stylus && !active && penPointer === null && Date.now() >= penUntil) return;
+    if (canEdit() || active
       || penPointer !== null || Date.now() < penUntil) ev.preventDefault();
   }
 
+  function fingers(ev) {
+    return Array.from(ev.touches || []).filter((touch) => touch && touch.touchType !== 'stylus'
+      && (!touch.target || paper.contains(touch.target) || touchIds.has(touch.identifier)));
+  }
+
+  function scrollContainer() {
+    for (let parent = paper.parentNode; parent && parent !== document; parent = parent.parentNode) {
+      const overflow = window.getComputedStyle(parent).overflowY;
+      if (['auto', 'scroll'].includes(overflow) && parent.scrollHeight > parent.clientHeight) return parent;
+    }
+    return window;
+  }
+
+  function startTouch(ev) {
+    preventTouchScroll(ev);
+    if (picture || !canEdit()) return;
+    const touches = fingers(ev);
+    for (const touch of touches) touchIds.add(touch.identifier);
+    if (gesture || touches.length < 2) return;
+    gesture = true;
+    if (active?.pointerType === 'touch') cancelActive();
+    if (penPointer === null && Date.now() >= penUntil) {
+      const pair = touches.slice(0, 2);
+      scrollGesture = { ids: pair.map((touch) => touch.identifier), pair, target: scrollContainer() };
+    }
+    syncControls();
+  }
+
+  function moveTouch(ev) {
+    preventTouchScroll(ev);
+    if (picture || !scrollGesture) return;
+    if (!canEdit() || penPointer !== null || Date.now() < penUntil) { scrollGesture = null; return; }
+    const touches = fingers(ev);
+    const pair = scrollGesture.ids.map((id) => touches.find((touch) => touch.identifier === id));
+    if (pair.some((touch) => !touch)) { scrollGesture = null; return; }
+    const delta = touchScroll(scrollGesture.pair, pair);
+    scrollGesture.pair = pair;
+    if (!delta) return;
+    const target = scrollGesture.target;
+    if (target === window) window.scrollBy(0, delta);
+    else target.scrollTop = Math.max(0, Math.min(target.scrollHeight - target.clientHeight, target.scrollTop + delta));
+  }
+
+  function endTouch(ev) {
+    const touches = fingers(ev);
+    for (const id of touchIds) if (!touches.some((touch) => touch.identifier === id)) touchIds.delete(id);
+    if (scrollGesture && (ev.type === 'touchcancel'
+      || scrollGesture.ids.some((id) => !touchIds.has(id)))) scrollGesture = null;
+    // 片方を離しても、残った指では書き始めない。
+    if (!touchIds.size) { scrollGesture = null; gesture = false; syncControls(); }
+  }
+
   if (!readOnly) {
-    moveButton = button('動かす', () => { mode = 'move'; }, 'ink-tool ink-mode');
-    writeButton = button('書く', () => { mode = 'write'; }, 'ink-tool ink-mode');
     colorButtons = ['黒', '赤', '青'].map((name, i) => {
       const control = button('', () => { color = i; erasing = false; });
       control.setAttribute('aria-label', name);
@@ -311,7 +362,7 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
     });
     clearButton = button('全部消す', () => { void clearAll(); }, 'ink-tool ink-clear');
     if (!picture) moreButton = button('＋ 下に書く場所を足す', () => { apply(addPage(current)); }, 'ink-more');
-    tools.append(moveButton, writeButton, ...colorButtons, ...widthButtons,
+    tools.append(...colorButtons, ...widthButtons,
       rulerButton, eraserButton, undoButton, clearButton, status);
     node.append(...(picture ? [tools, message] : [tools, paper, moreButton, message]));
     listen(paper, 'pointerdown', pointerDown);
@@ -323,8 +374,12 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
     listen(document, 'pointerup', endPen, true);
     listen(document, 'pointercancel', endPen, true);
     // SVG の touch-action が効かない環境でも、書く間はスクロールと拡大を止める。
-    listen(paper, 'touchstart', preventTouchScroll, { passive: false });
-    listen(paper, 'touchmove', preventTouchScroll, { passive: false });
+    listen(paper, 'touchstart', startTouch, { passive: false });
+    listen(paper, 'touchmove', moveTouch, { passive: false });
+    if (!picture) {
+      listen(document, 'touchend', endTouch, true);
+      listen(document, 'touchcancel', endTouch, true);
+    }
   }
 
   render();
@@ -337,11 +392,10 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
       if (gesture && active?.pointerType === 'touch') cancelActive();
       syncControls();
     },
-    getToolState() { return { mode, color, width, ruler, erasing }; },
+    getToolState() { return { color, width, ruler, erasing }; },
     setToolState(value) {
       if (!alive || !value) return;
       cancelActive();
-      mode = value.mode === 'write' ? 'write' : 'move';
       if (Number.isInteger(value.color) && value.color >= 0 && value.color < CONFIG.ink.colors.length) color = value.color;
       if (Number.isInteger(value.width) && value.width >= 0 && value.width < CONFIG.ink.widths.length) width = value.width;
       ruler = !!value.ruler;
@@ -353,6 +407,7 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
       if (!alive) return;
       cancelConfirmation();
       takeActive();
+      scrollGesture = null;
       current = cleanInk(value);
       history = createHistory(CONFIG.ink.undoMax);
       message.textContent = '';
@@ -361,7 +416,7 @@ export function inkPad({ ink, readOnly = false, picture = false, pdf = false, la
     setLocked(value) {
       if (!alive) return;
       locked = !!value;
-      if (locked) { cancelConfirmation(); cancelActive(); }
+      if (locked) { scrollGesture = null; cancelConfirmation(); cancelActive(); }
       syncControls();
     },
     destroy() {

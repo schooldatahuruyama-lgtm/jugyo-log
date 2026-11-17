@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { createRepo } from '../js/repo.js';
+import { createMemoryNet } from '../js/dev/memory-net.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const at = (p) => join(root, p);
@@ -232,6 +234,35 @@ test('返事の規則: 文は 1〜400 文字、印は true、時刻は数。文�
     assert.equal(evaluate(reply.updatedAt['.validate'], value), false);
     assert.equal(evaluate(mark['.validate'], value), false);
   }
+});
+
+test('スタンプの更新と取り消しは規則が許す形になり、時刻だけの書きこみは拒否される', async () => {
+  const reply = rules.replies.$classId.$lessonId.$sid;
+  const evaluate = (rule, value) => new Function('newData', `return (${rule});`)(snapshot(value));
+  const mem = createMemoryNet({ onChange: (root) => {
+    for (const value of Object.values(root?.replies?.c1?.l1 ?? {})) {
+      assert.equal(evaluate(reply['.validate'], value), true, '返事の規則の式が拒否');
+      for (const [key, child] of Object.entries(value)) assert.equal(evaluate(reply[key]['.validate'], child), true);
+    }
+  } });
+  const repo = createRepo(mem);
+  await repo.stampReplies('c1', 'l1', ['s26-001'], 10);
+  assert.deepEqual(await mem.get('replies/c1/l1/s26-001'), { seen: true, updatedAt: 10 });
+  await repo.stampReplies('c1', 'l1', ['s26-001'], 20);
+  assert.deepEqual(await mem.get('replies/c1/l1/s26-001'), { seen: true, updatedAt: 20 });
+  await repo.unstampReply('c1', 'l1', 's26-001', 25);
+  assert.equal(await mem.get('replies/c1/l1/s26-001'), null);
+  assert.deepEqual(await repo.getReplyMarks('s26-001', 'c1'), {});
+  await repo.setReply('c1', 'l1', 's26-001', { text: '残す文', seen: true }, 30);
+  await repo.unstampReply('c1', 'l1', 's26-001', 40);
+  assert.deepEqual(await mem.get('replies/c1/l1/s26-001'), { text: '残す文', updatedAt: 40 });
+  // 返事が無く、目印だけ残っている場合も取り消せる。
+  await mem.remove('replies/c1/l1/s26-001');
+  assert.deepEqual(await repo.getReplyMarks('s26-001', 'c1'), { l1: 40 });
+  await repo.unstampReply('c1', 'l1', 's26-001', 50);
+  assert.equal(await mem.get('replies/c1/l1/s26-001'), null);
+  assert.deepEqual(await repo.getReplyMarks('s26-001', 'c1'), {});
+  assert.equal(evaluate(reply['.validate'], { updatedAt: 60 }), false);
 });
 
 test('terms は先生と本人が読み、所属する本人だけが実在する授業に 8 個・20 文字まで書ける', () => {

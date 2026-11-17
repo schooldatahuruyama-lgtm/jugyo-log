@@ -1,6 +1,33 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { clampZoom, pinchZoom, nextZoom, zoomScroll } from '../js/zoom-logic.js';
+import { clampZoom, pinchZoom, nextZoom, zoomScroll, touchScroll } from '../js/zoom-logic.js';
+
+test('2本指のスクロール: まん中の上下差だけを使い、3本目・横移動・拡大では動かさない', () => {
+  const pair = (y1, y2) => [{ clientX: 100, clientY: y1 }, { clientX: 200, clientY: y2 }];
+  assert.equal(touchScroll(pair(200, 300), pair(100, 200)), 100);
+  assert.equal(touchScroll(pair(100, 200), pair(200, 300)), -100);
+  assert.equal(touchScroll(pair(200, 300), pair(180, 280)), 20);
+  assert.equal(touchScroll(pair(200, 300), pair(100, 400)), 0);
+  assert.equal(touchScroll(pair(200, 300), [{ clientX: 0, clientY: 200 }, { clientX: 400, clientY: 300 }]), 0);
+  assert.equal(touchScroll([...pair(200, 300), { clientY: -999 }], [...pair(100, 200), { clientY: 999 }]), 100);
+});
+
+test('2本指のスクロール: 指が足りない・位置が数でない入力は動かさない', () => {
+  const pair = [{ clientX: 100, clientY: 200 }, { clientX: 200, clientY: 300 }];
+  for (const bad of [undefined, null, {}, [], [pair[0]], [null, pair[1]]]) {
+    assert.equal(touchScroll(bad, pair), 0);
+    assert.equal(touchScroll(pair, bad), 0);
+  }
+  for (const key of ['clientX', 'clientY']) {
+    for (const value of [undefined, null, '100', NaN, Infinity, -Infinity]) {
+      for (const index of [0, 1]) {
+        const bad = pair.map((point, i) => i === index ? { ...point, [key]: value } : point);
+        assert.equal(touchScroll(pair, bad), 0);
+        assert.equal(touchScroll(bad, pair), 0);
+      }
+    }
+  }
+});
 
 test('倍率: 比で拡大縮小し、100〜400% に収める', () => {
   assert.equal(pinchZoom(1.25, 100, 200), 2.5);

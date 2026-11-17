@@ -297,15 +297,21 @@ for (const kind of ['attachment', 'material']) {
     const first = paper();
     assert.equal(first.getAttribute('viewBox'), '0 0 800 1067');
     assert.equal(first.parentNode.parentNode.children[0].tagName, 'canvas');
-    assert.equal(first.style.touchAction, 'pan-x pan-y pinch-zoom');
-    buttons(viewer(), '書く')[0].click(); control('赤').click(); control('太い').click();
+    assert.equal(first.style.touchAction, 'none');
+    assert.equal(buttons(viewer(), '動かす').length, 0);
+    assert.equal(buttons(viewer(), '書く').length, 0);
+    const hint = '指 1 本かペンで書けます。指 2 本で動かす・拡大。';
+    assert.equal(byClass(viewer(), 'ink-status')[0].textContent, hint);
+    control('赤').click(); control('太い').click();
     draw(first, { type: 'touch' });
     assert.equal(getDraft(h, 1, place).ink.s[0].c, 1);
     assert.equal(getDraft(h, 1, place).ink.s[0].w, 1);
     buttons(viewer(), '定規')[0].click();
     await turn();
     assert.equal(toggle().getAttribute('aria-pressed'), 'true');
-    assert.equal(buttons(viewer(), '書く')[0].getAttribute('aria-pressed'), 'true');
+    assert.equal(buttons(viewer(), '動かす').length, 0);
+    assert.equal(buttons(viewer(), '書く').length, 0);
+    assert.equal(byClass(viewer(), 'ink-status')[0].textContent, `${hint}／定規`);
     assert.equal(buttons(viewer(), '定規')[0].getAttribute('aria-pressed'), 'true');
     assert.equal(control('赤').getAttribute('aria-pressed'), 'true');
     assert.equal(control('太い').getAttribute('aria-pressed'), 'true');
@@ -319,6 +325,7 @@ for (const kind of ['attachment', 'material']) {
     assert.equal(paper(), first);
     assert.equal(buttons(viewer(), '消しゴム')[0].getAttribute('aria-pressed'), 'true');
     assert.equal(buttons(viewer(), '定規')[0].getAttribute('aria-pressed'), 'false');
+    assert.equal(byClass(viewer(), 'ink-status')[0].textContent, `${hint}／消しゴム`);
     buttons(viewer(), '1 つ戻す')[0].click(); assert.equal(paths(), 0);
     buttons(viewer(), '消しゴム')[0].click(); draw(first, { type: 'touch' });
     await pane.flush(); close(); await settle();
@@ -335,6 +342,41 @@ for (const kind of ['attachment', 'material']) {
     close();
   });
 }
+
+for (const type of ['touch', 'pen']) {
+  test(`PDF: 書きこみ開始直後に${type}で書ける`, async (t) => {
+    const h = setup(t), pane = paneFor(h); await open(pane); toggle().click();
+    assert.equal(buttons(viewer(), '動かす').length, 0);
+    assert.equal(buttons(viewer(), '書く').length, 0);
+    draw(paper(), { type });
+    assert.equal(getDraft(h).ink.s.length, 1);
+    close();
+  });
+}
+
+test('PDFの古い道具状態: modeを無視して書け、ページ送りでは色・太さだけを引きつぐ', async (t) => {
+  const h = setup(t), inks = pictureInks({ ctx: h.ctx, ...ids, readOnly: false });
+  h.cleanup(() => inks.destroy());
+  const v = openViewer({ title: '動作確認用の PDF', kind: 'pdf', load: async () => new Blob(['fake pdf']),
+    pageInk: (page) => inks.getPage(pdf, page) });
+  h.cleanup(() => v.close()); await settle(); toggle().click();
+  const first = inks.getPage(pdf, 1), expected = { color: 1, width: 1, ruler: false, erasing: false };
+  first.setToolState({ mode: 'move', color: 1, width: 1 });
+  const invalid = [null, { mode: 'move', color: -1, width: 2 },
+    { mode: 'unknown', color: 3, width: -1 }, { mode: null, color: '0', width: 0.5 }];
+  for (const [i, value] of invalid.entries()) {
+    first.setToolState(value);
+    assert.deepEqual(first.getToolState(), expected);
+    draw(paper(), { type: 'touch' });
+    assert.equal(getDraft(h).ink.s.length, i + 1);
+  }
+  await turn();
+  assert.deepEqual(inks.getPage(pdf, 2).getToolState(), expected);
+  draw(paper(), { type: 'touch' });
+  assert.equal(getDraft(h, 2).ink.s.length, 1);
+  assert.equal(getDraft(h, 2).ink.s[0].c, 1); assert.equal(getDraft(h, 2).ink.s[0].w, 1);
+  close();
+});
 
 test('PDFの倍率: ボタン・ピンチ・ホイール・幅変更、ページをめくると100%と先頭に戻る', async (t) => {
   const h = setup(t), pane = paneFor(h); await open(pane);
@@ -361,7 +403,7 @@ test('PDFの倍率: ボタン・ピンチ・ホイール・幅変更、ページ
 });
 
 test('PDFの書く→ピンチ: 線を取り消し、ページ移動中も残る指では書かない', async (t) => {
-  const h = setup(t), pane = paneFor(h); await open(pane); toggle().click(); buttons(viewer(), '書く')[0].click();
+  const h = setup(t), pane = paneFor(h); await open(pane); toggle().click();
   const first = paper(), pointer = { pointerId: 1, pointerType: 'touch', clientX: 200, clientY: 200 };
   first.fire('pointerdown', pointer); first.fire('pointermove', { ...pointer, clientX: 300 });
   touch(first, 'touchstart', [[1, 200, 200], [2, 300, 200]]);
@@ -384,7 +426,7 @@ test('PDFの書く→ピンチ: 線を取り消し、ページ移動中も残る
 
 test('PDFの高精細化: 150%超の停止300ms後に1回、道具・線・保存状態・倍率・位置を維持', async (t) => {
   const h = setup(t); t.mock.timers.enable({ apis: ['setTimeout'] });
-  const pane = paneFor(h); await open(pane); toggle().click(); buttons(viewer(), '書く')[0].click();
+  const pane = paneFor(h); await open(pane); toggle().click();
   control('赤').click(); control('太い').click();
   draw(paper(), { type: 'touch' }); await pane.flush();
   buttons(viewer(), '＋')[0].click(); buttons(viewer(), '＋')[0].click();
@@ -612,24 +654,22 @@ test('全消去: 他のページの線は残り、全ページ0本で印と目�
   assert.ok(h.record.inkCleared['a1#p1']); assert.ok(h.record.inkCleared['a1#p2']); close();
 });
 
-test('PDFの接触: ページを移っても書く間だけ止め、動かす・書きこみ終了で戻す', async (t) => {
+test('PDFの接触: ページを移っても書く間だけ止め、書きこみ終了で戻す', async (t) => {
   const h = setup(t), pane = paneFor(h);
   await open(pane); toggle().click();
   const checkTouches = (expected) => {
     assert.equal(paper().classList.contains('ink-paper-writing'), expected);
+    assert.equal(paper().style.touchAction, expected ? 'none' : 'pan-x pan-y pinch-zoom');
     for (const type of ['touchstart', 'touchmove']) {
       for (const changedTouches of [undefined, [{}], [{ touchType: 'direct' }, {}]]) {
         assert.equal(paper().fire(type, { cancelable: true, changedTouches }).defaultPrevented, expected);
       }
     }
   };
-  checkTouches(false);
-  buttons(viewer(), '書く')[0].click(); checkTouches(true);
+  checkTouches(true);
   await turn(); checkTouches(true);
-  buttons(viewer(), '動かす')[0].click(); checkTouches(false);
-  assert.equal(paper().style.touchAction, 'pan-x pan-y pinch-zoom');
-  buttons(viewer(), '書く')[0].click(); checkTouches(true);
   toggle().click(); checkTouches(false);
+  draw(paper(), { type: 'touch' }); draw(paper());
   toggle().click(); checkTouches(true);
   assert.equal(paths(), 0); assert.equal(pane.dirty, false);
   close();
@@ -837,15 +877,16 @@ test('1ページ・不正な大きさ・999/1000ページの境界。大きさ�
   assert.equal(buttons(viewer(), '＋').length, 1); assert.equal(buttons(viewer(), '－').length, 1); close();
 });
 
-test('PDFのページごとの上限・動かすの指スクロールと上下左右のドラッグ', async (t) => {
+test('PDFのページごとの上限・書きこみ前の指スクロールと上下左右のドラッグ', async (t) => {
   const h = setup(t); putDraft(h, 1, 'a1', pdf.fileId, written(CONFIG.ink.maxStrokes));
   const pane = paneFor(h); await open(pane);
+  assert.equal(paper().style.touchAction, 'pan-x pan-y pinch-zoom');
   const viewport = byClass(viewer(), 'viewer-viewport')[0];
   viewport.fire('pointerdown', { pointerType: 'mouse', pointerId: 5, clientX: 100, clientY: 100 });
   viewport.fire('pointermove', { pointerId: 5, clientX: 40, clientY: 50 });
   assert.equal(viewport.scrollLeft, 60); assert.equal(viewport.scrollTop, 50);
   viewport.fire('pointerup', { pointerId: 5 }); toggle().click();
-  assert.equal(paper().style.touchAction, 'pan-x pan-y pinch-zoom');
+  assert.equal(paper().style.touchAction, 'none');
   draw(paper(), { type: 'touch' }); assert.equal(paths(), CONFIG.ink.maxStrokes);
   draw(paper()); assert.match(viewer().textContent, /これ以上は書けません。いらない線を消してください。/);
   await turn(); draw(paper()); assert.equal(getDraft(h, 2).ink.s.length, 1); close();
