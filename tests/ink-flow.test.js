@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { saveInkFlow, loadInkFlow, resendInkDrafts } from '../js/ink-flow.js';
+import { saveInkFlow, loadInkFlow, inkLoadReason, resendInkDrafts } from '../js/ink-flow.js';
 import { emptyInk, isEmptyInk, serializeInk, serverInkTime } from '../js/ink-logic.js';
 import { createInkSaver } from '../js/ink-saver.js';
 import { CONFIG } from '../js/config.js';
@@ -503,6 +503,31 @@ test('手書き保存: A が失敗 → B が保存 → A のやり直しでも B
   assert.deepEqual(s.calls, [['upload', 'ink-test-1'], ['upload', 'device-b']]);
 });
 
+test('手書きの失敗理由: NetError の種類を決まった文にし、エラーの中身は出さない', () => {
+  for (const [code, reason] of [
+    ['network', '通信できませんでした'],
+    ['auth', 'ログインが切れています'],
+    ['denied', '見ることが許されていません'],
+    ['toobig', 'ファイルが大きすぎます'],
+    ['bad-data', '中身を読めませんでした'],
+    ['unknown', '保存の仕組みが断りました'],
+    ['notfound', '見つかりませんでした'],
+    ['unexpected-code', '保存の仕組みが断りました'],
+  ]) {
+    const error = new NetError(code, '画面に出さないテスト用の詳細');
+    error.fileId = 'test-file';
+    assert.equal(inkLoadReason(error), reason);
+  }
+});
+
+test('手書きの失敗理由: NetError 以外やおかしい入力は端末で開けなかった文にする', () => {
+  for (const error of [null, undefined, 'network', 0, false, {}, [], new Error('test error'), new TypeError('test error'),
+    { code: 'unexpected-code' }, { name: 'NetError', code: 'network' },
+    ...['network', 'auth', 'denied', 'toobig', 'bad-data', 'unknown', 'notfound'].map((code) => ({ code }))]) {
+    assert.equal(inkLoadReason(error), 'この端末では開けませんでした');
+  }
+});
+
 test('手書き読みこみ: 正しい JSON は読み、壊れた JSON は bad-data。通信失敗も返す', async () => {
   assert.deepEqual(await loadInkFlow({ files: { loadInk: async () => serializeInk(ink) }, fileId: 'file' }), ink);
   for (const text of ['{', 'null', '[]', '{"v":2}', '']) {
@@ -717,7 +742,7 @@ function fieldSetup({ record = null, draft = null } = {}) {
   ctx.files.loadInk = async () => serializeInk(ink);
   const inkField = viewFunction('../js/views/parts/ink-field.js', 'inkField', {
     el: viewNode, confirmDialog: async () => false, CONFIG, newId: () => `test-${++key}`,
-    emptyInk, isEmptyInk, serverInkTime, saveInkFlow, loadInkFlow, createInkSaver,
+    emptyInk, isEmptyInk, serverInkTime, saveInkFlow, loadInkFlow, inkLoadReason, createInkSaver,
     inkThumb: () => null,
     inkPad: (options) => {
       const pad = { ...options, node: viewNode('paper'), destroyed: false, setLocked() {}, destroy() { this.destroyed = true; } };
@@ -731,6 +756,29 @@ function fieldSetup({ record = null, draft = null } = {}) {
 }
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('手書き欄: 失敗の理由を alert に出し、再試行で入れかえ、成功したら消す', async () => {
+  const s = fieldSetup({ record: { ink: { memo: { fileId: 'test-ink', updatedAt: 10 } } } });
+  const area = s.field.node.children[0];
+  s.ctx.files.loadInk = async () => { throw new NetError('network', '画面に出さないテスト用の詳細'); };
+  await s.field.show();
+  assert.equal(area.children[0].role, 'alert');
+  assert.equal(area.children[0].textContent, '手書きを読みこめませんでした。（理由: 通信できませんでした）');
+  assert.equal(s.pads.length, 0);
+  s.ctx.files.loadInk = async () => '{';
+  area.children.find((node) => node.text === 'もう一度').onclick(); await settle();
+  assert.equal(area.children[0].role, 'alert');
+  assert.equal(area.children[0].textContent, '手書きを読みこめませんでした。（理由: 中身を読めませんでした）');
+  s.ctx.files.loadInk = async () => { throw new NetError('notfound'); };
+  area.children.find((node) => node.text === 'もう一度').onclick(); await settle();
+  assert.equal(area.children[0].textContent, '前に書いた手書きが見つかりませんでした。');
+  assert.equal(area.children.some((node) => node.text === '新しく書く'), true);
+  s.ctx.files.loadInk = async () => serializeInk(ink);
+  area.children.find((node) => node.text === 'もう一度').onclick(); await settle();
+  assert.equal(area.children.some((node) => node.role === 'alert'), false);
+  assert.deepEqual(s.pads.map((pad) => pad.ink), [ink]);
+  s.field.destroy();
+});
 
 test('手書き欄: 削除時刻以上に古い下書きは捨て、新しい下書きだけ復元する', async () => {
   for (const editedAt of [19, 20, 21]) {
@@ -841,7 +889,7 @@ function teacherSetup(text = '') {
   const el = (...args) => { const node = viewNode(...args); nodes.push(node); return node; };
   const pane = () => ({ node: el('div'), destroy() {} });
   const mount = viewFunction('../js/views/teacher-record.js', 'mount', {
-    el, CONFIG, dateLabel: () => '', normalizeRecord, loadInkFlow,
+    el, CONFIG, dateLabel: () => '', normalizeRecord, loadInkFlow, inkLoadReason,
     reviewPeople: (_, records) => [{ studentId: 's26-001', number: 1, inRoster: true, record: records['s26-001'] }],
     neighbors: () => ({ prev: null, next: null }), levelLabel: () => '',
     teacherNav: () => el('nav'), materialPane: pane, attachmentPane: pane, termRow: pane, headingIcon: () => el('span'),
@@ -873,18 +921,30 @@ test('先生の手書き: 最初の notfound は目録を 1 回読み直し、�
 });
 
 test('先生の手書き: 自動読み直しは 1 回だけ。「もう一度」はさらに最新の目録を読む', async () => {
-  for (const error of ['notfound', 'network']) {
+  for (const [error, message] of [
+    ['notfound', '手書きが見つかりませんでした。'],
+    ['network', '手書きを読みこめませんでした。（理由: 通信できませんでした）'],
+    ['bad-data', '手書きを読みこめませんでした。（理由: 中身を読めませんでした）'],
+  ]) {
     const s = teacherSetup();
     s.ctx.files.loadInk = async (id) => { s.calls.push(['load', id]); throw new NetError(error); };
     const destroy = s.start();
     await settle();
     assert.deepEqual(s.calls, error === 'notfound' ? [['load', 'old'], ['get'], ['load', 'new']] : [['load', 'old']]);
+    const area = s.nodes.find((node) => node.class === 'record-ink');
+    assert.equal(area.children[0].role, 'alert');
+    assert.equal(area.children[0].textContent, message);
+    s.ctx.files.loadInk = async () => { throw new NetError('auth'); };
+    area.children.find((node) => node.text === 'もう一度').onclick(); await settle();
+    assert.equal(area.children[0].role, 'alert');
+    assert.equal(area.children[0].textContent, '手書きを読みこめませんでした。（理由: ログインが切れています）');
     s.ctx.repo.getRecord = async () => { s.calls.push(['get']); return { ink: { memo: { fileId: 'latest', updatedAt: 30 } } }; };
     s.ctx.files.loadInk = async (id) => { s.calls.push(['load', id]); return serializeInk(ink); };
     s.nodes.findLast((node) => node.text === 'もう一度').onclick();
     await settle();
     assert.deepEqual(s.calls.slice(-2), [['get'], ['load', 'latest']]);
     assert.equal(s.pads.length, 1);
+    assert.equal(area.children.some((node) => node.role === 'alert'), false);
     destroy();
   }
 });

@@ -7,6 +7,7 @@ import { createRecordQueue } from '../js/record-queue.js';
 import { pendingLessonCount, pendingLessons } from '../js/record-flow.js';
 import { emptyPictureInk, inkPagePlace, splitInkPlace } from '../js/ink-logic.js';
 import { CONFIG } from '../js/config.js';
+import { NetError } from '../js/errors.js';
 import { installDom, all, byClass, buttons, settle, draw, touch } from './helpers/picture-dom.js';
 
 const hooks = registerHooks({
@@ -712,10 +713,30 @@ test('先生の1人の記録: 両方のPDFの印とページ別の線を表示�
   assert.equal(h.saves.length, 0); assert.equal(h.ctx.inkDrafts.list(ids.studentId).length, 0);
 });
 
+for (const readOnly of [false, true]) {
+  test(`PDF の読みこみ: ${readOnly ? '先生' : '生徒'}に理由を出し、再試行で入れかえ、成功したら消す`, async (t) => {
+    const h = setup(t); h.record.ink['a1#p1'] = indexFor(); h.loadError = new NetError('network');
+    const pane = paneFor(h, 'attachment', readOnly); await open(pane);
+    const failure = () => byClass(viewer(), 'error');
+    assert.equal(failure()[0].getAttribute('role'), 'alert');
+    assert.equal(failure()[0].textContent, '書きこみを読みこめませんでした。（理由: 通信できませんでした）');
+    h.loadError = null; h.files.set('test-ink', '{');
+    buttons(viewer(), 'もう一度')[0].click(); await settle();
+    assert.equal(failure().length, 1);
+    assert.equal(failure()[0].getAttribute('role'), 'alert');
+    assert.equal(failure()[0].textContent, '書きこみを読みこめませんでした。（理由: 中身を読めませんでした）');
+    h.files.set('test-ink', JSON.stringify(written()));
+    buttons(viewer(), 'もう一度')[0].click(); await settle();
+    assert.doesNotMatch(viewer().textContent, /書きこみを読みこめませんでした/);
+    assert.equal(buttons(viewer(), 'もう一度').length, 0);
+    assert.equal(paths(), 1); close();
+  });
+}
+
 test('先生の再試行: 記録の現在の目録を読み直してから当該ページだけを読む', async (t) => {
   const h = setup(t); h.record.ink['a1#p1'] = indexFor(); h.loadError = new Error('test offline');
   const pane = paneFor(h, 'attachment', true); await open(pane);
-  assert.match(viewer().textContent, /書きこみを読みこめませんでした。/);
+  assert.equal(byClass(viewer(), 'error')[0].textContent, '書きこみを読みこめませんでした。（理由: この端末では開けませんでした）');
   assert.equal(buttons(viewer(), '新しく書く').length, 0);
   h.files.set('new-ink', JSON.stringify(written(2)));
   h.record.ink['a1#p1'] = indexFor(pdf.fileId, 'new-ink', 1000); h.loadError = null;
@@ -747,7 +768,7 @@ test('速いページ移動: 遅い線・PDF描画・閉鎖後の結果を別ペ
 test('読みこみ失敗から新しく書く・ほかの端末の新しい線はそのページだけに効く', async (t) => {
   const h = setup(t); h.record.ink['a1#p1'] = indexFor(); h.loadError = { code: 'notfound' };
   const pane = paneFor(h); await open(pane);
-  assert.match(viewer().textContent, /前の書きこみが見つかりませんでした。/);
+  assert.equal(byClass(viewer(), 'error')[0].textContent, '前の書きこみが見つかりませんでした。');
   await turn(); toggle().click(); draw(paper()); const second = paper();
   await turn('前のページ'); assert.equal(h.loads.length, 1);
   buttons(viewer(), '新しく書く')[0].click();

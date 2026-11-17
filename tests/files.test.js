@@ -14,6 +14,15 @@ function make(handler) {
   return { calls, cache, files: createFiles({ gas, cache }) };
 }
 
+function useFileReader(t, FileReader) {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'FileReader');
+  Object.defineProperty(globalThis, 'FileReader', { configurable: true, writable: true, value: FileReader });
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, 'FileReader', previous);
+    else delete globalThis.FileReader;
+  });
+}
+
 test('画像は取り置きにない 3 個だけ頼み、missing と PDF を結果に入れない', async () => {
   const { files, calls, cache } = make(() => ({ ok: true, files: { m3: encoded, m4: encoded }, missing: ['m5'] }));
   const cached = new Blob(['保存済み'], { type: 'image/jpeg' });
@@ -174,6 +183,65 @@ test('手書き: ASCII JSON を base64 で保存し、読み取り・取り置�
   assert.equal(calls.length, 2);
   await files.trashStudent('ink-file');
   assert.equal(await cache.get('ink-file'), null);
+});
+
+test('手書き: text が関数でない Blob でも FileReader から読める', async (t) => {
+  const text = '{"v":1,"h":400,"s":[]}';
+  const blobs = [];
+  useFileReader(t, class {
+    readAsText(blob) {
+      blobs.push(blob);
+      queueMicrotask(() => { this.result = Buffer.from(blob.parts[0]).toString('utf8'); this.onload(); });
+    }
+  });
+  for (const value of [undefined, null, 'not-a-function']) {
+    const calls = [];
+    const files = createFiles({
+      gas: { call: async (op, payload) => { calls.push({ op, payload });
+        return { mime: 'application/json', dataB64: Buffer.from(text).toString('base64') }; } },
+      cache: createFileCache({ caches: undefined }),
+      Blob: class { constructor(parts, { type }) { this.parts = parts; this.type = type; this.text = value; } },
+    });
+    assert.equal(await files.loadInk('test-ink'), text);
+    assert.equal(await files.loadInk('test-ink'), text);
+    assert.deepEqual(calls, [{ op: 'getStudentFile', payload: { fileId: 'test-ink' } }]);
+    assert.equal(blobs.at(-1), blobs.at(-2));
+  }
+  assert.equal(blobs.length, 6);
+});
+
+test('手書き: text が関数なら FileReader を使わず、その結果と例外を返す', async (t) => {
+  useFileReader(t, class { constructor() { assert.fail('FileReader は使わない'); } });
+  const { files, cache } = make(() => assert.fail('通信はしない'));
+  const error = new TypeError('test read error');
+  const blob = { text: async () => '{"v":1,"h":400,"s":[]}' };
+  await cache.put('test-ink', blob);
+  assert.equal(await files.loadInk('test-ink'), '{"v":1,"h":400,"s":[]}');
+  blob.text = async () => { throw error; };
+  await assert.rejects(files.loadInk('test-ink'), (e) => e === error);
+});
+
+test('手書き: FileReader の失敗・中止・未対応も例外を返す', async (t) => {
+  const error = new Error('test read error');
+  let outcome = 'error';
+  useFileReader(t, class {
+    readAsText() {
+      if (outcome === 'throw') throw error;
+      queueMicrotask(() => {
+        if (outcome === 'abort') this.onabort();
+        else { this.error = error; this.onerror(); }
+      });
+    }
+  });
+  const { files, cache } = make(() => assert.fail('通信はしない'));
+  await cache.put('test-ink', {});
+  await assert.rejects(files.loadInk('test-ink'), (e) => e === error);
+  outcome = 'throw';
+  await assert.rejects(files.loadInk('test-ink'), (e) => e === error);
+  outcome = 'abort';
+  await assert.rejects(files.loadInk('test-ink'), Error);
+  delete globalThis.FileReader;
+  await assert.rejects(files.loadInk('test-ink'), ReferenceError);
 });
 
 test('手書き: 保存・読み取りの通信失敗を返す', async () => {

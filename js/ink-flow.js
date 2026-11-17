@@ -64,6 +64,20 @@ export async function loadInkFlow({ files, fileId }) {
   return ink;
 }
 
+// 手書き・書きこみを読みこめなかった理由を、画面に出す短い文にする。
+export function inkLoadReason(error) {
+  if (!(error instanceof NetError)) return 'この端末では開けませんでした';
+  switch (error.code) {
+    case 'network': return '通信できませんでした';
+    case 'auth': return 'ログインが切れています';
+    case 'denied': return '見ることが許されていません';
+    case 'toobig': return 'ファイルが大きすぎます';
+    case 'bad-data': return '中身を読めませんでした';
+    case 'notfound': return '見つかりませんでした';
+    default: return '保存の仕組みが断りました';
+  }
+}
+
 function sameDraft(current, draft) {
   return current && current.editedAt === draft.editedAt && current.key === draft.key && current.on === draft.on
     && serializeInk(current.ink) === serializeInk(draft.ink);

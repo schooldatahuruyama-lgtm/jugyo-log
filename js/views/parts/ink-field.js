@@ -3,7 +3,7 @@ import { el, confirmDialog } from '../../ui.js';
 import { CONFIG } from '../../config.js';
 import { newId } from '../../ids.js';
 import { emptyInk, emptyPictureInk, isEmptyInk, serverInkTime } from '../../ink-logic.js';
-import { saveInkFlow, loadInkFlow } from '../../ink-flow.js';
+import { saveInkFlow, loadInkFlow, inkLoadReason } from '../../ink-flow.js';
 import { createInkSaver } from '../../ink-saver.js';
 import { inkThumb } from '../../ink-thumb.js';
 import { inkPad } from './ink-pad.js';
@@ -204,7 +204,7 @@ export function inkField({ ctx, classId, lessonId, studentId, field, label, inde
       area.replaceChildren(el('p', { class: 'error', role: 'alert', text: missing
         ? picture ? readOnly ? '書きこみが見つかりませんでした。' : '前の書きこみが見つかりませんでした。'
           : '前に書いた手書きが見つかりませんでした。'
-        : picture ? '書きこみを読みこめませんでした。' : '手書きを読みこめませんでした。' }),
+        : `${picture ? '書きこみ' : '手書き'}を読みこめませんでした。（理由: ${inkLoadReason(error)}）` }),
         el('button', { type: 'button', class: 'btn', text: 'もう一度', onclick: () => { void load(readOnly); } }));
       if (missing && !readOnly) area.append(el('button', { type: 'button', class: 'btn', text: '新しく書く',
         onclick: async () => {

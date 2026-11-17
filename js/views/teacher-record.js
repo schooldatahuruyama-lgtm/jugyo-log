@@ -4,7 +4,7 @@ import { isStudentId } from '../ids.js';
 import { CONFIG } from '../config.js';
 import { dateLabel } from '../lesson-logic.js';
 import { normalizeRecord } from '../record-logic.js';
-import { loadInkFlow } from '../ink-flow.js';
+import { loadInkFlow, inkLoadReason } from '../ink-flow.js';
 import { reviewPeople, neighbors, levelLabel } from '../review-logic.js';
 import { teacherNav } from './parts/teacher-nav.js';
 import { materialPane } from './parts/material-pane.js';
@@ -128,7 +128,7 @@ export function mount(root, ctx) {
         } catch (error) {
           if (stale()) return;
           inkArea.replaceChildren(el('p', { class: 'error', role: 'alert', text: error?.code === 'notfound'
-            ? '手書きが見つかりませんでした。' : '手書きを読みこめませんでした。' }),
+            ? '手書きが見つかりませんでした。' : `手書きを読みこめませんでした。（理由: ${inkLoadReason(error)}）` }),
             el('button', { type: 'button', class: 'btn', text: 'もう一度', onclick: () => loadInk(true) }));
         } finally { pending = false; }
       });

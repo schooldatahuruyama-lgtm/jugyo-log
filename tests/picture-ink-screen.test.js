@@ -7,6 +7,7 @@ import { createRecordQueue } from '../js/record-queue.js';
 import { pendingLessonCount, pendingLessons } from '../js/record-flow.js';
 import { emptyPictureInk } from '../js/ink-logic.js';
 import { CONFIG } from '../js/config.js';
+import { NetError } from '../js/errors.js';
 import { attachmentPane } from '../js/views/parts/attachment-pane.js';
 import { materialPane } from '../js/views/parts/material-pane.js';
 import { inkField } from '../js/views/parts/ink-field.js';
@@ -636,11 +637,33 @@ test('下書きがあれば開かなくても保存対象になり、Driveを読
   close(); await settle(); assert.equal(pane.dirty, false);
 });
 
+for (const readOnly of [false, true]) {
+  test(`写真の読みこみ: ${readOnly ? '先生' : '生徒'}に理由を出し、再試行で入れかえ、成功したら消す`, async (t) => {
+    const h = setup(t); h.record.ink.a1 = indexFor(); h.loadError = new NetError('network', '画面に出さないテスト用の詳細');
+    const pane = attachments(h, readOnly); h.cleanup(() => pane.destroy());
+    byClass(pane.node, 'attachment-open')[0].click(); await settle();
+    const failure = () => byClass(viewer(), 'error');
+    assert.equal(failure()[0].getAttribute('role'), 'alert');
+    assert.equal(failure()[0].textContent, '書きこみを読みこめませんでした。（理由: 通信できませんでした）');
+    h.loadError = null; h.files.set('test-ink', '{');
+    buttons(viewer(), 'もう一度')[0].click(); await settle();
+    assert.equal(failure().length, 1);
+    assert.equal(failure()[0].getAttribute('role'), 'alert');
+    assert.equal(failure()[0].textContent, '書きこみを読みこめませんでした。（理由: 中身を読めませんでした）');
+    h.files.set('test-ink', JSON.stringify(written()));
+    buttons(viewer(), 'もう一度')[0].click(); await settle();
+    assert.doesNotMatch(viewer().textContent, /書きこみを読みこめませんでした/);
+    assert.equal(buttons(viewer(), 'もう一度').length, 0);
+    assert.equal(all(paper(), (node) => node.tagName === 'path').length, 1);
+    close();
+  });
+}
+
 test('読みこみ失敗・notfoundの再試行と新しく書く。先生は目録を読み直す', async (t) => {
   const h = setup(t); h.record.ink.a1 = indexFor(); h.loadError = { code: 'notfound' };
   const pane = attachments(h); h.cleanup(() => pane.destroy());
   byClass(pane.node, 'attachment-open')[0].click(); await settle();
-  assert.match(viewer().textContent, /前の書きこみが見つかりませんでした。/);
+  assert.equal(byClass(viewer(), 'error')[0].textContent, '前の書きこみが見つかりませんでした。');
   assert.equal(buttons(viewer(), '✎ 書きこむ')[0].disabled, true);
   buttons(viewer(), '新しく書く')[0].click();
   buttons(byClass(document.body, 'confirm')[0], '新しく書く')[0].click(); await settle();
@@ -648,7 +671,7 @@ test('読みこみ失敗・notfoundの再試行と新しく書く。先生は目
   close(); pane.destroy();
   const teacher = attachments(h, true); h.cleanup(() => teacher.destroy());
   byClass(teacher.node, 'attachment-open')[0].click(); await settle();
-  assert.match(viewer().textContent, /書きこみが見つかりませんでした。/);
+  assert.equal(byClass(viewer(), 'error')[0].textContent, '書きこみが見つかりませんでした。');
   assert.equal(buttons(viewer(), '新しく書く').length, 0);
   h.record.ink.a1 = { ...indexFor(), fileId: 'newer-ink', updatedAt: 30 };
   h.files.set('newer-ink', JSON.stringify(written())); h.loadError = null;
@@ -765,7 +788,7 @@ test('写真の読みこみに失敗しても写真は残り、再表示では�
   const h = setup(t); h.record.ink.a1 = indexFor(); h.loadError = new Error('test offline');
   const pane = attachments(h); h.cleanup(() => pane.destroy());
   byClass(pane.node, 'attachment-open')[0].click(); await settle();
-  assert.match(viewer().textContent, /書きこみを読みこめませんでした。/);
+  assert.equal(byClass(viewer(), 'error')[0].textContent, '書きこみを読みこめませんでした。（理由: この端末では開けませんでした）');
   assert.equal(all(viewer(), (node) => node.tagName === 'img').length, 1);
   close(); byClass(pane.node, 'attachment-open')[0].click(); await settle();
   assert.equal(h.loads.length, 1);
