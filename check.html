@@ -72,6 +72,14 @@
   .photo[hidden] { display: none; }
   [hidden] { display: none !important; }
   #summary { font-weight: 700; }
+  #reach-summary { font-weight: 700; }
+  #reach-table { width: 100%; table-layout: fixed; border-collapse: collapse; margin: var(--s2) 0; }
+  #reach-table th, #reach-table td {
+    padding: var(--s1); border-bottom: 1px solid var(--line);
+    text-align: left; vertical-align: top; overflow-wrap: anywhere; word-break: break-word;
+  }
+  #reach-table th:first-child { width: 40%; }
+  #reach-table .timeout { color: #8A4B08; font-weight: 700; }
   .info { font-size: 14px; word-break: break-all; }
   .warn { border-left: 8px solid var(--ng); }
   textarea {
@@ -116,6 +124,23 @@
     </div>
   </div>
 
+  <section class="card" aria-labelledby="reach-title">
+    <h2 id="reach-title">どこに届くか</h2>
+    <p>保存の仕組みを選ぶために、この回線から、いくつかの行き先に届くかを調べます。何も保存せず、データも送りません。30 秒ほどかかります。</p>
+    <p>× は、その行き先か、転送された先のどちらかに届かなかったことを表します。</p>
+    <button type="button" id="reach-start">どこに届くかを調べる</button>
+    <table id="reach-table" aria-labelledby="reach-title">
+      <thead><tr><th scope="col">行き先の名前</th><th scope="col">アドレス（ホスト名）</th><th scope="col">結果</th></tr></thead>
+      <tbody id="reach-list" aria-live="polite"></tbody>
+    </table>
+    <p id="reach-summary" role="status"></p>
+    <div id="reach-report-area" hidden>
+      <button type="button" id="reach-copy">結果をコピー</button>
+      <p id="reach-copy-note"></p>
+      <textarea id="reach-report-text" aria-label="どこに届くかの結果" readonly hidden></textarea>
+    </div>
+  </section>
+
   <div class="card">
     <h2>端末の情報</h2>
     <p class="info" id="device-ua"></p>
@@ -126,6 +151,8 @@
 <script type="module">
 import { createCheckSteps } from './js/check-steps.js';
 import { reportText, PARALLEL_COUNT } from './js/check-logic.js';
+import { createReachTargets } from './js/reach-targets.js';
+import { runReach, reachText } from './js/reach-check.js';
 import { FIREBASE } from './js/firebase-config.js';
 import { GAS } from './js/gas-config.js';
 document.getElementById('boot-note').hidden = true;
@@ -632,6 +659,111 @@ if (missing.length > 0) {
     }
   });
 }
+// ---- どこに届くか（1〜11 の確認とは別に動く） ----
+let reachTargets = [];
+let reachSetupError = false;
+try {
+  reachTargets = createReachTargets({ firebase: firebaseConfig, origin: location.origin, href: location.href });
+} catch {
+  reachSetupError = true;
+  $('reach-summary').textContent = '行き先の設定を確認してください（https:// のアドレスが必要です）。';
+  $('reach-start').disabled = true;
+}
+const reachRows = reachTargets.map((target) => {
+  const row = document.createElement('tr');
+  const name = document.createElement('td');
+  name.textContent = target.name;
+  const host = document.createElement('td');
+  host.textContent = new URL(target.url).hostname + (target.note ? `（${target.note}）` : '');
+  const result = document.createElement('td');
+  row.append(name, host, result);
+  $('reach-list').append(row);
+  return result;
+});
+
+let reachResults = [];
+let reachRunning = false;
+let reachController = null;
+let reachWhen = '';
+let reachPlace = '';
+
+function resetReachRows() {
+  reachResults = [];
+  for (const row of reachRows) {
+    row.className = 'wait';
+    row.textContent = '－ まだ調べていません';
+  }
+}
+resetReachRows();
+if (!reachSetupError && reachTargets.length === 0) $('reach-summary').textContent = '調べる行き先がありません。';
+
+$('reach-start').addEventListener('click', async () => {
+  if (reachRunning || reachSetupError) return;
+  reachRunning = true;
+  $('reach-start').disabled = true;
+  resetReachRows();
+  $('reach-summary').textContent = '';
+  $('reach-report-area').hidden = true;
+  $('reach-report-text').hidden = true;
+  $('reach-report-text').value = '';
+  $('reach-copy-note').textContent = '';
+  reachWhen = new Date().toLocaleString('ja-JP');
+  reachPlace = $('place').value;
+  try {
+    reachController = new window.AbortController();
+    reachResults = await runReach(reachTargets, {
+      fetch: fetchFn,
+      setTimeout: (...a) => window.setTimeout(...a),
+      clearTimeout: (...a) => window.clearTimeout(...a),
+      AbortController: window.AbortController,
+      signal: reachController.signal,
+      onResult: (result, i) => {
+        const texts = { ok: '○ 届きました', blocked: '× 届きませんでした', timeout: '△ 返事がありませんでした（10 秒）' };
+        reachRows[i].className = result.status === 'blocked' ? 'ng' : result.status;
+        reachRows[i].textContent = texts[result.status];
+      },
+    });
+    if (reachController.signal.aborted) {
+      $('reach-summary').textContent = '確認を中止しました。もう一度調べてください。';
+      return;
+    }
+    if (reachResults.length === 0) {
+      $('reach-summary').textContent = '調べる行き先がありません。';
+      return;
+    }
+    const count = (status) => reachResults.filter((r) => r.status === status).length;
+    $('reach-summary').textContent = `○ ${count('ok')} 個・× ${count('blocked')} 個・△ ${count('timeout')} 個でした。`;
+    $('reach-report-area').hidden = false;
+  } catch {
+    $('reach-summary').textContent = '× 確認の途中で止まりました。もう一度調べてください。';
+  } finally {
+    reachController = null;
+    reachRunning = false;
+    $('reach-start').disabled = false;
+    $('reach-start').textContent = 'もう一度調べる';
+  }
+});
+
+window.addEventListener('pagehide', () => {
+  if (reachController) reachController.abort();
+});
+
+$('reach-copy').addEventListener('click', async () => {
+  const text = reachText({ results: reachResults, when: reachWhen, place: reachPlace, browser: navigator.userAgent });
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('clipboard なし');
+    await navigator.clipboard.writeText(text);
+    $('reach-copy-note').textContent = '○ コピーしました。Claude Code に貼り付けてください。';
+    $('reach-report-text').hidden = true;
+  } catch {
+    $('reach-copy-note').textContent = '× 自動ではコピーできませんでした。下の欄の文章をすべて選んでコピーしてください。';
+    const area = $('reach-report-text');
+    area.value = text;
+    area.hidden = false;
+    area.focus();
+    area.select();
+  }
+});
 </script>
 </body>
 </html>
