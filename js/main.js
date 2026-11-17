@@ -6,6 +6,7 @@ import { createAuth } from './auth.js';
 import { createNet } from './net.js';
 import { createRepo } from './repo.js';
 import { GAS } from './gas-config.js';
+import { gasEndpoint } from './gas-endpoint.js';
 import { createGas } from './gas.js';
 import { createFileCache } from './file-cache.js';
 import { createFiles } from './files.js';
@@ -87,7 +88,7 @@ function createBackend(storage) {
   const auth = createAuth({ apiKey: FIREBASE.apiKey, fetch: fetchFn, storage: backendStorage, now });
   const net = createNet({ databaseURL: FIREBASE.databaseURL, auth, fetch: fetchFn });
   const gas = createGas({
-    url: GAS.appUrl, auth, fetch: fetchFn, random,
+    url: gasEndpoint({ relayUrl: GAS.relayUrl, target: 'app', directUrl: GAS.appUrl }), auth, fetch: fetchFn, random,
     setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window),
   });
   // 規則の確認（js/rules-probe.js）用: 確認用の生徒として、2 つ目のログインを作る。
