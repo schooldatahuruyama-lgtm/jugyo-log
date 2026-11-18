@@ -142,8 +142,15 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
     const ownReply = `replies/${inId}/${inLessonId}/${sid}`;
     const ownReplyMark = `replyMarks/${sid}/${inId}/${inLessonId}`;
     const reply = { text: 'あ'.repeat(CONFIG.reply.textMax), updatedAt: now() };
+    const aiPath = `aiSummaries/${inId}/${inLessonId}`;
+    const aiSummary = { v: 1, createdAt: now(), overview: '規則の確認用のまとめ' };
 
     const checks = [
+      ['先生として aiSummaries を書く', 'ok', () => teacherNet.set(aiPath, aiSummary)],
+      ['先生として aiSummaries を読む', 'ok', () => teacherNet.get(aiPath)],
+      ['先生として overview のない aiSummaries を書く', 'denied', () => teacherNet.set(aiPath, { v: 1, createdAt: aiSummary.createdAt })],
+      ['生徒として入っているクラスの aiSummaries を読む', 'denied', () => net.get(aiPath)],
+      ['生徒として入っているクラスの aiSummaries を書く', 'denied', () => net.set(aiPath, aiSummary)],
       ['gen/s00-999 を読む（ログインなし）', 'ok', () => net.getPublic(`gen/${sid}`)],
       ['gen 全体を読む（ログインなし）', 'denied', () => net.getPublic('gen')],
       ['accounts/（自分の uid）を読む', 'ok', () => net.get(`accounts/${uid}`)],
@@ -326,6 +333,7 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       patch[`members/${c.id}`] = null;
       patch[`thumbs/${c.id}`] = null;
       patch[`replies/${c.id}`] = null;
+      patch[`aiSummaries/${c.id}`] = null;
       patch[`replyMarks/${sid}/${c.id}`] = null;
       // lessons は授業 1 件から下だけを書ける規則なので、クラスの場所をまるごと消さない
       const lessons = await teacherNet.get(`lessons/${c.id}`, { shallow: true });
@@ -360,6 +368,7 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       if (classesMade) {
         for (const { classId } of targets) {
           patch[`replies/${classId}`] = null;
+          patch[`aiSummaries/${classId}`] = null;
           patch[`replyMarks/${sid}/${classId}`] = null;
         }
       }

@@ -154,12 +154,12 @@ test('手書き JSON: キー・授業・所属・所有者の確認と先生の�
   assert.equal(fakes.files.length, 1);
 });
 
-test('本番の ping と doGet は app-3 を JSON で返す', () => {
+test('本番の ping と doGet は app-4 を JSON で返す', () => {
   const { call, gas, fakes } = setup();
-  assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-3' });
+  assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-4' });
   const out = gas.doGet();
   assert.equal(out.getMimeType(), fakes.ContentService.MimeType.JSON);
-  assert.deepEqual(JSON.parse(out.getContent()), { ok: true, version: 'app-3' });
+  assert.deepEqual(JSON.parse(out.getContent()), { ok: true, version: 'app-4' });
   assert.equal(fakes.fetched.length, 0);
 });
 
@@ -564,8 +564,8 @@ test('DATABASE_URL が空なら ping と doGet のほかは config', () => {
     for (const op of ['whoami', 'putMaterial', 'getMaterials', 'getFile', 'trashFile']) {
       assert.deepEqual(call({ op, token: tokT }), { ok: false, error: 'config' });
     }
-    assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-3' });
-    assert.deepEqual(JSON.parse(gas.doGet().getContent()), { ok: true, version: 'app-3' });
+    assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-4' });
+    assert.deepEqual(JSON.parse(gas.doGet().getContent()), { ok: true, version: 'app-4' });
     assert.equal(fakes.fetched.length, 0);
     assert.equal(fakes.files.length, 0);
   }

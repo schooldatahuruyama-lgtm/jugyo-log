@@ -54,6 +54,65 @@ function setup(initial = null) {
 
 const writes = (calls) => calls.set.length + calls.update.length + calls.remove.length;
 
+test('AI のまとめを整えて保存・読み取り・上書きし、授業と同じ update で消す', async () => {
+  const { repo, calls, mem } = setup();
+  const summary = { overview: ' 見本のまとめ ', questionGroups: [], misconceptions: [], nextLesson: [], followUp: [{ number: '名前の見本', reason: '説明' }] };
+  const labels = { '1番': 's26-001', '名簿外1': 's26-002' };
+  await repo.setAiSummary('c1', 'l1', { summary, model: 'demo', basedOn: { count: 2, latest: 20 }, labels }, 30);
+  const expected = { v: 1, createdAt: 30, model: 'demo', basedOn: { count: 2, latest: 20 },
+    overview: '見本のまとめ', questionGroups: [], misconceptions: [], nextLesson: [], followUp: [], labels };
+  assert.deepEqual(calls.set[0], ['aiSummaries/c1/l1', expected]);
+  assert.deepEqual(await repo.getAiSummary('c1', 'l1'), expected);
+  await repo.setAiSummary('c1', 'l1', { summary: { overview: '作り直した見本' }, model: 'demo', basedOn: { count: 3, latest: 40 }, labels: { '2番': 's26-001' } }, 50);
+  assert.equal((await repo.getAiSummary('c1', 'l1')).createdAt, 50);
+  assert.equal((await repo.getAiSummary('c1', 'l1')).overview, '作り直した見本');
+  assert.deepEqual((await repo.getAiSummary('c1', 'l1')).labels, { '2番': 's26-001' });
+  await mem.set('aiSummaries/c1/keep', expected);
+  await repo.deleteLesson('c1', 'l1');
+  assert.equal(calls.update.length, 1);
+  assert.equal(calls.update[0][1]['aiSummaries/c1/l1'], null);
+  assert.equal(calls.update[0][1]['lessons/c1/l1'], null);
+  assert.equal(await repo.getAiSummary('c1', 'l1'), null);
+  assert.deepEqual(await repo.getAiSummary('c1', 'keep'), expected);
+});
+
+test('AI のまとめ: 対応表の不正な組を保存時・読込時に落とし、古いまとめも読める', async () => {
+  const { repo, mem } = setup();
+  const value = { v: 1, createdAt: 10, model: 'demo', basedOn: { count: 2, latest: 5 }, overview: '見本',
+    followUp: [{ number: '1番', reason: '理由の見本' }, { number: '2番', reason: '別の理由' }] };
+  const valid = { '1番': 's26-001', '名簿外2': 's26-002' };
+  const labels = { ...valid, '名前の見本': 's26-003', '0番': 's26-003', '1番\n': 's26-003',
+    '2番': 'invalid', '3番': null, '4番': 4, '5番': 'S26-005', '6番': 's26-006/other' };
+  await repo.setAiSummary('c1', 'l1', { summary: value, model: value.model, basedOn: value.basedOn, labels }, 10);
+  assert.deepEqual((await mem.get('aiSummaries/c1/l1')).labels, valid);
+  await mem.set('aiSummaries/c1/l1', { ...value, labels });
+  const read = await repo.getAiSummary('c1', 'l1');
+  assert.deepEqual(read.labels, valid);
+  assert.deepEqual(read.followUp, value.followUp);
+  for (const labels of [null, [], '見本', 3]) {
+    await mem.set('aiSummaries/c1/l1', { ...value, labels });
+    assert.deepEqual((await repo.getAiSummary('c1', 'l1')).labels ?? {}, {});
+  }
+  await mem.set('aiSummaries/c1/l1', value);
+  const old = await repo.getAiSummary('c1', 'l1');
+  assert.equal(old.labels, undefined);
+  assert.deepEqual(old.followUp, value.followUp);
+});
+
+test('AI のまとめ: 形のおかしい保存値は null、不正な保存は書く前に止める', async () => {
+  const valid = { v: 1, createdAt: 10, model: 'demo', basedOn: { count: 1, latest: 5 }, overview: '見本' };
+  for (const value of [null, [], {}, { ...valid, v: 2 }, { ...valid, createdAt: '10' }, { ...valid, model: '' },
+    { ...valid, basedOn: null }, { ...valid, basedOn: { count: 61, latest: 5 } },
+    { ...valid, basedOn: { count: 1, latest: '5' } }, { ...valid, overview: '' }, { ...valid, followUp: '不正な形' }]) {
+    const { repo, calls } = setup({ aiSummaries: { c1: { l1: value } } });
+    assert.equal(await repo.getAiSummary('c1', 'l1'), null);
+    await assert.rejects(repo.setAiSummary('c1', 'l1', { summary: value, model: 'demo', basedOn: { count: 1, latest: 5 } }, NaN), TypeError);
+    assert.equal(writes(calls), 0);
+  }
+  const repo = createRepo({ set: async () => { throw new NetError('network'); } });
+  await assert.rejects(repo.setAiSummary('c1', 'l1', { summary: valid, model: 'demo', basedOn: valid.basedOn }, 10), { code: 'network' });
+});
+
 test('返事の読み取り: 指定の道だけを読み、不正な返事・目印を落とす', async () => {
   const first = { text: ' 文\r\n文 ', updatedAt: 10 };
   const second = { seen: true, updatedAt: 0 };
@@ -330,7 +389,7 @@ test('deleteLesson: 浅く読んだ全員の返事と目印を授業と同時に
     replyMarks: { s1: { c1: { l1: 10, l2: 20 }, c2: { l1: 30 } }, s2: { c1: { l1: 10 } } } });
   await repo.deleteLesson('c1', 'l1');
   assert.deepEqual(calls.get, [['replies/c1/l1', { shallow: true }]]);
-  assert.deepEqual(calls.update, [['', { 'lessons/c1/l1': null, 'thumbs/c1/l1': null, 'replies/c1/l1': null,
+  assert.deepEqual(calls.update, [['', { 'lessons/c1/l1': null, 'thumbs/c1/l1': null, 'replies/c1/l1': null, 'aiSummaries/c1/l1': null,
     'replyMarks/s1/c1/l1': null, 'replyMarks/s2/c1/l1': null }]]);
   assert.equal(writes(calls), 1);
   assert.equal(await mem.get('lessons/c1/l1'), null);
@@ -1048,7 +1107,7 @@ test('deleteLesson: 授業とサムネイルを 1 回で消し、ほかの授業
   const { repo, mem, calls } = setup({ lessons: { c1: { l1: { title: '電流' }, l2: { title: '電圧' } } }, thumbs: { c1: { l1: { m1: '画像' }, l2: { m2: '画像2' } } }, records: { c1: { l2: { s1: { memo: '記録' } } } } });
   await repo.deleteLesson('c1', 'l1');
   assert.equal(writes(calls), 1);
-  assert.deepEqual(calls.update, [['', { 'lessons/c1/l1': null, 'thumbs/c1/l1': null, 'replies/c1/l1': null }]]);
+  assert.deepEqual(calls.update, [['', { 'lessons/c1/l1': null, 'thumbs/c1/l1': null, 'replies/c1/l1': null, 'aiSummaries/c1/l1': null }]]);
   assert.equal(await mem.get('lessons/c1/l1'), null);
   assert.equal(await mem.get('thumbs/c1/l1'), null);
   assert.deepEqual(await mem.get('lessons/c1/l2'), { title: '電圧' });

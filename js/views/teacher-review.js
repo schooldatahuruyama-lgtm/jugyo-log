@@ -8,6 +8,10 @@ import { teacherNav } from './parts/teacher-nav.js';
 import { replyMarkLabel, stampKind, stampTargets } from '../reply-logic.js';
 import { lessonTerms } from '../term-logic.js';
 import { summaryBox } from './parts/summary-box.js';
+import { aiSummaryBox, createAiSummarySession } from './parts/ai-summary-box.js';
+
+// 選択欄から同じ記録ページへ移る間だけ、作りかけを次の画面へ渡す。
+const aiTransfers = new WeakMap();
 
 export function mount(root, ctx) {
   let alive = true;
@@ -36,6 +40,11 @@ export function mount(root, ctx) {
   let sort = 'level';
   let levelKey = null;
   let summary = null;
+  let aiSummary = null;
+  let transferringAi = false;
+  const aiSession = aiTransfers.get(ctx.repo) || createAiSummarySession({ repo: ctx.repo, now: ctx.now,
+    request: typeof ctx.ai?.summarize === 'function' ? (request) => ctx.ai.summarize(request) : null });
+  aiTransfers.delete(ctx.repo);
   const fieldButtons = new Map();
   const sortButtons = new Map();
   const levelButtons = new Map();
@@ -137,7 +146,7 @@ export function mount(root, ctx) {
     if (!alive || loading || stamping) return;
     levelKey = null;
     if (which === 'lesson') {
-      if (lessonSelect.value) void ctx.navigate('t-review', { classId, lessonId: lessonSelect.value });
+      if (lessonSelect.value) void changeReview({ classId, lessonId: lessonSelect.value });
       return;
     }
     if (which === 'year') {
@@ -147,6 +156,20 @@ export function mount(root, ctx) {
     lessonId = '';
     navigatePending = true;
     void load({ chooseClass: which === 'year' });
+  }
+
+  async function changeReview(params) {
+    transferringAi = true;
+    aiTransfers.set(ctx.repo, aiSession);
+    try { await ctx.navigate('t-review', params); }
+    finally {
+      transferringAi = false;
+      // 遷移が止まった・画面を読みこめなかった場合は、引き継ぎを残さない。
+      if (aiTransfers.get(ctx.repo) === aiSession) {
+        aiTransfers.delete(ctx.repo);
+        if (!alive) aiSession.destroy();
+      }
+    }
   }
 
   function renderChart() {
@@ -345,6 +368,8 @@ export function mount(root, ctx) {
     content.hidden = true;
     summary?.destroy();
     summary = null;
+    aiSummary?.destroy();
+    aiSummary = null;
     summaryArea.replaceChildren();
     clearCopy();
     pageMessage.textContent = '読みこんでいます…';
@@ -373,7 +398,7 @@ export function mount(root, ctx) {
       }
       // 切りかえ先は、どちらの読み直しでもハッシュに反映する。
       if (navigatePending && (classId !== ctx.params.classId || lessonId !== ctx.params.lessonId)) {
-        await ctx.navigate('t-review', { classId, lessonId });
+        await changeReview({ classId, lessonId });
         return;
       }
       navigatePending = false;
@@ -394,7 +419,6 @@ export function mount(root, ctx) {
       countedIds = new Set(people.map((person) => person.studentId));
       summary = summaryBox({ students: people, records: recordsResult.value,
         terms: lessonTerms(lessonResult.value).map((term) => term.text) });
-      summaryArea.replaceChildren(summary.node);
       replies = repliesResult.status === 'fulfilled' ? repliesResult.value : {};
       repliesReady = repliesResult.status === 'fulfilled';
       const outside = people.filter((person) => !person.inRoster);
@@ -405,6 +429,9 @@ export function mount(root, ctx) {
       }
       outside.sort((a, b) => a.studentId < b.studentId ? -1 : a.studentId > b.studentId ? 1 : 0);
       people = [...people.filter((person) => person.inRoster), ...outside];
+      aiSummary = aiSummaryBox({ session: aiSession, classId, lessonId, lesson: lessonResult.value,
+        students: people, records, navigate: ctx.navigate });
+      summaryArea.replaceChildren(summary.node, aiSummary.node);
       replyMessage.hidden = repliesResult.status === 'fulfilled';
       replyMessage.textContent = repliesResult.status === 'rejected' ? '返事の印を読みこめませんでした。' : '';
       attachmentCounts = new Map(people.map((person) => {
@@ -426,5 +453,8 @@ export function mount(root, ctx) {
   }
 
   void load({ chooseClass: !classId });
-  return () => { alive = false; loadId += 1; copyId += 1; dialogs.abort(); summary?.destroy(); };
+  return () => {
+    alive = false; loadId += 1; copyId += 1; dialogs.abort(); summary?.destroy(); aiSummary?.destroy();
+    if (!transferringAi) aiSession.destroy();
+  };
 }

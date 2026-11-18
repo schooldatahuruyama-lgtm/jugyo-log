@@ -10,6 +10,21 @@ import { NetError } from '../js/errors.js';
 
 const upload = { key: 'test-key-1', mime: 'image/jpeg', name: '板書', dataB64: 'AQID' };
 const refs = { classId: 'c1', lessonId: 'l1' };
+
+test('練習用のまとめ: 先生だけが呼べる。先頭の疑問 3 人と見本の印を返す', async () => {
+  const { gas, setUser } = make();
+  const request = { title: '確認用の授業', terms: [], entries: Array.from({ length: 4 }, (_, i) => ({
+    no: `${i + 1}番`, level: i + 1, learned: '', question: `確認用の疑問${i + 1}`, memo: '',
+  })) };
+  const result = await gas.call('summarize', request);
+  assert.equal(result.model, 'demo');
+  assert.ok(result.summary.overview.startsWith('（練習モードの見本です）'));
+  assert.deepEqual(result.summary.questionGroups.map((g) => g.numbers), [['1番'], ['2番'], ['3番']]);
+  assert.deepEqual(result.summary.followUp.map((g) => g.number), ['1番', '2番']);
+  await rejectsCode(gas.call('summarize', { ...request, entries: [] }), 'bad');
+  setUser('student');
+  await rejectsCode(gas.call('summarize', request), 'denied');
+});
 const rejectsCode = (p, code) => assert.rejects(p, (e) => e instanceof NetError && e.code === code);
 const inkText = '{"v":1,"h":400,"s":[{"c":0,"w":0,"p":[0,0,1,1]}]}';
 const inkUpload = { key: 'ink-test-1', ...refs, mime: 'application/json', dataB64: Buffer.from(inkText).toString('base64') };
@@ -33,7 +48,7 @@ test('先生は保存でき、同じ key を同時に頼んでも 1 個になる
 
 test('ping と whoami は本物と同じ形。未ログイン・対応のないアカウントは auth', async () => {
   const { gas, setUser } = make();
-  assert.deepEqual(await gas.call('ping'), { ok: true, version: 'app-3' });
+  assert.deepEqual(await gas.call('ping'), { ok: true, version: 'app-4' });
   assert.deepEqual(await gas.call('whoami'), { ok: true, role: 'teacher' });
   setUser('student');
   assert.deepEqual(await gas.call('whoami'), { ok: true, role: 'student', studentId: 's26-001' });

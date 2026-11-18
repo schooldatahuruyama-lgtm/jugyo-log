@@ -10,6 +10,59 @@ const json = (body) => ({ json: async () => body });
 const fast = { timeoutMs: 1000, maxTries: 3, retryBaseMs: 0, random: () => 0.5 };
 const rejectsCode = (p, code) => assert.rejects(p, (e) => e instanceof NetError && e.code === code);
 
+for (const failure of ['fetch', 'json', 'server', 'auth']) {
+  test(`呼び出しごとの maxTries: 1 は ${failure} でも再送せず、次の通常呼び出しには影響しない`, async () => {
+    const auth = fakeAuth();
+    let calls = 0;
+    const gas = createGas({ url: URL, auth, ...fast, fetch: async () => {
+      calls += 1;
+      if (calls === 1) {
+        if (failure === 'fetch') throw new Error('通信失敗');
+        if (failure === 'json') return { json: async () => { throw new Error('本文の受信失敗'); } };
+        return json({ ok: false, error: failure });
+      }
+      return json(calls < 4 ? { ok: false, error: 'server' } : { ok: true });
+    } });
+    await rejectsCode(gas.call('summarize', {}, { maxTries: 1 }), failure === 'auth' ? 'auth' : 'network');
+    assert.equal(calls, 1);
+    assert.equal(auth.refreshes, 0);
+    await gas.call('ping');
+    assert.equal(calls, 4);
+  });
+}
+
+test('呼び出しごとの 120 秒は本文の受信にも効き、次の呼び出しでは元の時間に戻る', async () => {
+  const timers = fakeTimers();
+  const signals = [];
+  const gas = createGas({ url: URL, auth: fakeAuth(), ...fast, ...timers, fetch: async (_, init) => {
+    signals.push(init.signal);
+    return signals.length === 1 ? { json: () => new Promise(() => {}) } : json({ ok: true });
+  } });
+  const options = { maxTries: 1, timeoutMs: 120000 };
+  const result = rejectsCode(gas.call('summarize', {}, options), 'network');
+  options.timeoutMs = 1;
+  await tick();
+  assert.deepEqual(timers.started, [120000]);
+  timers.fire(120000);
+  await result;
+  assert.equal(signals[0].aborted, true);
+  await gas.call('ping');
+  assert.deepEqual(timers.started, [120000, 1000]);
+  assert.equal(timers.active.size, 0);
+});
+
+test('options を省けば、既定の試行回数が 1 でも従来どおり認証を 1 回更新する', async () => {
+  const auth = fakeAuth();
+  let calls = 0;
+  const gas = createGas({ url: URL, auth, ...fast, maxTries: 1, fetch: async () => {
+    calls += 1;
+    return json(calls === 1 ? { ok: false, error: 'auth' } : { ok: true });
+  } });
+  await gas.call('whoami');
+  assert.equal(calls, 2);
+  assert.equal(auth.refreshes, 1);
+});
+
 function fakeAuth(token = 'test-token-1') {
   return {
     user: { uid: 'uA' }, token, reads: 0, refreshes: 0,
@@ -307,7 +360,7 @@ for (const again of [false, true]) {
   });
 }
 
-for (const [error, code] of Object.entries({ denied: 'denied', notfound: 'notfound', toobig: 'toobig', bad: 'unknown', config: 'unknown', other: 'unknown' })) {
+for (const [error, code] of Object.entries({ denied: 'denied', notfound: 'notfound', toobig: 'toobig', bad: 'bad', 'ai-config': 'ai-config', 'ai-key': 'ai-key', 'ai-busy': 'ai-busy', 'ai-failed': 'ai-failed', config: 'unknown', other: 'unknown' })) {
   test(`${error} は ${code} になり、やり直さない`, async () => {
     let calls = 0;
     const gas = createGas({ url: URL, auth: fakeAuth(), ...fast, fetch: async () => {

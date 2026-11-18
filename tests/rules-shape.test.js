@@ -177,13 +177,35 @@ test('ルートでは、だれも読めず、だれも書けない', () => {
 test('最上位の場所が決まりどおり', () => {
   const keys = Object.keys(rules).filter((k) => !k.startsWith('.')).sort();
   assert.deepEqual(keys, [
-    'check', 'teacherList', 'gen', 'accounts', 'students', 'counters', 'initialPw',
+    'check', 'teacherList', 'gen', 'accounts', 'students', 'counters', 'initialPw', 'aiSummaries',
     'classes', 'members', 'memberOf', 'units', 'lessons', 'thumbs', 'records', 'recThumbs', 'inkThumbs', 'marks', 'terms', 'replies', 'replyMarks',
   ].sort());
 });
 
 test('check は段階 0 の規則と同じ', () => {
   assert.deepEqual(rules.check, check);
+});
+
+test('AI のまとめは先生だけが読み書きでき、版・時刻・600 文字以内の概要が必要', () => {
+  assert.equal(rules['.read'], false);
+  assert.equal(rules['.write'], false);
+  const cls = rules.aiSummaries.$classId;
+  const teacher = rules.replies.$classId['.read'];
+  assert.deepEqual(rulesIn(rules.aiSummaries).filter(([, k]) => ['.read', '.write'].includes(k)), [
+    ['$classId', '.read', teacher], ['$classId', '.write', teacher],
+  ]);
+  const root = snapshot({ teacherList: { teacher: true }, accounts: { student: 's00-001' }, memberOf: { 's00-001': { c1: true } } });
+  for (const permission of ['.read', '.write']) {
+    const allows = new Function('auth', 'root', `return (${cls[permission]});`);
+    assert.equal(allows({ uid: 'teacher' }, root), true);
+    assert.equal(allows({ uid: 'student' }, root), false);
+    assert.equal(allows(null, root), false);
+  }
+  const accepts = new Function('newData', `return (${cls.$lessonId['.validate']});`);
+  const valid = { v: 1, createdAt: 1, overview: 'あ'.repeat(600) };
+  assert.equal(accepts(snapshot(valid)), true);
+  for (const value of [{ v: 1, createdAt: 1 }, { ...valid, v: 2 }, { ...valid, createdAt: '1' },
+    { ...valid, overview: 3 }, { ...valid, overview: 'あ'.repeat(601) }]) assert.equal(accepts(snapshot(value)), false);
 });
 
 test('返事の規則: 先生だけが書き、先生はクラス全体、本人は自分の返事と目印だけ読める', () => {

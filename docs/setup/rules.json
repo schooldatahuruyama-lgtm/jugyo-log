@@ -275,6 +275,15 @@
         }
       }
     },
+    "aiSummaries": {
+      "$classId": {
+        ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+        ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+        "$lessonId": {
+          ".validate": "newData.hasChildren(['v', 'createdAt', 'overview']) && newData.child('v').val() === 1 && newData.child('createdAt').isNumber() && newData.child('overview').isString() && newData.child('overview').val().length <= 600"
+        }
+      }
+    },
     "replyMarks": {
       "$sid": {
         ".read": "auth != null && (root.child('teacherList').child(auth.uid).val() === true || root.child('accounts').child(auth.uid).val() === $sid)",

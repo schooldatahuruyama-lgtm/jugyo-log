@@ -441,6 +441,15 @@ dialog.material-viewer[open] { display: flex; flex-direction: column; gap: var(-
 .summary-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .summary-details { margin-top: var(--s-2); padding: var(--s-2); border: 1px solid var(--c-border); border-radius: var(--r-1); }
 
+/* AI のまとめは別のカードにし、長い文章や呼び名も幅の中に収める。 */
+.ai-summary-box { min-width: 0; max-width: 100%; margin-top: var(--s-3); padding: var(--s-2); border-left: 5px solid #66528B; overflow-wrap: anywhere; }
+.ai-summary-box h2 { color: #594579; }
+.ai-summary-box h3 { margin-top: var(--s-3); }
+.ai-summary-box .btn { min-width: 44px; min-height: 44px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.ai-summary-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.ai-summary-person { margin: 2px; vertical-align: middle; }
+.ai-summary-box textarea { width: 100%; min-width: 0; max-width: 100%; }
+
 /* 一人の記録。資料の並びは生徒の授業と共通にし、文章は読むだけで出す。 */
 .record-heading { margin-bottom: var(--s-3); overflow-wrap: anywhere; }
 .record-heading h1 { margin-bottom: var(--s-1); font-size: 24px; }
