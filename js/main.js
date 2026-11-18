@@ -8,6 +8,7 @@ import { createRepo } from './repo.js';
 import { GAS } from './gas-config.js';
 import { gasEndpoint } from './gas-endpoint.js';
 import { createGas } from './gas.js';
+import { requestAiSummary } from './ai-summary-flow.js';
 import { createFileCache } from './file-cache.js';
 import { createFiles } from './files.js';
 import { createDrafts } from './drafts.js';
@@ -155,6 +156,8 @@ function start() {
   }
   const cache = createFileCache({ caches: cacheStorage });
   const files = createFiles({ gas: backend.gas, cache });
+  // GAS の順番待ちを共用するため、AI の作成中は同じ先生のファイル読込が 30 秒ほど待つことがある。
+  const ai = { summarize: (request) => requestAiSummary({ gas: backend.gas, request }) };
   const drafts = createDrafts({ storage });
   const inkDrafts = createInkDrafts({ storage });
   const recordQueue = createRecordQueue();
@@ -318,7 +321,7 @@ function start() {
         return;
       }
       const ctx = {
-        auth, repo, files, drafts, inkDrafts, recordQueue, thumbs, timers, signOutAll, session, navigate, now, random, demo: Boolean(backend.demo), params: route.params,
+        auth, repo, files, ai, drafts, inkDrafts, recordQueue, thumbs, timers, signOutAll, session, navigate, now, random, demo: Boolean(backend.demo), params: route.params,
         net: backend.net, makeProbeStudent: backend.makeProbeStudent,
         // 離れてよいかをたずねる関数を置く（null で外す）。古くなった画面からの呼び出しは無視する
         setLeaveGuard: (fn) => { if (!stale()) leave.set(fn); },

@@ -8,9 +8,20 @@ import { normalizeRecord, tileMark, attachmentList } from './record-logic.js';
 import { cleanReply, checkReply, toReply } from './reply-logic.js';
 import { CONFIG } from './config.js';
 import { inkPlaceKind, inkPagePlace, splitInkPlace } from './ink-logic.js';
+import { cleanAiSummary } from './ai-summary-logic.js';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+
+function toAiSummary(value) {
+  if (!isObj(value) || value.v !== 1 || !isNum(value.createdAt)
+    || typeof value.model !== 'string' || !value.model.trim() || !isObj(value.basedOn)
+    || !Number.isInteger(value.basedOn.count) || value.basedOn.count < 1 || value.basedOn.count > 60
+    || !isNum(value.basedOn.latest)) return null;
+  const summary = cleanAiSummary(value);
+  return summary ? { v: 1, createdAt: value.createdAt, model: value.model.trim(),
+    basedOn: { count: value.basedOn.count, latest: value.basedOn.latest }, ...summary } : null;
+}
 
 // パスの一部に使うキーを確かめる（空や、Firebase のキーに使えない文字があれば例外）
 function key(s) {
@@ -361,6 +372,17 @@ export function createRepo(net) {
         .filter(([, level]) => tileMark(level) === 'done'));
     },
 
+    async getAiSummary(classId, lessonId) {
+      return toAiSummary(await net.get(`aiSummaries/${key(classId)}/${key(lessonId)}`));
+    },
+
+    async setAiSummary(classId, lessonId, { summary, model, basedOn, labels }, now) {
+      const cleaned = cleanAiSummary(summary);
+      const value = cleaned && toAiSummary({ ...cleaned, v: 1, createdAt: now, model, basedOn, labels });
+      if (!value) throw new TypeError('AI のまとめの形が正しくありません。');
+      await net.set(`aiSummaries/${key(classId)}/${key(lessonId)}`, value);
+    },
+
     async getReply(classId, lessonId, studentId) {
       return toReply(await net.get(`replies/${key(classId)}/${key(lessonId)}/${key(studentId)}`));
     },
@@ -444,7 +466,8 @@ export function createRepo(net) {
       const cid = key(classId);
       const lid = key(lessonId);
       const replies = await net.get(`replies/${cid}/${lid}`, { shallow: true });
-      const patch = { [`lessons/${cid}/${lid}`]: null, [`thumbs/${cid}/${lid}`]: null, [`replies/${cid}/${lid}`]: null };
+      const patch = { [`lessons/${cid}/${lid}`]: null, [`thumbs/${cid}/${lid}`]: null, [`replies/${cid}/${lid}`]: null,
+        [`aiSummaries/${cid}/${lid}`]: null };
       for (const [sid] of entriesOf(replies)) patch[`replyMarks/${key(sid)}/${cid}/${lid}`] = null;
       await net.update('', patch);
     },

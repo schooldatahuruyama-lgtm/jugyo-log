@@ -2,6 +2,7 @@
 // call は本物の createGas と同じく、成功の JSON を返し、失敗は NetError にする。
 import { NetError } from '../errors.js';
 import { newId } from '../ids.js';
+import { cleanAiSummary } from '../ai-summary-logic.js';
 
 const KEY_RE = /^[A-Za-z0-9-]{8,64}$/;
 const ID_RE = /^[A-Za-z0-9_-]{1,200}$/;
@@ -144,11 +145,33 @@ export function createDemoGas({ net, getUser, random = Math.random }) {
   }
 
   async function handle(op, payload) {
-    if (op === 'ping') return { ok: true, version: 'app-3' };
+    if (op === 'ping') return { ok: true, version: 'app-4' };
     if (!['whoami', 'putMaterial', 'getMaterials', 'getFile', 'trashFile',
-      'putStudentFile', 'getStudentFile', 'getStudentFiles', 'trashStudentFile'].includes(op)) throw new NetError('unknown');
+      'putStudentFile', 'getStudentFile', 'getStudentFiles', 'trashStudentFile', 'summarize'].includes(op)) throw new NetError('unknown');
     const user = await identify(op === 'putStudentFile');
     if (op === 'whoami') return { ok: true, ...user };
+    if (op === 'summarize') {
+      if (user.role !== 'teacher') throw new NetError('denied');
+      const { title, terms, board = '', entries } = payload;
+      const text = (v, min, max) => typeof v === 'string' && v.length >= min && v.length <= max;
+      if (!text(title, 1, 60) || !Array.isArray(terms) || terms.length > 40 || terms.some((v) => !text(v, 1, 20))
+        || !text(board, 0, 2000) || !Array.isArray(entries) || !entries.length || entries.length > 60
+        || entries.some((e) => !e || !matches(e.no, /^([1-9][0-9]?番|名簿外[1-9][0-9]?)$/)
+          || !Number.isInteger(e.level) || e.level < 0 || e.level > 4
+          || ['learned', 'question', 'memo'].some((field) => !text(e[field], 0, 2000)))
+        || new Set(entries.map((e) => e.no)).size !== entries.length) throw new NetError('bad');
+      if (entries.reduce((sum, e) => sum + e.learned.length + e.question.length + e.memo.length, 0) > 120000) throw new NetError('toobig');
+      const summary = cleanAiSummary({
+        overview: `（練習モードの見本です）${entries.length} 人の文字の記録を集めました。疑問を次の授業で確かめましょう。`,
+        questionGroups: entries.filter((e) => e.question.trim()).slice(0, 3).map((e) => ({
+          topic: '記録にある疑問', numbers: [e.no], example: e.question,
+        })),
+        misconceptions: [], nextLesson: ['記録にある疑問を、クラスで確かめる。'],
+        followUp: entries.filter((e) => e.level === 1 || e.level === 2).slice(0, 8)
+          .map((e) => ({ number: e.no, reason: '理解度が低いので、分からなかった所を聞く。' })),
+      });
+      return { ok: true, summary, model: 'demo' };
+    }
     if (op === 'putMaterial' || op === 'trashFile') {
       if (user.role !== 'teacher') throw new NetError('denied');
       if (op === 'putMaterial') return putMaterial(payload);
@@ -208,7 +231,7 @@ export function createDemoGas({ net, getUser, random = Math.random }) {
       try {
         return await handle(op, payload);
       } catch (e) {
-        const code = e instanceof NetError && ['auth', 'denied', 'notfound', 'toobig', 'unknown'].includes(e.code)
+        const code = e instanceof NetError && ['auth', 'denied', 'notfound', 'toobig', 'unknown', 'bad'].includes(e.code)
           ? e.code : 'network';
         throw new NetError(code);
       }

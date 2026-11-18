@@ -19,7 +19,7 @@ export function createGas({
   }
 
   // 送信から本文を読み終わるまでを、1 回の時間切れで止める
-  async function attempt(op, payload, token) {
+  async function attempt(op, payload, token, timeoutMs) {
     const controller = new AbortController();
     let timer;
     const timeout = new Promise((_, reject) => {
@@ -55,7 +55,7 @@ export function createGas({
     }
   }
 
-  async function request(op, payload, uid) {
+  async function request(op, payload, uid, options) {
     checkUser(uid);
     if (!url) throw new NetError('unknown');
     let failures = 0;
@@ -66,7 +66,7 @@ export function createGas({
       checkUser(uid);
       let response;
       try {
-        response = await attempt(op, payload, token);
+        response = await attempt(op, payload, token, options.timeoutMs);
       } catch {
         response = { ok: false, error: 'server' };
       }
@@ -74,28 +74,33 @@ export function createGas({
       const error = response?.error;
       if (error === 'auth') {
         checkUser(uid);
-        if (refreshed) throw new NetError('auth');
+        if (refreshed || !options.retryAuth) throw new NetError('auth');
         refreshed = true;
         await tokenFrom(true);
         continue;
       }
       if (error !== 'server') {
-        throw new NetError(['denied', 'notfound', 'toobig'].includes(error) ? error : 'unknown');
+        throw new NetError(['denied', 'notfound', 'toobig', 'bad', 'ai-config', 'ai-key', 'ai-busy', 'ai-failed'].includes(error) ? error : 'unknown');
       }
       failures += 1;
-      if (failures >= maxTries) throw new NetError('network');
+      if (failures >= options.maxTries) throw new NetError('network');
       const delay = retryBaseMs * 2 ** (failures - 1) * (0.5 + random());
       await new Promise((resolve) => setTimer(resolve, delay));
     }
   }
 
   return {
-    call(op, payload = {}) {
+    call(op, payload = {}, options = {}) {
       // 順番待ちややり直しの間に、別の人のトークンで送らない
       const uid = auth.user?.uid ?? null;
       const body = { ...payload };
+      const settings = {
+        maxTries: Number.isInteger(options.maxTries) && options.maxTries > 0 ? options.maxTries : maxTries,
+        timeoutMs: Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? options.timeoutMs : timeoutMs,
+        retryAuth: options.maxTries !== 1,
+      };
       pending += 1;
-      const result = tail.then(() => request(op, body, uid)).finally(() => { pending -= 1; });
+      const result = tail.then(() => request(op, body, uid, settings)).finally(() => { pending -= 1; });
       // 失敗しても、次の呼び出しの順番待ちは止めない
       tail = result.catch(() => {});
       return result;
