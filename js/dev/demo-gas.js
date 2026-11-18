@@ -145,7 +145,7 @@ export function createDemoGas({ net, getUser, random = Math.random }) {
   }
 
   async function handle(op, payload) {
-    if (op === 'ping') return { ok: true, version: 'app-5' };
+    if (op === 'ping') return { ok: true, version: 'app-6' };
     if (!['whoami', 'putMaterial', 'getMaterials', 'getFile', 'trashFile',
       'putStudentFile', 'getStudentFile', 'getStudentFiles', 'trashStudentFile', 'summarize'].includes(op)) throw new NetError('unknown');
     const user = await identify(op === 'putStudentFile');

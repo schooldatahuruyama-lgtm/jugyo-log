@@ -31,12 +31,17 @@ function setup({ role = 'teacher', properties = {}, status = 200, body = complet
   return { calls, call: (payload = request()) => JSON.parse(gas.doPost({ postData: { contents: JSON.stringify({ op: 'summarize', token, ...payload }) } }).getContent()) };
 }
 
-test('AI の指示は明らかなまちがいだけを挙げ、送信本文にも同じ文を使う', () => {
+test('AI の指示は verdict で判定し、先生に見せるのは wrong だけ。送信本文にも同じ文を使う', () => {
   const gas = {};
   runInNewContext(readFileSync(code, 'utf8'), gas);
   assert.match(gas.AI_INSTRUCTIONS, /はっきりまちがっている文だけ/);
   assert.match(gas.AI_INSTRUCTIONS, /内容が正しい文は/);
-  assert.match(gas.AI_INSTRUCTIONS, /入れない/);
+  assert.match(gas.AI_INSTRUCTIONS, /verdict/);
+  assert.match(gas.AI_INSTRUCTIONS, /wrong/);
+  assert.match(gas.AI_INSTRUCTIONS, /correct/);
+  assert.match(gas.AI_INSTRUCTIONS, /unsure/);
+  assert.match(gas.AI_INSTRUCTIONS, /先生に見せるのは wrong だけ/);
+  assert.match(gas.AI_INSTRUCTIONS, /疑問の形で書かれた文も correct にする/);
   assert.match(gas.AI_INSTRUCTIONS, /空の配列にする/);
   assert.doesNotMatch(gas.AI_INSTRUCTIONS, /断定はしない/);
   const s = setup();
@@ -49,6 +54,47 @@ test('misconceptions が空の配列でも overview があれば成功する', (
   assert.equal(result.ok, true);
   assert.equal(result.summary.overview, '全体の見本');
   assert.deepEqual(result.summary.misconceptions, []);
+});
+
+test('misconceptions は verdict が wrong の文だけを残し、verdict は返さない', () => {
+  const item = { number: '1番', quote: '確認用の文', note: '確認用の説明' };
+  const misconceptions = ['wrong', 'correct', 'unsure', undefined, null, 1, 'Wrong', ' wrong ', 'unknown', '', true, {}, ['wrong']]
+    .map((verdict) => ({ ...item, verdict }));
+  const result = setup({ body: completed(JSON.stringify(summary({ misconceptions }))) }).call();
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.summary.misconceptions, [item]);
+  assert.equal(Object.hasOwn(result.summary.misconceptions[0], 'verdict'), false);
+});
+
+test('wrong でない 8 件を落としてから件数を切りつめる', () => {
+  const item = { number: '1番', quote: '確認用の文', note: '確認用の説明' };
+  const misconceptions = [...Array.from({ length: 8 }, () => ({ ...item, verdict: 'correct' })), { ...item, verdict: 'wrong' }];
+  const result = setup({ body: completed(JSON.stringify(summary({ misconceptions }))) }).call();
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.summary.misconceptions, [item]);
+});
+
+test('wrong が 9 件あるときは先頭から 8 件を残す', () => {
+  const items = Array.from({ length: 9 }, (_, i) => ({ number: '1番', quote: `確認用の文${i + 1}`, note: '確認用の説明' }));
+  const misconceptions = items.map((item) => ({ ...item, verdict: 'wrong' }));
+  const result = setup({ body: completed(JSON.stringify(summary({ misconceptions }))) }).call();
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.summary.misconceptions, items.slice(0, 8));
+});
+
+test('misconceptions が全部 correct なら空の配列で成功する', () => {
+  const misconceptions = Array.from({ length: 3 }, () => ({ number: '1番', quote: '確認用の文', verdict: 'correct', note: '確認用の説明' }));
+  const result = setup({ body: completed(JSON.stringify(summary({ misconceptions }))) }).call();
+  assert.equal(result.ok, true);
+  assert.equal(result.summary.overview, '全体の見本');
+  assert.deepEqual(result.summary.misconceptions, []);
+});
+
+test('misconceptions がオブジェクト・文字列・数字・真偽値なら ai-failed', () => {
+  for (const misconceptions of [{}, 'wrong', 1, false]) {
+    const result = setup({ body: completed(JSON.stringify(summary({ misconceptions }))) }).call();
+    assert.deepEqual(result, { ok: false, error: 'ai-failed' });
+  }
 });
 
 test('先生以外は denied。鍵かモデルが欠ける・空なら ai-config', () => {
@@ -111,7 +157,7 @@ test('refusal・incomplete・出力なし・壊れた JSON・壊れたまとめ�
 test('成功時は GAS でも長さと呼び名を整え、ブラウザ側と同じ形にする', () => {
   const value = summary({ overview: 'あ'.repeat(601),
     questionGroups: Array.from({ length: 7 }, () => ({ topic: 'い'.repeat(201), numbers: ['1番', '名簿外1', '2番', '名前の見本'], example: 'う'.repeat(301) })),
-    misconceptions: [null, { number: '2番', quote: '文', note: '説明' }, ...Array.from({ length: 9 }, () => ({ number: '1番', quote: 'え'.repeat(301), note: 'お'.repeat(201) }))],
+    misconceptions: [null, { number: '2番', quote: '文', verdict: 'wrong', note: '説明' }, ...Array.from({ length: 9 }, () => ({ number: '1番', quote: 'え'.repeat(301), verdict: 'wrong', note: 'お'.repeat(201) }))],
     nextLesson: Array(4).fill('か'.repeat(201)), followUp: Array.from({ length: 9 }, () => ({ number: '名簿外1', reason: 'き'.repeat(201) })) });
   const s = setup({ body: completed(JSON.stringify(value)) });
   assert.deepEqual(s.call(request({ entries: [entry(), entry({ no: '名簿外1' })] })),
@@ -137,6 +183,11 @@ test('送信本文は許可した項目だけ。鍵は Authorization だけ。�
   assert.equal(body.text.format.type, 'json_schema');
   assert.equal(body.text.format.strict, true);
   assert.equal(body.text.format.name, 'lesson_summary');
+  const misconceptions = body.text.format.schema.properties.misconceptions;
+  assert.equal(misconceptions.maxItems, 8);
+  assert.deepEqual(Object.keys(misconceptions.items.properties), ['number', 'quote', 'verdict', 'note']);
+  assert.deepEqual(misconceptions.items.properties.verdict, { type: 'string', enum: ['wrong', 'correct', 'unsure'] });
+  assert.deepEqual(misconceptions.items.required, ['number', 'quote', 'verdict', 'note']);
   function check(schema) {
     if (schema.type === 'object') {
       assert.equal(schema.additionalProperties, false);
