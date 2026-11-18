@@ -48,7 +48,7 @@ test('先生は保存でき、同じ key を同時に頼んでも 1 個になる
 
 test('ping と whoami は本物と同じ形。未ログイン・対応のないアカウントは auth', async () => {
   const { gas, setUser } = make();
-  assert.deepEqual(await gas.call('ping'), { ok: true, version: 'app-4' });
+  assert.deepEqual(await gas.call('ping'), { ok: true, version: 'app-5' });
   assert.deepEqual(await gas.call('whoami'), { ok: true, role: 'teacher' });
   setUser('student');
   assert.deepEqual(await gas.call('whoami'), { ok: true, role: 'student', studentId: 's26-001' });

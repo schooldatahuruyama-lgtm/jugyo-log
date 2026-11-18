@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { loadGas, makeFakes } from './helpers/gas-sandbox.js';
 import { cleanAiSummary } from '../js/ai-summary-logic.js';
 
@@ -29,6 +30,26 @@ function setup({ role = 'teacher', properties = {}, status = 200, body = complet
   const gas = loadGas(code, fakes);
   return { calls, call: (payload = request()) => JSON.parse(gas.doPost({ postData: { contents: JSON.stringify({ op: 'summarize', token, ...payload }) } }).getContent()) };
 }
+
+test('AI の指示は明らかなまちがいだけを挙げ、送信本文にも同じ文を使う', () => {
+  const gas = {};
+  runInNewContext(readFileSync(code, 'utf8'), gas);
+  assert.match(gas.AI_INSTRUCTIONS, /はっきりまちがっている文だけ/);
+  assert.match(gas.AI_INSTRUCTIONS, /内容が正しい文は/);
+  assert.match(gas.AI_INSTRUCTIONS, /入れない/);
+  assert.match(gas.AI_INSTRUCTIONS, /空の配列にする/);
+  assert.doesNotMatch(gas.AI_INSTRUCTIONS, /断定はしない/);
+  const s = setup();
+  s.call();
+  assert.equal(JSON.parse(s.calls[0].options.payload).instructions, gas.AI_INSTRUCTIONS);
+});
+
+test('misconceptions が空の配列でも overview があれば成功する', () => {
+  const result = setup().call();
+  assert.equal(result.ok, true);
+  assert.equal(result.summary.overview, '全体の見本');
+  assert.deepEqual(result.summary.misconceptions, []);
+});
 
 test('先生以外は denied。鍵かモデルが欠ける・空なら ai-config', () => {
   const student = setup({ role: 'student' });
