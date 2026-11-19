@@ -25,8 +25,16 @@ export function el(tag, props = {}, ...children) {
   return node;
 }
 
-// 開いている確認ダイアログ（画面が切りかわったら、取り消しとして片づける）
+// 開いている確認ダイアログと、登録された窓（画面が切りかわったら片づける）
 const openDialogs = new Set();
+
+// 確認ダイアログ以外の開いている窓（動画など）を、closeAllDialogs で閉じられるように登録する。戻り値は登録を外す関数
+export function registerDialog(close) {
+  if (typeof close !== 'function') return () => {};
+  const entry = { finish: () => close() };
+  openDialogs.add(entry);
+  return () => openDialogs.delete(entry);
+}
 
 // 確認ダイアログ。OK なら true、取り消し・Esc・外側のタップ・画面の切りかえなら false。
 // 結果はボタンを押した時点で返す（<dialog> の close イベントが届くのを待たない）。完了は 1 回だけ。
@@ -87,7 +95,7 @@ export function confirmDialog({ title, body, okLabel = 'OK', cancelLabel = 'や�
   });
 }
 
-// 開いている確認ダイアログを、すべて取り消し（false）として閉じる
+// 開いている確認ダイアログと、登録された窓をすべて閉じる（確認ダイアログは取り消し（false））
 export function closeAllDialogs() {
   for (const entry of [...openDialogs]) entry.finish(false);
 }

@@ -42,6 +42,8 @@ export function createReachTargets({ firebase, origin, href = origin, relayUrl }
     ...(relay ? [{ name: '先生が置いた中つぎ', url: relay.replace(/\/gas\/check$/, '/ping') }] : []),
     { name: '今の保存の仕組み（script.google.com）', url: 'https://script.google.com/robots.txt' },
     { name: '今の保存の仕組みの返事（script.googleusercontent.com）', url: 'https://script.googleusercontent.com/robots.txt' },
+    { name: '動画: YouTube の再生の枠（www.youtube-nocookie.com）', url: 'https://www.youtube-nocookie.com/robots.txt' },
+    { name: '動画: YouTube（www.youtube.com）', url: 'https://www.youtube.com/robots.txt' },
     { name: 'Google ドライブ（drive.google.com）', url: 'https://drive.google.com/robots.txt' },
     { name: 'ドライブのファイルの本体（drive.usercontent.google.com）', url: 'https://drive.usercontent.google.com/' },
     { name: 'Google の API（www.googleapis.com）', url: 'https://www.googleapis.com/' },

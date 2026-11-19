@@ -5,6 +5,7 @@ import { createRecordSaver } from '../record-saver.js';
 import { pickInitial, normalizeRecord, sameRecord, LEVELS } from '../record-logic.js';
 import { dateLabel } from '../lesson-logic.js';
 import { materialPane } from './parts/material-pane.js';
+import { linkPane } from './parts/link-pane.js';
 import { attachmentPane } from './parts/attachment-pane.js';
 import { headingIcon } from './parts/heading-icon.js';
 import { termRow } from './parts/term-row.js';
@@ -27,6 +28,7 @@ export function mount(root, ctx) {
   let online = navigator.onLine !== false;
   let draftWarned = false;
   let materials = null;
+  let links = null;
   let attachments = null;
   let terms = null;
   let reply = null;
@@ -47,6 +49,7 @@ export function mount(root, ctx) {
   const heading = el('h1', { text: '授業' });
   const date = el('p', { class: 'student-lesson-date' });
   const materialsArea = el('div');
+  const linksArea = el('div', { hidden: true });
   const attachmentsArea = el('div');
   const termsArea = el('div');
   const reflectionStatus = el('span', { class: 'reflection-status', role: 'status' });
@@ -109,7 +112,7 @@ export function mount(root, ctx) {
   const content = el('div', { class: 'student-lesson-columns', hidden: true },
     el('section', { class: 'student-lesson-teacher', 'aria-labelledby': 'student-teacher-heading' },
       sectionHeading('student-teacher-heading', 'teacher', '先生の資料', '資料をめくったり、拡大したりできます。'),
-      el('div', { class: 'lesson-section-body' }, materialsArea)),
+      el('div', { class: 'lesson-section-body' }, materialsArea, linksArea)),
     el('section', { class: 'student-lesson-mine', 'aria-labelledby': 'student-mine-heading' },
       sectionHeading('student-mine-heading', 'mine', '自分の記録', '授業中に気づいたことを書きます。'),
       el('div', { class: 'lesson-section-body' },
@@ -233,6 +236,7 @@ export function mount(root, ctx) {
 
   async function load() {
     if (!alive || loading || ready) return;
+    links?.destroy();
     loading = true;
     pageMessage.textContent = '読みこんでいます…';
     try {
@@ -292,6 +296,9 @@ export function mount(root, ctx) {
         ink: server?.ink, inkCleared: server?.inkCleared,
         onState(state) { saveStates.materials = state; showSaveState(); } });
       materialsArea.replaceChildren(materials.node);
+      links = linkPane({ lesson });
+      linksArea.replaceChildren(links.node);
+      linksArea.hidden = links.node.hidden;
       attachments = attachmentPane({ ctx, classId, lessonId, studentId,
         attachments: Array.isArray(server?.attachments) ? server.attachments : [], readOnly: false,
         ink: server?.ink, inkCleared: server?.inkCleared,
@@ -392,6 +399,7 @@ export function mount(root, ctx) {
     window.removeEventListener('beforeunload', onBeforeUnload);
     document.removeEventListener('visibilitychange', refreshRecord);
     materials?.destroy();
+    links?.destroy();
     attachments?.destroy();
     terms?.destroy();
     reply?.destroy();

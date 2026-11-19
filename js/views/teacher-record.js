@@ -8,6 +8,7 @@ import { loadInkFlow, inkLoadReason } from '../ink-flow.js';
 import { reviewPeople, neighbors, levelLabel } from '../review-logic.js';
 import { teacherNav } from './parts/teacher-nav.js';
 import { materialPane } from './parts/material-pane.js';
+import { linkPane } from './parts/link-pane.js';
 import { attachmentPane } from './parts/attachment-pane.js';
 import { headingIcon } from './parts/heading-icon.js';
 import { termRow } from './parts/term-row.js';
@@ -28,6 +29,7 @@ export function mount(root, ctx) {
   let loading = false;
   let loadId = 0;
   let materials = null;
+  let links = null;
   let attachments = null;
   let terms = null;
   let reply = null;
@@ -45,6 +47,7 @@ export function mount(root, ctx) {
   const titleArea = el('div', { class: 'record-heading', hidden: true }, date, heading, personHeading, identity);
   const pageMessage = el('div', { class: 'page-message', role: 'status', 'aria-live': 'polite' });
   const materialsArea = el('div');
+  const linksArea = el('div', { hidden: true });
   const recordArea = el('div');
   const termsArea = el('div');
   const reflectionArea = el('div');
@@ -53,7 +56,7 @@ export function mount(root, ctx) {
     el('section', { class: 'student-lesson-teacher', 'aria-labelledby': 'record-teacher-heading' },
       el('header', { class: 'lesson-section-band' },
         el('h2', { id: 'record-teacher-heading' }, headingIcon('teacher'), el('span', { text: '先生の資料' }))),
-      el('div', { class: 'lesson-section-body' }, materialsArea)),
+      el('div', { class: 'lesson-section-body' }, materialsArea, linksArea)),
     el('section', { class: 'student-lesson-mine', 'aria-labelledby': 'record-mine-heading' },
       el('header', { class: 'lesson-section-band' },
         el('h2', { id: 'record-mine-heading' }, headingIcon('mine'), el('span', { text: 'この生徒の記録' }))),
@@ -165,6 +168,7 @@ export function mount(root, ctx) {
 
   async function load() {
     if (!alive || loading) return;
+    links?.destroy();
     const current = ++loadId;
     const stale = () => !alive || current !== loadId;
     destroyInk();
@@ -215,6 +219,9 @@ export function mount(root, ctx) {
       materials = materialPane({ ctx, classId, lessonId, lesson, studentId, readOnly: true,
         ink: savedRecord?.ink, inkCleared: savedRecord?.inkCleared });
       materialsArea.replaceChildren(materials.node);
+      links = linkPane({ lesson });
+      linksArea.replaceChildren(links.node);
+      linksArea.hidden = links.node.hidden;
       terms?.destroy();
       terms = termRow({ ctx, classId, lessonId, studentId, lesson, readOnly: true });
       termsArea.replaceChildren(terms.node);
@@ -241,7 +248,7 @@ export function mount(root, ctx) {
   void load();
   return () => {
     alive = false; loadId += 1;
-    destroyInk(); materials?.destroy(); attachments?.destroy(); terms?.destroy(); reply?.destroy();
+    destroyInk(); materials?.destroy(); links?.destroy(); attachments?.destroy(); terms?.destroy(); reply?.destroy();
     ctx.setLeaveGuard?.(null);
     window.removeEventListener('beforeunload', onBeforeUnload);
   };

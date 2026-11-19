@@ -4,11 +4,13 @@ import { CONFIG } from '../config.js';
 import { newId } from '../ids.js';
 import { checkLesson, sortUnits, materialList, nextOrder, moveInOrder } from '../lesson-logic.js';
 import { cleanTerm, checkTerm, termKey, lessonTerms, suggestTerms } from '../term-logic.js';
+import { cleanLinkUrl, checkLink, linkList, linkLabel, nextLinkOrder, embedUrl } from '../link-logic.js';
 import { compressImage, dataUrlToBase64 } from '../image.js';
 import { openPdf, pdfThumb } from '../pdf.js';
 import { addMaterialFlow, removeMaterialFlow } from '../material-flow.js';
 import { teacherNav } from './parts/teacher-nav.js';
 import { openViewer } from './parts/viewer.js';
+import { openVideo } from './parts/video-player.js';
 
 function sendError(code) {
   if (code === 'toobig') return 'ファイルが大きすぎます。';
@@ -37,6 +39,8 @@ export function mount(root, ctx) {
   let loading = false;
   let saving = false;
   let materialBusy = false;
+  let linkBusy = false;
+  let video = null;
   let selecting = false;
   let pending = null;
   let viewer = null;
@@ -85,13 +89,25 @@ export function mount(root, ctx) {
   const formArea = el('div', { class: 'form-area' });
   const materialMessage = el('div', { class: 'page-message', role: 'status', 'aria-live': 'polite' });
   const listArea = el('div');
+  const linkUrl = el('input', { id: 'lesson-link-url', type: 'url', inputmode: 'url', placeholder: 'https://…', autocomplete: 'off' });
+  const linkTitle = el('input', { id: 'lesson-link-title', type: 'text', maxlength: CONFIG.linkTitleMax, autocomplete: 'off' });
+  const linkError = el('p', { class: 'error', role: 'alert', hidden: true });
+  const linkForm = el('form', { class: 'inline-form', novalidate: true, onsubmit: addLink },
+    el('div', { class: 'field' }, el('label', { class: 'label', for: 'lesson-link-url', text: 'アドレス' }), linkUrl),
+    el('div', { class: 'field' }, el('label', { class: 'label', for: 'lesson-link-title', text: '名前（空でもよい）' }), linkTitle),
+    el('button', { type: 'submit', class: 'btn', text: '＋ 足す' }));
+  const linksArea = el('div');
+  const linksSection = el('section', { class: 'card lesson-links' },
+    el('h2', { text: '動画・サイトのリンク' }),
+    el('p', { text: 'YouTube の動画は、生徒の画面の中で再生されます。そのほかのサイトは、別のタブで開きます。' }),
+    linkForm, linkError, linksArea);
   const heading = el('h1', { class: 'lesson-edit-heading', text: '授業の編集' });
   const content = el('div', { hidden: true }, heading,
     el('div', { class: 'lesson-edit-top' }, infoForm, termsSection),
     el('section', { class: 'lesson-materials', 'aria-label': '授業の資料' },
       el('h2', { text: '授業の資料' }),
       el('div', { class: 'page-actions' }, photoButton, pdfButton, imageInput, pdfInput),
-      formArea, materialMessage, listArea));
+      formArea, materialMessage, listArea), linksSection);
   const pageMessage = el('div', { class: 'page-message', role: 'status', 'aria-live': 'polite' });
   root.replaceChildren(teacherNav({ ...ctx, okToLeave }, 'lessons'),
     el('main', { class: 'page-main' },
@@ -104,13 +120,13 @@ export function mount(root, ctx) {
   async function okToLeave() {
     if (termLocked) return false;
     termLocked = true;
-    syncTermControls();
+    syncControls();
     try {
       if (termBusy) {
         try { await termRequest; } catch { return false; }
         if (!alive) return false;
       }
-      if (saving || materialBusy) { toast('処理しています。終わるまで待ってください。'); return false; }
+      if (saving || materialBusy || linkBusy) { toast('処理しています。終わるまで待ってください。'); return false; }
       if (dirty() || pending) {
         const sending = pending?.sending;
         if (!await confirmDialog({
@@ -125,12 +141,12 @@ export function mount(root, ctx) {
     } finally {
       // ログアウトでは、このあとにも取り消せる確認があるので、成功時も元に戻す。
       termLocked = false;
-      syncTermControls();
+      syncControls();
     }
   }
   if (ctx.setLeaveGuard) ctx.setLeaveGuard(okToLeave);
   const onBeforeUnload = (ev) => {
-    if (!dirty() && !pending && !saving && !materialBusy) return;
+    if (!dirty() && !pending && !saving && !materialBusy && !linkBusy) return;
     ev.preventDefault();
     ev.returnValue = '';
   };
@@ -139,14 +155,16 @@ export function mount(root, ctx) {
   function syncControls() {
     if (!alive) return;
     syncTermControls();
-    const infoLocked = !ready || loading || saving || materialBusy || selecting || pending !== null;
+    const infoLocked = !ready || loading || saving || materialBusy || linkBusy || selecting || pending !== null;
     for (const control of infoForm.querySelectorAll('input, select, button')) control.disabled = infoLocked;
     photoButton.disabled = infoLocked;
     pdfButton.disabled = infoLocked;
     // 一覧の「開く」と上部の移動ボタンは、送信中でも使える。
     for (const button of listArea.querySelectorAll('[data-material-action]')) {
-      button.disabled = !ready || loading || materialBusy || saving || Boolean(pending?.request) || button.dataset.edge === 'true';
+      button.disabled = !ready || loading || materialBusy || linkBusy || saving || Boolean(pending?.request) || button.dataset.edge === 'true';
     }
+    for (const control of linkForm.querySelectorAll('input, button')) control.disabled = linksLocked();
+    for (const button of linksArea.querySelectorAll('[data-link-action]')) button.disabled = linksLocked() || button.dataset.edge === 'true';
   }
 
   function notFound() {
@@ -172,6 +190,7 @@ export function mount(root, ctx) {
       ]);
       if (!alive) return;
       lesson = loadedLesson;
+      if (!lesson.links || typeof lesson.links !== 'object' || Array.isArray(lesson.links)) lesson.links = {};
       thumbs = loadedThumbs;
       date.value = lesson.date;
       title.value = lesson.title;
@@ -187,6 +206,7 @@ export function mount(root, ctx) {
       content.hidden = false;
       pageMessage.replaceChildren();
       renderMaterials();
+      renderLinks();
       renderTerms();
       void loadSuggestions();
     } catch {
@@ -201,7 +221,7 @@ export function mount(root, ctx) {
 
   async function saveInfo(ev) {
     ev.preventDefault();
-    if (!ready || saving || materialBusy || selecting || pending) return;
+    if (!ready || saving || materialBusy || linkBusy || selecting || pending) return;
     const values = { date: date.value, title: title.value.trim(), unitId: unit.value };
     const code = checkLesson(values, { titleMax: CONFIG.lessonTitleMax });
     infoError.hidden = !code;
@@ -232,7 +252,7 @@ export function mount(root, ctx) {
 
   function syncTermControls() {
     if (!alive) return;
-    const locked = !ready || loading || termBusy || termLocked;
+    const locked = !ready || loading || termBusy || termLocked || linkBusy;
     const full = lessonTerms(lesson).length >= CONFIG.termsPerLesson;
     for (const button of termsSection.querySelectorAll('button')) button.disabled = locked;
     for (const button of suggestions.querySelectorAll('button')) button.disabled = locked || full;
@@ -280,7 +300,7 @@ export function mount(root, ctx) {
   }
 
   async function addTerm(value) {
-    if (!alive || !ready || loading || termBusy || termLocked) return;
+    if (!alive || !ready || loading || termBusy || termLocked || linkBusy) return;
     termError.textContent = '';
     const code = checkTerm(value);
     if (code === 'empty') return;
@@ -293,7 +313,7 @@ export function mount(root, ctx) {
     }
     if (terms.length >= CONFIG.termsPerLesson) { syncTermControls(); return; }
     termBusy = true;
-    syncTermControls();
+    syncControls();
     try {
       const termId = ctx.now().toString(36).padStart(9, '0') + newId(ctx.random, 4);
       termRequest = ctx.repo.addLessonTerm(classId, lessonId, termId, text, ctx.now());
@@ -304,14 +324,14 @@ export function mount(root, ctx) {
       renderTerms();
     } catch {
       if (alive) termError.textContent = '保存できませんでした。もう一度ためしてください。';
-    } finally { termBusy = false; syncTermControls(); }
+    } finally { termBusy = false; syncControls(); }
   }
 
   async function removeTerm(term) {
-    if (!alive || !ready || loading || termBusy || termLocked) return;
+    if (!alive || !ready || loading || termBusy || termLocked || linkBusy) return;
     termBusy = true;
     termError.textContent = '';
-    syncTermControls();
+    syncControls();
     try {
       termRequest = ctx.repo.removeLessonTerm(classId, lessonId, term.id, ctx.now());
       await termRequest;
@@ -323,7 +343,119 @@ export function mount(root, ctx) {
       toast(`『${term.text}』を外しました。`);
     } catch {
       if (alive) termError.textContent = '保存できませんでした。もう一度ためしてください。';
-    } finally { termBusy = false; syncTermControls(); }
+    } finally { termBusy = false; syncControls(); }
+  }
+
+  function linksLocked() {
+    return !alive || !ready || loading || saving || materialBusy || linkBusy || termBusy || termLocked || selecting || pending !== null;
+  }
+
+  function showLinkError(text = '') {
+    linkError.textContent = text;
+    linkError.hidden = !text;
+  }
+
+  async function addLink(event) {
+    event.preventDefault();
+    if (linksLocked()) return;
+    showLinkError();
+    const url = linkUrl.value;
+    const title = linkTitle.value;
+    const code = checkLink({ url, title }, { urlMax: CONFIG.linkUrlMax, titleMax: CONFIG.linkTitleMax });
+    if (code) {
+      showLinkError(code === 'no-url' ? 'アドレスを入れてください。'
+        : code === 'long-url' ? `アドレスが長すぎます（${CONFIG.linkUrlMax} 文字まで）。`
+          : code === 'bad-url' ? 'https:// で始まるアドレスを入れてください。' : `名前は ${CONFIG.linkTitleMax} 文字までです。`);
+      return;
+    }
+    if (Object.keys(lesson.links).length >= CONFIG.linksPerLesson) {
+      showLinkError(`リンクは ${CONFIG.linksPerLesson} 個までです。`);
+      return;
+    }
+    const cleaned = cleanLinkUrl(url);
+    if (Object.values(lesson.links).some((link) => cleanLinkUrl(link?.url) === cleaned)) {
+      showLinkError('同じアドレスが、もう入っています。');
+      return;
+    }
+    linkBusy = true;
+    syncControls();
+    try {
+      const id = newId(ctx.random);
+      const link = { url: cleaned, title: title.trim(), order: nextLinkOrder(lesson.links) };
+      await ctx.repo.addLessonLink(classId, lessonId, id, link, ctx.now());
+      if (!alive) return;
+      lesson.links = { ...lesson.links, [id]: link };
+      renderLinks();
+      linkUrl.value = '';
+      linkTitle.value = '';
+      toast('リンクを足しました。');
+    } catch {
+      if (alive) showLinkError('足せませんでした。もう一度ためしてください。');
+    } finally { linkBusy = false; syncControls(); }
+  }
+
+  function viewLink(link) {
+    video?.close();
+    video = openVideo({ title: linkLabel(link), src: embedUrl(link.url), pageUrl: link.url });
+  }
+
+  function renderLinks() {
+    if (!alive || !lesson) return;
+    const links = linkList(lesson.links);
+    linksArea.replaceChildren(links.length ? el('ul', { class: 'link-rows' }, links.map((link, index) => {
+      const label = linkLabel(link);
+      const remove = el('button', { type: 'button', class: 'btn btn-danger-text', text: '消す', dataset: { linkAction: '' },
+        'aria-label': `${label || '開けないリンク'} を消す`, onclick: () => removeLink(link) });
+      if (!link.ok) return el('li', { class: 'link-row' }, statusChip('warn', '開けないリンクです（生徒には出ません）'), remove);
+      const trial = link.video ? el('button', { type: 'button', class: 'btn', text: 'ためす', onclick: () => viewLink(link) })
+        : el('a', { class: 'btn', text: 'ためす', href: link.url, target: '_blank', rel: 'noopener noreferrer' });
+      return el('li', { class: 'link-row' },
+        el('div', { class: 'link-summary' },
+          el('span', { class: 'small', text: link.video ? '動画（生徒の画面で再生）' : 'サイト（別のタブで開く）' }),
+          el('strong', { text: label }), el('span', { class: 'small', text: link.url })),
+        el('div', { class: 'link-actions' }, trial,
+          el('button', { type: 'button', class: 'btn', text: '上へ', dataset: { linkAction: '', edge: String(index === 0) },
+            'aria-label': `${label} を上へ`, onclick: () => moveLink(link, -1) }),
+          el('button', { type: 'button', class: 'btn', text: '下へ', dataset: { linkAction: '', edge: String(index === links.length - 1) },
+            'aria-label': `${label} を下へ`, onclick: () => moveLink(link, 1) }), remove));
+    })) : el('p', { class: 'home-empty', text: 'まだリンクがありません。' }));
+    syncControls();
+  }
+
+  async function moveLink(link, direction) {
+    if (linksLocked()) return;
+    const orders = moveInOrder(linkList(lesson.links), link.id, direction);
+    if (Object.keys(orders).length === 0) return;
+    linkBusy = true;
+    showLinkError();
+    syncControls();
+    try {
+      await ctx.repo.setLinkOrders(classId, lessonId, orders, ctx.now());
+      if (!alive) return;
+      for (const [id, order] of Object.entries(orders)) lesson.links[id].order = order;
+      renderLinks();
+      toast('順番を変えました。');
+    } catch {
+      if (alive) toast('順番を変えられませんでした。もう一度ためしてください。');
+    } finally { linkBusy = false; syncControls(); }
+  }
+
+  async function removeLink(link) {
+    if (linksLocked()) return;
+    linkBusy = true;
+    showLinkError();
+    syncControls();
+    try {
+      if (!await confirmDialog({ title: 'リンクを消しますか？', body: 'この授業から外します。',
+        okLabel: '消す', danger: true, signal: dialogs.signal }) || !alive) return;
+      await ctx.repo.removeLessonLink(classId, lessonId, link.id, ctx.now());
+      if (!alive) return;
+      delete lesson.links[link.id];
+      renderLinks();
+      toast('リンクを消しました。');
+    } catch {
+      if (alive) showLinkError('消せませんでした。もう一度ためしてください。');
+    } finally { linkBusy = false; syncControls(); }
   }
 
   function viewMaterial(material) {
@@ -359,7 +491,7 @@ export function mount(root, ctx) {
   }
 
   async function moveMaterial(material, direction) {
-    if (!ready || materialBusy || saving || pending?.request) return;
+    if (!ready || materialBusy || linkBusy || saving || pending?.request) return;
     const orders = moveInOrder(materialList(lesson.materials), material.id, direction);
     if (Object.keys(orders).length === 0) return;
     materialBusy = true;
@@ -376,7 +508,7 @@ export function mount(root, ctx) {
   }
 
   async function removeMaterial(material) {
-    if (!ready || materialBusy || saving || pending?.request) return;
+    if (!ready || materialBusy || linkBusy || saving || pending?.request) return;
     materialBusy = true;
     syncControls();
     try {
@@ -396,7 +528,7 @@ export function mount(root, ctx) {
   }
 
   function chooseFile(input) {
-    if (!ready || saving || materialBusy || selecting || pending) return;
+    if (!ready || saving || materialBusy || linkBusy || selecting || pending) return;
     if (dirty()) { toast('授業の変更を先に保存してください。'); return; }
     input.click();
   }
@@ -404,7 +536,7 @@ export function mount(root, ctx) {
   async function selectFile(input, type) {
     const file = input.files?.[0];
     input.value = '';
-    if (!file || !ready || saving || materialBusy || selecting || pending) return;
+    if (!file || !ready || saving || materialBusy || linkBusy || selecting || pending) return;
     if (dirty()) { toast('授業の変更を先に保存してください。'); return; }
     if (Object.keys(lesson.materials).length >= CONFIG.materialsPerLesson) { toast('資料は 12 個までです。'); return; }
     if (type === 'pdf' && file.size > CONFIG.pdfMaxBytes) { toast('PDF は 10MB までです。'); return; }
@@ -496,7 +628,7 @@ export function mount(root, ctx) {
 
   async function sendMaterial() {
     const item = pending;
-    if (!item || item.sending || materialBusy || saving || !ready) return;
+    if (!item || item.sending || materialBusy || linkBusy || saving || !ready) return;
     item.error.hidden = true;
     if (!item.request) {
       const name = item.name.value.trim();
@@ -574,6 +706,7 @@ export function mount(root, ctx) {
     alive = false;
     dialogs.abort();
     viewer?.close();
+    video?.close();
     window.removeEventListener('beforeunload', onBeforeUnload);
   };
 }

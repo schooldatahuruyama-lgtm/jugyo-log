@@ -41,6 +41,10 @@ export const CONFIG = {
   thumb: { maxEdge: 320, maxChars: 20000 },
   pdfMaxBytes: 10485760,
   materialsPerLesson: 12,
+  // 授業に付けるリンク（動画・サイト）の数と文字数
+  linksPerLesson: 8,
+  linkTitleMax: 60,
+  linkUrlMax: 500,
   attachmentSlots: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'],
   inkFields: ['memo', 'learned', 'question'],
   inkThumbFields: ['learned', 'question'],
