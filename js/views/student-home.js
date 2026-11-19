@@ -1,6 +1,7 @@
 // 生徒の授業一覧。読めた授業は残し、印や単元の読みこみだけ失敗したときは知らせる。
 import { el, confirmDialog, toast } from '../ui.js';
 import { CONFIG } from '../config.js';
+import { rikaEntryUrl } from '../rika-link.js';
 import { sortUnits } from '../lesson-logic.js';
 import { cleanTerm, termKey, matchLessons, frequentTerms } from '../term-logic.js';
 import { classLabel, groupByDate, groupByUnit, todoLessons } from '../student-list-logic.js';
@@ -74,6 +75,12 @@ export function mount(root, ctx) {
       renderLessons();
     } });
   const todoArea = el('div', { class: 'notice student-todo', hidden: true }, todoMessage, todoButton);
+  const rikaUrl = rikaEntryUrl(CONFIG.rika?.url);
+  const rikaEntry = rikaUrl === null ? null : el('section', { class: 'rika-entry', 'aria-label': '理科クエスト' },
+    el('div', { class: 'rika-entry-text' },
+      el('h2', { text: '理科クエスト' }),
+      el('p', { text: '理科の問題に、自分のペースで取り組めます。' })),
+    el('a', { class: 'btn btn-primary rika-entry-link', href: rikaUrl, text: 'ひらく' }));
 
   async function logout() {
     if (!alive || signingOut || navigating) return;
@@ -113,7 +120,7 @@ export function mount(root, ctx) {
       el('button', { type: 'button', class: 'btn', text: 'ログアウト', onclick: logout })));
 
   root.replaceChildren(el('div', { class: 'student-page' }, el('div', { class: 'student-home-page' },
-    bar, el('main', { class: 'page-main' }, filters, searchArea, todoArea, message, pendingArea, listArea))));
+    bar, el('main', { class: 'page-main' }, rikaEntry, filters, searchArea, todoArea, message, pendingArea, listArea))));
 
   // 再送を待たずに移り、移ったあとの応答では一覧を描き直さない。
   ctx.setLeaveGuard(() => {

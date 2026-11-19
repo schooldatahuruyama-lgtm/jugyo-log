@@ -1,5 +1,7 @@
 // アプリ全体で使う定数
 export const CONFIG = {
+  // 理科クエスト（別のアプリ）の入口のアドレス
+  rika: { url: 'https://schooldatahuruyama-lgtm.github.io/Rika_app/' },
   // 生徒のログイン用メールアドレスのドメインと、最初の発行の回数（g1）
   emailDomain: 'jugyolog.invalid',
   firstGeneration: 1,
