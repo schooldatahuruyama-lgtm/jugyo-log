@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>モックアップ: 授業ログと理科クエストをつなぐ</title>
+<style>
+  :root {
+    --c-main: #3F63F6; --c-navy: #1F2A6B; --c-bg: #F6F8FF; --c-card: #fff; --c-line: #DCE4F5;
+    --c-border: #6B79B3; --c-ok-border: #2E8B57; --c-warn: #F4C94A; --c-warn-border: #8F6F00;
+    --rq-blue: #1A5CFF; --rq-bg: #EEF3FF; --rq-soft: #DCE6FF; --rq-line: #C9D5F0; --rq-muted: #5B6676;
+    --rq-ok: #2E9E5B; --rq-star: #F5B400;
+    --font: 'BIZ UDPGothic', 'Hiragino Sans', 'Yu Gothic', Meiryo, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: var(--font); color: #1B2430; background: #E9ECF3; line-height: 1.6; }
+  .mock-head { background: #2B2F3A; color: #fff; padding: 12px 16px; }
+  .mock-head h1 { margin: 0 0 4px; font-size: 17px; }
+  .mock-head p { margin: 0; font-size: 13px; opacity: .85; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 16px; background: #fff; border-bottom: 1px solid #C9CFDD; position: sticky; top: 0; z-index: 2; }
+  .tabs button { font: inherit; font-size: 14px; padding: 8px 12px; border-radius: 999px; border: 2px solid #6B79B3; background: #fff; color: #1F2A6B; cursor: pointer; min-height: 44px; }
+  .tabs button[aria-selected="true"] { background: #1F2A6B; color: #fff; border-color: #1F2A6B; }
+  .stage { max-width: 820px; margin: 16px auto; padding: 0 16px 40px; }
+  .memo { background: #FFF8DC; border: 2px dashed var(--c-warn-border); border-radius: 10px; padding: 10px 14px; font-size: 14px; margin: 0 0 12px; }
+  .memo b { color: #6B5200; }
+  .screen { border-radius: 18px; overflow: hidden; border: 1px solid #B9C0D2; box-shadow: 0 4px 16px rgba(0,0,0,.12); }
+  [hidden] { display: none !important; }
+
+  /* 授業ログ */
+  .jl { background: var(--c-bg); }
+  .jl .topbar { background: var(--c-navy); color: #fff; padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+  .jl .brand { font-weight: 700; font-size: 18px; margin-right: 10px; }
+  .jl .sub { font-size: 14px; opacity: .9; }
+  .btn { font: inherit; font-size: 15px; min-height: 44px; padding: 8px 14px; border-radius: 10px; border: 2px solid var(--c-border); background: #fff; color: var(--c-navy); cursor: pointer; }
+  .btn-primary { background: var(--c-main); border-color: var(--c-main); color: #fff; font-weight: 700; }
+  .jl .main { padding: 16px; }
+  .rika-card { background: linear-gradient(135deg, #1A5CFF, #0F44CC); color: #fff; border-radius: 16px; padding: 14px 16px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 16px; outline: 3px solid #F08C2E; outline-offset: 3px; }
+  .rika-card .ico { width: 52px; height: 52px; border-radius: 14px; background: rgba(255,255,255,.2); display: grid; place-items: center; font-size: 28px; flex: none; }
+  .rika-card .txt { flex: 1 1 200px; }
+  .rika-card h2 { margin: 0; font-size: 18px; }
+  .rika-card p { margin: 2px 0 0; font-size: 14px; opacity: .95; }
+  .rika-card .go { background: #fff; color: #0F44CC; border: none; font-weight: 700; }
+  .new { display: inline-block; background: #F08C2E; color: #fff; font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 999px; margin-left: 6px; vertical-align: middle; }
+  .jl h3 { font-size: 15px; color: var(--c-navy); margin: 14px 0 8px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+  .tile { background: #fff; border: 1px solid var(--c-line); border-radius: 12px; padding: 10px 12px; }
+  .tile .d { font-size: 12px; color: #5B6676; }
+  .tile .t { font-weight: 700; }
+  .tile .m { font-size: 12px; margin-top: 4px; color: var(--c-ok-border); }
+  .tile .m.todo { color: #9A4A08; }
+
+  /* 理科クエスト */
+  .rq { background: var(--rq-bg); }
+  .rq .head { background: #fff; padding: 12px 16px; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; border-bottom: 1px solid var(--rq-line); }
+  .rq .title { font-weight: 700; font-size: 18px; color: var(--rq-blue); }
+  .rq .back { font: inherit; font-size: 14px; min-height: 44px; padding: 6px 12px; border-radius: 10px; border: 2px solid var(--rq-blue); background: #fff; color: var(--rq-blue); cursor: pointer; }
+  .link-band { padding: 10px 16px; font-size: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; outline: 3px solid #F08C2E; outline-offset: -3px; }
+  .link-band.ok { background: #E3F5EA; color: #14694B; }
+  .link-band.wait { background: #FFF3D6; color: #6B5200; }
+  .link-band.off { background: #F1F2F6; color: #3A4353; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; flex: none; }
+  .rq .body { padding: 16px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .rq .card { background: #fff; border-radius: 16px; padding: 14px 16px; box-shadow: 0 2px 10px rgba(26,60,140,.12); }
+  .rq .card h4 { margin: 0 0 6px; font-size: 14px; color: var(--rq-muted); }
+  .rq .big { font-size: 20px; font-weight: 700; }
+  .bar { height: 10px; background: var(--rq-soft); border-radius: 999px; overflow: hidden; margin-top: 8px; }
+  .bar i { display: block; height: 100%; width: 62%; background: var(--rq-blue); }
+  .rq .prim { font: inherit; font-size: 16px; font-weight: 700; min-height: 48px; padding: 10px 16px; border-radius: 12px; border: none; background: var(--rq-blue); color: #fff; cursor: pointer; width: 100%; margin-top: 10px; }
+  .rq .sec { font: inherit; font-size: 15px; min-height: 48px; padding: 10px 16px; border-radius: 12px; border: 2px solid var(--rq-blue); background: #fff; color: var(--rq-blue); cursor: pointer; width: 100%; margin-top: 8px; }
+  .who { font-size: 14px; color: var(--rq-muted); }
+  .dialog-wrap { padding: 24px 16px; background: rgba(27,36,48,.45); }
+  .dialog { background: #fff; border-radius: 16px; padding: 18px; max-width: 460px; margin: 0 auto; }
+  .dialog h4 { margin: 0 0 8px; font-size: 18px; }
+  .dialog p { margin: 0 0 8px; font-size: 15px; }
+  .dialog .box { background: var(--rq-bg); border-radius: 12px; padding: 10px 12px; font-size: 14px; margin: 8px 0; }
+</style>
+</head>
+<body>
+<div class="mock-head">
+  <h1>モックアップ: 授業ログと理科クエストをつなぐ</h1>
+  <p>見本です。ボタンは動きません。数字や名前はすべて作りものです。オレンジの枠が、新しく足す所です。</p>
+</div>
+<div class="tabs" role="tablist">
+  <button role="tab" data-t="s1" aria-selected="true">1 授業ログの最初の画面</button>
+  <button role="tab" data-t="s2" aria-selected="false">2 理科クエスト（つながっている）</button>
+  <button role="tab" data-t="s3" aria-selected="false">3 通信がないとき</button>
+  <button role="tab" data-t="s4" aria-selected="false">4 ログインしていないとき</button>
+  <button role="tab" data-t="s5" aria-selected="false">5 初めてつないだとき</button>
+  <button role="tab" data-t="s6" aria-selected="false">6 先生が単元を決める</button>
+</div>
+
+<div class="stage">
+
+<section id="s1">
+  <p class="memo"><b>決まったこと:</b> 入口は、生徒の最初の画面のいちばん上に置きます。押すと理科クエストが開きます。授業の記録には、理科クエストの結果は出しません。<br><b>仮:</b> カードに「レベル」と「今日のクエスト」を出すかどうか。出さずに、ボタンだけにもできます。</p>
+  <div class="screen jl">
+    <div class="topbar">
+      <div><span class="brand">授業ログ</span><span class="sub">1年A組　出席番号 7</span></div>
+      <div><button class="btn">パスワードを変える</button> <button class="btn">ログアウト</button></div>
+    </div>
+    <div class="main">
+      <div class="rika-card">
+        <div class="ico" aria-hidden="true">🔬</div>
+        <div class="txt">
+          <h2>理科クエスト<span class="new">新しい</span></h2>
+          <p>今の単元: 光の世界（先生が決めた単元）<br>今日のクエスト: 反射の法則</p>
+        </div>
+        <button class="btn go">つづきから ›</button>
+      </div>
+      <h3>今日</h3>
+      <div class="grid">
+        <div class="tile"><div class="d">11/19（木）3 時間目</div><div class="t">光の反射</div><div class="m todo">振り返りがまだ</div></div>
+      </div>
+      <h3>今週</h3>
+      <div class="grid">
+        <div class="tile"><div class="d">11/17（火）</div><div class="t">光の直進</div><div class="m">✓ 書いた</div></div>
+        <div class="tile"><div class="d">11/16（月）</div><div class="t">身のまわりの光</div><div class="m">✓ 書いた</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="s2" hidden>
+  <p class="memo"><b>決まったこと:</b> 授業ログにログインしたまま開くと、同じアカウントで自動でつながります。ID やパスワードは、もう一度入れません。記録は生徒ごとに保存され、どの端末でも続きができます。<br><b>変わる所:</b> 上の緑の帯と「授業ログへもどる」だけ。ほかは今の理科クエストのままです。</p>
+  <div class="screen rq">
+    <div class="head"><span class="title">理科クエスト</span><button class="back">‹ 授業ログへもどる</button></div>
+    <div class="link-band ok"><span class="dot"></span>授業ログのアカウントで つながっています（1年A組 7番）。記録は保存しました。</div>
+    <div class="body">
+      <div class="card" style="outline:3px solid #F08C2E;outline-offset:3px"><h4>いまの単元 <span class="new" style="margin-left:0">先生が決めた単元</span></h4><div class="big">光の世界</div><div class="who">まよったら、ここから進めよう。</div><button class="sec">ほかの単元もやってみる</button></div>
+      <div class="card"><h4>今日のクエスト</h4><div class="big">反射の法則</div><button class="prim">はじめる</button></div>
+      <div class="card"><h4>レベルと経験値</h4><div class="big">Lv 3</div><div class="bar"><i></i></div><div class="who">あと 76 でレベルアップ</div></div>
+      <div class="card"><h4>連続学習</h4><div class="big">4 日</div><div class="who">きのうも学習しました</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="s3" hidden>
+  <p class="memo"><b>考え:</b> 通信がなくても、今までどおり学習できます。記録はいったん端末にためて、つながったときに自動で送ります。送れていない間は、黄色の帯で件数を知らせます（だまって消えたり、送れたふりをしたりしません）。</p>
+  <div class="screen rq">
+    <div class="head"><span class="title">理科クエスト</span><button class="back">‹ 授業ログへもどる</button></div>
+    <div class="link-band wait"><span class="dot"></span>まだ送れていない記録が 3 件あります。電波のよい所で開くと、自動で送ります。</div>
+    <div class="body">
+      <div class="card"><h4>今日のクエスト</h4><div class="big">反射の法則</div><button class="prim">はじめる</button></div>
+      <div class="card"><h4>レベルと経験値</h4><div class="big">Lv 3</div><div class="bar"><i></i></div><div class="who">あと 46 でレベルアップ</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="s4" hidden>
+  <p class="memo"><b>仮（質問 3）:</b> ログインなしでも使えるままにする案です。そのときは「この端末だけ」と灰色の帯で知らせます。ログインした生徒だけにするなら、この画面は「ログインしてください」だけになります。</p>
+  <div class="screen rq">
+    <div class="head"><span class="title">理科クエスト</span></div>
+    <div class="link-band off"><span class="dot"></span>ログインしていません。記録は、この端末の中だけに残ります。</div>
+    <div class="body">
+      <div class="card">
+        <h4>記録を残すには</h4>
+        <div>授業ログにログインすると、どの端末でも続きができます。</div>
+        <button class="prim">授業ログにログインする</button>
+        <button class="sec">ログインしないで使う（この端末だけ）</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="s5" hidden>
+  <p class="memo"><b>仮（質問 4）:</b> 端末の中に前の記録があるとき、初めてつないだ 1 回だけ聞く案です。共用のタブレットでは、ほかの人の記録かもしれないので、だまって引きつがず、中身を見せてから選ばせます。</p>
+  <div class="screen rq">
+    <div class="head"><span class="title">理科クエスト</span></div>
+    <div class="dialog-wrap">
+      <div class="dialog">
+        <h4>この端末に、前の記録があります</h4>
+        <p>これは、あなたの記録ですか？</p>
+        <div class="box">ニックネーム: そらまめ<br>Lv 3 ・ クリアしたステージ 5 ・ 最後に学習した日 11/17</div>
+        <button class="prim">わたしの記録です（アカウントに引きつぐ）</button>
+        <button class="sec">ちがいます（新しく始める）</button>
+        <p class="who" style="margin-top:10px">「ちがいます」を選んでも、前の記録は端末に残ります。消えません。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="s6" hidden>
+  <p class="memo"><b>決まったこと:</b> 先生が、クラスごとに「今の単元」を決めます。生徒の理科クエストは、その単元から始まります。<br><b>考え:</b> 生徒は、ほかの単元にも進めます（進んでいる生徒を止めないため）。決めていないクラスは、今までどおり生徒が自分で選びます。<br><b>仮:</b> 置く場所は、授業ログの先生の画面（クラスの画面）にしています。</p>
+  <div class="screen jl">
+    <div class="topbar">
+      <div><span class="brand">授業ログ</span><span class="sub">先生　クラス</span></div>
+      <div><button class="btn">ログアウト</button></div>
+    </div>
+    <div class="main">
+      <h3>理科クエストの「今の単元」</h3>
+      <div class="tile" style="outline:3px solid #F08C2E;outline-offset:3px;padding:14px 16px">
+        <div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));align-items:end">
+          <div><div class="d">クラス</div><div class="t">1年A組</div></div>
+          <label><div class="d">今の単元</div>
+            <select class="btn" style="width:100%"><option>光の世界</option><option>音の世界</option><option>力のはたらき</option><option>決めない（生徒が選ぶ）</option></select></label>
+          <button class="btn btn-primary">保存する</button>
+        </div>
+        <div class="d" style="margin-top:10px">保存すると、このクラスの生徒が次に開いたときから変わります。生徒の記録は消えません。</div>
+      </div>
+      <div class="tile" style="margin-top:10px;padding:14px 16px">
+        <div style="display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));align-items:end">
+          <div><div class="d">クラス</div><div class="t">1年B組</div></div>
+          <div><div class="d">今の単元</div><div class="t">決めていません（生徒が選ぶ）</div></div>
+          <button class="btn">変える</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div>
+<script>
+  const tabs = document.querySelectorAll('.tabs button');
+  tabs.forEach((b) => b.addEventListener('click', () => {
+    tabs.forEach((x) => x.setAttribute('aria-selected', String(x === b)));
+    document.querySelectorAll('.stage > section').forEach((s) => { s.hidden = s.id !== b.dataset.t; });
+  }));
+</script>
+</body>
+</html>
