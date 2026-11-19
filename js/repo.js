@@ -126,6 +126,7 @@ function toLesson(classId, id, v) {
     title: typeof l.title === 'string' ? l.title : '',
     unitId: typeof l.unitId === 'string' ? l.unitId : '',
     materials: isObj(l.materials) ? l.materials : {},
+    links: isObj(l.links) ? l.links : {},
     terms: isObj(l.terms) ? l.terms : {},
     createdAt: isNum(l.createdAt) ? l.createdAt : 0,
     updatedAt: isNum(l.updatedAt) ? l.updatedAt : 0,
@@ -225,7 +226,7 @@ export function createRepo(net) {
       await net.update('', patch);
     },
 
-    // 資料・用語・作成日時は残し、編集した項目だけを書く。空の単元は外す
+    // 資料・リンク・用語・作成日時は残し、編集した項目だけを書く。空の単元は外す
     async updateLesson(classId, lessonId, { date, title, unitId }, now) {
       const path = `lessons/${key(classId)}/${key(lessonId)}`;
       await net.update('', {
@@ -244,6 +245,25 @@ export function createRepo(net) {
     async removeLessonTerm(classId, lessonId, termId, now) {
       const path = `lessons/${key(classId)}/${key(lessonId)}`;
       await net.update('', { [`${path}/terms/${key(termId)}`]: null, [`${path}/updatedAt`]: now });
+    },
+
+    async addLessonLink(classId, lessonId, linkId, { url, title, order }, now) {
+      const path = `lessons/${key(classId)}/${key(lessonId)}`;
+      await net.update('', { [`${path}/links/${key(linkId)}`]: { url, title, order }, [`${path}/updatedAt`]: now });
+    },
+
+    async removeLessonLink(classId, lessonId, linkId, now) {
+      const path = `lessons/${key(classId)}/${key(lessonId)}`;
+      await net.update('', { [`${path}/links/${key(linkId)}`]: null, [`${path}/updatedAt`]: now });
+    },
+
+    async setLinkOrders(classId, lessonId, orders, now) {
+      const path = `lessons/${key(classId)}/${key(lessonId)}`;
+      const patch = {};
+      for (const [id, order] of Object.entries(orders)) patch[`${path}/links/${key(id)}/order`] = order;
+      if (Object.keys(patch).length === 0) return;
+      patch[`${path}/updatedAt`] = now;
+      await net.update('', patch);
     },
 
     // そのクラスの全授業の自分の用語を、1 回で読む

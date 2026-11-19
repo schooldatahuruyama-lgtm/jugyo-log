@@ -261,7 +261,7 @@ test('中止済みなら通信せず、途中の中止なら確定した結果�
   assert.equal(timers.size, 0);
 });
 
-test('一覧は指定の 14 件の順で、データベースのホストからプロジェクト ID を取る', () => {
+test('一覧は指定の 16 件の順で、データベースのホストからプロジェクト ID を取る', () => {
   const targets = createReachTargets({
     firebase: { databaseURL: 'https://abc-default-rtdb.asia-southeast1.firebasedatabase.app/private-path?auth=test-only#test' },
     origin: 'https://app.example.test',
@@ -269,13 +269,16 @@ test('一覧は指定の 14 件の順で、データベースのホストから�
   assert.deepEqual(targets.map((t) => t.url), [
     'https://abc-default-rtdb.asia-southeast1.firebasedatabase.app/check/ping.json', 'https://app.example.test/version.txt',
     'https://script.google.com/robots.txt', 'https://script.googleusercontent.com/robots.txt',
+    'https://www.youtube-nocookie.com/robots.txt', 'https://www.youtube.com/robots.txt',
     'https://drive.google.com/robots.txt', 'https://drive.usercontent.google.com/',
     'https://www.googleapis.com/', 'https://firebasestorage.googleapis.com/',
     'https://storage.googleapis.com/', 'https://abc.web.app/',
     'https://workers.dev/', 'https://pages.dev/', 'https://vercel.app/',
     'https://netlify.app/robots.txt',
   ]);
-  assert.equal(targets[9].name, 'Firebase のホスティング（web.app）');
+  assert.equal(targets[4].name, '動画: YouTube の再生の枠（www.youtube-nocookie.com）');
+  assert.equal(targets[5].name, '動画: YouTube（www.youtube.com）');
+  assert.equal(targets[11].name, 'Firebase のホスティング（web.app）');
   assert.equal(targets.some((t) => new URL(t.url).hostname === 'deno.dev'), false);
   assert.ok(targets.every((t) => typeof t.name === 'string' && t.name.length > 0));
   assert.ok(targets.every((t) => Object.keys(t).join(',') === (t.note ? 'name,url,note' : 'name,url')));
@@ -312,7 +315,7 @@ test('ホスティングは先頭のラベルから取り、設定の projectId 
     firebase: { databaseURL: 'https://abc-123-default-rtdb.example.test/', projectId: 'invalid/path' },
     origin: target.url,
   });
-  assert.equal(targets[9].url, 'https://abc-123.web.app/');
+  assert.equal(targets[11].url, 'https://abc-123.web.app/');
 });
 
 test('データベースのホストが指定の形でなければホスティングだけ省く', () => {
@@ -334,12 +337,12 @@ test('データベースのホストが指定の形でなければホスティ�
 test('設定がなければその行だけ省き、ほかの行き先の順を変えない', () => {
   for (const firebase of [undefined, null, {}, { databaseURL: '', projectId: '' }]) {
     const targets = createReachTargets({ firebase, origin: 'https://app.example.test' });
-    assert.equal(targets.length, 12);
+    assert.equal(targets.length, 14);
     assert.equal(targets[0].url, 'https://app.example.test/version.txt');
     assert.equal(targets.some((t) => t.url.includes('.web.app')), false);
   }
-  assert.equal(createReachTargets({ firebase: { databaseURL: target.url }, origin: target.url }).length, 13);
-  assert.equal(createReachTargets({ firebase: { projectId: 'example-project' }, origin: target.url }).length, 12);
+  assert.equal(createReachTargets({ firebase: { databaseURL: target.url }, origin: target.url }).length, 15);
+  assert.equal(createReachTargets({ firebase: { projectId: 'example-project' }, origin: target.url }).length, 14);
 });
 
 test('置き場所が https:// で始まらなければ、その行だけ省く', () => {

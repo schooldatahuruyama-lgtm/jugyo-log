@@ -325,6 +325,33 @@ input[aria-invalid='true'] { border-color: var(--c-danger-text); }
 /* 授業の資料。表示するボタンと、並べ替え・削除のボタンを分ける */
 .lesson-materials { border-top: 3px solid var(--teacher); padding-top: var(--s-3); }
 .lesson-materials > h2 { color: var(--teacher); }
+/* 動画とサイト。長い名前やアドレスも、枠の中で折り返す。 */
+.lesson-links { min-width: 0; max-width: none; margin-top: var(--s-3); overflow-wrap: anywhere; }
+.lesson-links > h2 { color: var(--teacher); }
+.lesson-links input[type='url'] {
+  width: 100%; min-width: 0; min-height: 44px; padding: 8px 12px;
+  border: 2px solid var(--c-border); border-radius: var(--r-1);
+  background: var(--c-card); color: var(--c-navy); font: inherit;
+}
+.link-rows { list-style: none; margin: var(--s-2) 0 0; padding: 0; display: grid; gap: var(--s-2); }
+.link-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1); min-width: 0; overflow-wrap: anywhere; }
+.link-summary { display: flex; flex-direction: column; flex: 1 1 240px; min-width: 0; }
+.link-actions { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+.link-pane { min-width: 0; margin-top: var(--s-3); overflow-wrap: anywhere; }
+.link-pane .link-row { align-items: stretch; flex-direction: column; }
+.link-open { min-height: 44px; min-width: 0; max-width: 100%; white-space: normal; text-align: left; overflow-wrap: anywhere; }
+.video-dialog {
+  width: min(960px, 96vw); max-width: 96vw; max-height: 96vh; padding: var(--s-2);
+  border: 2px solid var(--c-border); border-radius: var(--r-1); background: var(--c-card); color: var(--c-navy);
+  overflow-y: auto; overflow-wrap: anywhere;
+}
+.video-dialog[open] { display: flex; flex-direction: column; gap: var(--s-1); }
+.video-dialog::backdrop { background: rgba(31, 42, 107, 0.7); }
+.video-dialog h2 { margin: 0; max-height: 3em; overflow-y: auto; flex: none; }
+.video-dialog iframe { display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; max-height: 70vh; min-height: 0; flex: 0 1 auto; }
+.video-dialog p { margin: 0; flex: none; }
+.video-dialog .dialog-actions { margin-top: 0; flex: none; }
+
 .material-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s-2); }
 .material-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1); }
 .material-open {

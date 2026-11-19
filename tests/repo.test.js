@@ -614,6 +614,52 @@ test('先生の用語: 1 回の update で追加・削除と日時を変え、�
   assert.deepEqual(await mem.get('lessons/c1/l1'), { ...lesson, updatedAt: 200 });
 });
 
+test('授業のリンク: 追加・順番・削除を 1 回ずつ書き、ほかの項目を残す', async () => {
+  const original = { title: '確認用授業', materials: { m1: { fileId: 'TestFile' } }, terms: { t1: '光' }, createdAt: 1 };
+  const { repo, mem, calls } = setup({ lessons: { c1: { l1: original } } });
+  const link = { url: 'https://example.com/', title: '確認用サイト', order: 0 };
+  await repo.addLessonLink('c1', 'l1', 'link1', { ...link, extra: true }, 100);
+  assert.deepEqual(calls.update, [['', { 'lessons/c1/l1/links/link1': link, 'lessons/c1/l1/updatedAt': 100 }]]);
+  assert.deepEqual(await mem.get('lessons/c1/l1'), { ...original, links: { link1: link }, updatedAt: 100 });
+  await repo.setLinkOrders('c1', 'l1', { link1: 2 }, 200);
+  assert.deepEqual(calls.update[1], ['', { 'lessons/c1/l1/links/link1/order': 2, 'lessons/c1/l1/updatedAt': 200 }]);
+  assert.deepEqual((await repo.getLesson('c1', 'l1')).links, { link1: { ...link, order: 2 } });
+  await repo.setLinkOrders('c1', 'l1', {}, 300);
+  assert.equal(calls.update.length, 2);
+  await repo.updateLesson('c1', 'l1', { date: '2026-11-20', title: '変更', unitId: '' }, 300);
+  assert.deepEqual((await repo.getLesson('c1', 'l1')).links, { link1: { ...link, order: 2 } });
+  await repo.removeLessonLink('c1', 'l1', 'link1', 400);
+  assert.deepEqual(calls.update.at(-1), ['', { 'lessons/c1/l1/links/link1': null, 'lessons/c1/l1/updatedAt': 400 }]);
+  assert.deepEqual((await repo.getLesson('c1', 'l1')).links, {});
+  assert.deepEqual(await mem.get('lessons/c1/l1/materials'), original.materials);
+  assert.deepEqual(await mem.get('lessons/c1/l1/terms'), original.terms);
+});
+
+test('授業のリンク: 読みこみはオブジェクトだけを残し、新規授業には写さない', async () => {
+  const links = { l1: { url: 'https://example.com/', title: '', order: 0 }, broken: 1 };
+  const { repo } = setup({ lessons: { c1: { good: { links }, missing: {}, array: { links: [] }, text: { links: 'x' }, nil: { links: null } } } });
+  for (const lesson of await repo.listLessons('c1')) {
+    assert.deepEqual(lesson.links, lesson.id === 'good' ? links : {});
+    assert.deepEqual((await repo.getLesson('c1', lesson.id)).links, lesson.links);
+  }
+  await repo.createLessons([{ classId: 'c1', lessonId: 'new', date: '2026-11-20', title: '確認用授業', links }], 100);
+  assert.deepEqual((await repo.getLesson('c1', 'new')).links, {});
+});
+
+test('授業のリンク: 不正なキーを書かず、通信の失敗を呼び出し元へ返す', async () => {
+  const { repo, calls } = setup();
+  const link = { url: 'https://example.com/', title: '', order: 0 };
+  await assert.rejects(repo.addLessonLink('c1', 'l1', 'bad/key', link, 1), TypeError);
+  await assert.rejects(repo.removeLessonLink('c1', 'l1', 'bad/key', 1), TypeError);
+  await assert.rejects(repo.setLinkOrders('c1', 'l1', { 'bad/key': 0 }, 1), TypeError);
+  assert.equal(calls.update.length, 0);
+  const error = new Error('確認用の通信失敗');
+  const failed = createRepo({ update: async () => { throw error; } });
+  await assert.rejects(failed.addLessonLink('c1', 'l1', 'a', link, 1), (e) => e === error);
+  await assert.rejects(failed.removeLessonLink('c1', 'l1', 'a', 1), (e) => e === error);
+  await assert.rejects(failed.setLinkOrders('c1', 'l1', { a: 0 }, 1), (e) => e === error);
+});
+
 test('授業と資料の編集: updateLesson・addMaterial・setMaterialOrders・removeMaterial は用語を残す', async () => {
   const terms = { term00000001: '光の反射' };
   const { repo, mem } = setup({ lessons: { c1: { l1: { title: '光', terms } } } });
@@ -1125,8 +1171,8 @@ test('listLessons・getLesson: 日付・作成日時の新しい順で、欠け�
   } } });
   const list = await repo.listLessons('c1');
   assert.deepEqual(list.map((x) => x.id), ['l3', 'l2', 'l1', 'bad']);
-  assert.deepEqual(list[2], { id: 'l1', classId: 'c1', date: '2026-11-11', title: '電流', unitId: 'u1', materials, terms: {}, createdAt: 900, updatedAt: 1000 });
-  assert.deepEqual(list[3], { id: 'bad', classId: 'c1', date: '', title: '', unitId: '', materials: {}, terms: {}, createdAt: 0, updatedAt: 0 });
+  assert.deepEqual(list[2], { id: 'l1', classId: 'c1', date: '2026-11-11', title: '電流', unitId: 'u1', materials, links: {}, terms: {}, createdAt: 900, updatedAt: 1000 });
+  assert.deepEqual(list[3], { id: 'bad', classId: 'c1', date: '', title: '', unitId: '', materials: {}, links: {}, terms: {}, createdAt: 0, updatedAt: 0 });
   assert.deepEqual(list[0].materials, {});
   assert.deepEqual(await repo.getLesson('c1', 'l1'), list[2]);
   assert.equal(await repo.getLesson('c1', 'missing'), null);

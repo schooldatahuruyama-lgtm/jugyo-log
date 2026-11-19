@@ -104,7 +104,7 @@ test('確認ページは中つぎの有無で送信先・案内・両方のコ�
       if (enabled) assert.equal(names.indexOf('先生が置いた中つぎ') + 1, names.indexOf('今の保存の仕組み（script.google.com）'));
       await h.get('reach-start').emit('click');
       assert.equal(h.calls.some((c) => c.url === base + '/ping'), enabled);
-      assert.equal(h.calls.length, enabled ? 14 : 13);
+      assert.equal(h.calls.length, enabled ? 16 : 15);
       await h.get('reach-copy').emit('click');
       const reachReport = copyFails ? h.get('reach-report-text').value : h.copies.at(-1);
       assert.ok(reachReport.endsWith('中つぎ: ' + (enabled ? '使っている' : '使っていない')));
@@ -151,9 +151,9 @@ test('ホスティングを指定の位置に表示し、取れないホステ�
     assert.equal(hosts.includes('deno.dev'), false);
     assert.equal(hosts.includes('abc.web.app'), hosting);
     if (hosting) {
-      assert.equal(hosts[8], 'storage.googleapis.com');
-      assert.equal(hosts[9], 'abc.web.app');
-      assert.equal(rows[9].children[0].textContent, 'Firebase のホスティング（web.app）');
+      assert.equal(hosts[10], 'storage.googleapis.com');
+      assert.equal(hosts[11], 'abc.web.app');
+      assert.equal(rows[11].children[0].textContent, 'Firebase のホスティング（web.app）');
     }
   }
 });
@@ -161,7 +161,7 @@ test('ホスティングを指定の位置に表示し、取れないホステ�
 test('行き先の表を作り、二重実行を防ぎ、再実行時はすべて未実施に戻す', async () => {
   let reply = deferred();
   const h = setup({ fetch: () => reply.promise });
-  assert.equal(h.rows.length, 13);
+  assert.equal(h.rows.length, 15);
   assert.ok(h.rows.every((r) => r.textContent === '－ まだ調べていません'));
   const first = h.get('reach-start').emit('click');
   assert.equal(h.calls.length, 4);
@@ -170,8 +170,8 @@ test('行き先の表を作り、二重実行を防ぎ、再実行時はすべ�
   assert.equal(h.calls.length, 4);
   reply.resolve({});
   await first;
-  assert.equal(h.calls.length, 13);
-  assert.equal(h.get('reach-summary').textContent, '○ 13 個・× 0 個・△ 0 個でした。');
+  assert.equal(h.calls.length, 15);
+  assert.equal(h.get('reach-summary').textContent, '○ 15 個・× 0 個・△ 0 個でした。');
   assert.equal(h.get('reach-start').disabled, false);
   assert.equal(h.get('reach-start').textContent, 'もう一度調べる');
   assert.equal(h.get('reach-report-area').hidden, false);
@@ -182,7 +182,7 @@ test('行き先の表を作り、二重実行を防ぎ、再実行時はすべ�
   assert.equal(h.get('reach-summary').textContent, '');
   reply.resolve({});
   await second;
-  assert.equal(h.calls.length, 26);
+  assert.equal(h.calls.length, 30);
   assert.equal(h.timers.size, 0);
 });
 
@@ -203,7 +203,7 @@ test('決まった行から表示し、○・×・△ と集計を出す', async
   h.fireTimers();
   await work;
   assert.equal(h.rows[0].textContent, '△ 返事がありませんでした（10 秒）');
-  assert.equal(h.get('reach-summary').textContent, '○ 11 個・× 1 個・△ 1 個でした。');
+  assert.equal(h.get('reach-summary').textContent, '○ 13 個・× 1 個・△ 1 個でした。');
 });
 
 test('コピーは開始時の場所とブラウザを含み、失敗時は選択済みの欄を出す', async () => {
@@ -256,7 +256,7 @@ test('既存の確認と、どちらから始めても同時に実行できる',
     assert.equal(h.get('start').disabled, false);
     assert.equal(h.get('report-area').hidden, false);
     assert.equal(h.get('reach-report-area').hidden, false);
-    assert.equal(h.get('reach-summary').textContent, '○ 13 個・× 0 個・△ 0 個でした。');
+    assert.equal(h.get('reach-summary').textContent, '○ 15 個・× 0 個・△ 0 個でした。');
     assert.equal(h.timers.size, 0);
   }
 });
@@ -274,8 +274,8 @@ test('pagehide で通信を止め、戻ってから再実行できる', async ()
   assert.equal(h.get('reach-start').disabled, false);
   hang = false;
   await h.get('reach-start').emit('click');
-  assert.equal(h.calls.length, 17);
-  assert.equal(h.get('reach-summary').textContent, '○ 13 個・× 0 個・△ 0 個でした。');
+  assert.equal(h.calls.length, 19);
+  assert.equal(h.get('reach-summary').textContent, '○ 15 個・× 0 個・△ 0 個でした。');
 });
 
 test('空の一覧は通信せず、理由を出す', async () => {
@@ -293,12 +293,12 @@ test('HTTPS でないページは置き場所だけ省き、ほかの行き先�
   assert.equal(h.get('start').disabled, false);
   assert.equal(h.calls.length, 0);
   assert.equal(h.get('reach-summary').textContent, '');
-  assert.equal(h.rows.length, 12);
+  assert.equal(h.rows.length, 14);
   assert.equal(h.get('reach-list').children.some((row) => row.children[0].textContent.includes('このアプリの置き場所')), false);
   await h.get('reach-start').emit('click');
-  assert.equal(h.calls.length, 12);
+  assert.equal(h.calls.length, 14);
   assert.ok(h.calls.every((c) => c.url.startsWith('https://')));
-  assert.equal(h.get('reach-summary').textContent, '○ 12 個・× 0 個・△ 0 個でした。');
+  assert.equal(h.get('reach-summary').textContent, '○ 14 個・× 0 個・△ 0 個でした。');
 });
 
 test('Firebase の設定がないときも、それ以外の行き先は調べられる', async () => {
@@ -306,7 +306,7 @@ test('Firebase の設定がないときも、それ以外の行き先は調べ�
   assert.equal(h.get('start').disabled, true);
   assert.equal(h.get('reach-start').disabled, false);
   await h.get('reach-start').emit('click');
-  assert.equal(h.rows.length, 12);
-  assert.equal(h.calls.length, 12);
-  assert.equal(h.get('reach-summary').textContent, '○ 12 個・× 0 個・△ 0 個でした。');
+  assert.equal(h.rows.length, 14);
+  assert.equal(h.calls.length, 14);
+  assert.equal(h.get('reach-summary').textContent, '○ 14 個・× 0 個・△ 0 個でした。');
 });
