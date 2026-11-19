@@ -154,6 +154,7 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
     const rikaState = `rika/state/${uid}`;
     const rikaLog = `rika/log/${uid}/probe_01`;
     const rikaValue = { v: 1, updatedAt: now(), json: '{}' };
+    const rikaUpdate = { ...rikaValue, base: rikaValue.updatedAt, updatedAt: rikaValue.updatedAt + 1 };
 
     const checks = [
       ['先生として aiSummaries を書く', 'ok', () => teacherNet.set(aiPath, aiSummary)],
@@ -163,9 +164,13 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       ['生徒として入っているクラスの aiSummaries を書く', 'denied', () => net.set(aiPath, aiSummary)],
       ['自分の rika/state に正しい形を書く', 'ok', () => net.set(rikaState, rikaValue)],
       ['自分の rika/state を読む', 'ok', () => net.get(rikaState)],
-      ['json のない rika/state を書く', 'denied', () => net.set(rikaState, { v: 1, updatedAt: rikaValue.updatedAt })],
-      ['知らない項目（extra）のある rika/state を書く', 'denied', () => net.set(rikaState, { ...rikaValue, extra: true })],
-      ['json が 500001 文字の rika/state を書く', 'denied', () => net.set(rikaState, { ...rikaValue, json: 'あ'.repeat(500001) })],
+      ['json のない rika/state を書く', 'denied', () => net.set(rikaState, { v: 1, base: rikaUpdate.base, updatedAt: rikaUpdate.updatedAt })],
+      ['知らない項目（extra）のある rika/state を書く', 'denied', () => net.set(rikaState, { ...rikaUpdate, extra: true })],
+      ['json が 500001 文字の rika/state を書く', 'denied', () => net.set(rikaState, { ...rikaUpdate, json: 'あ'.repeat(500001) })],
+      ['base なしで自分の rika/state を書きかえる', 'denied', () => net.set(rikaState, { ...rikaValue, updatedAt: rikaUpdate.updatedAt })],
+      ['古い base で自分の rika/state を書きかえる', 'denied', () => net.set(rikaState, { ...rikaUpdate, base: rikaValue.updatedAt - 1 })],
+      ['正しい base でも updatedAt が今と同じで自分の rika/state を書きかえる', 'denied', () => net.set(rikaState, { ...rikaUpdate, updatedAt: rikaValue.updatedAt })],
+      ['正しい base とより大きい updatedAt で自分の rika/state を書きかえる', 'ok', () => net.set(rikaState, rikaUpdate)],
       ['自分の rika/log にかたまりを書く', 'ok', () => net.set(rikaLog, '[]')],
       ['すでにある自分の rika/log のかたまりを同じ内容で書き直す', 'denied', () => net.set(rikaLog, '[]')],
       ['自分の rika/log のかたまりを消す', 'denied', () => net.remove(rikaLog)],
@@ -177,7 +182,7 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       ['rika/state 全体を読む', 'denied', () => net.get('rika/state')],
       ['先生として確認用の生徒の rika/state を読む', 'ok', () => teacherNet.get(rikaState)],
       ['先生として確認用の生徒の rika/log を読む', 'ok', () => teacherNet.get(`rika/log/${uid}`)],
-      ['先生として確認用の生徒の rika/state を書きかえる', 'denied', () => teacherNet.set(rikaState, { ...rikaValue, updatedAt: rikaValue.updatedAt + 1 })],
+      ['先生として確認用の生徒の rika/state を書きかえる', 'denied', () => teacherNet.set(rikaState, { ...rikaValue, base: rikaUpdate.updatedAt, updatedAt: rikaUpdate.updatedAt + 1 })],
       ['rika/state/（確認用の生徒の uid）を読む（ログインなし）', 'denied', () => net.getPublic(rikaState)],
       ['gen/s00-999 を読む（ログインなし）', 'ok', () => net.getPublic(`gen/${sid}`)],
       ['gen 全体を読む（ログインなし）', 'denied', () => net.getPublic('gen')],

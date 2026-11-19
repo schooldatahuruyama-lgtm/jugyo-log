@@ -225,11 +225,14 @@ test('理科クエストの state は登録済みの本人が書け、先生は�
 
 test('理科クエストの state は必須項目・型・文字数を検証し、知らない項目は拒む', () => {
   const rule = rules.rika.state.$uid;
-  assert.deepEqual(Object.keys(rule).filter((key) => !key.startsWith('.')).sort(), ['$other', 'json', 'updatedAt', 'v']);
+  assert.deepEqual(Object.keys(rule).filter((key) => !key.startsWith('.')).sort(), ['$other', 'base', 'json', 'updatedAt', 'v']);
+  assert.equal(rule['.validate'], "newData.hasChildren(['v', 'updatedAt', 'json']) && (!data.exists() || (newData.child('base').val() === data.child('updatedAt').val() && newData.child('updatedAt').val() > data.child('updatedAt').val()))");
+  assert.equal(rule.base['.validate'], 'newData.isNumber()');
   const valid = { v: 1, updatedAt: 1, json: '{}' };
   const accepts = (value) => evaluateRikaRule(rule['.validate'], { value })
     && Object.entries(value).every(([key, v]) => evaluateRikaRule((rule[key] || rule.$other)['.validate'], { value: v }));
   for (const json of ['{}', 'あ'.repeat(500000)]) assert.equal(accepts({ ...valid, json }), true);
+  assert.equal(accepts({ ...valid, base: 0 }), true);
   for (const key of ['v', 'updatedAt', 'json']) {
     const value = { ...valid };
     delete value[key];
@@ -237,7 +240,25 @@ test('理科クエストの state は必須項目・型・文字数を検証し�
   }
   for (const value of [{ ...valid, v: 2 }, { ...valid, v: '1' }, { ...valid, updatedAt: '1' },
     { ...valid, json: 1 }, { ...valid, json: '' }, { ...valid, json: 'a' }, { ...valid, json: 'あ'.repeat(500001) },
-    { ...valid, extra: true }]) assert.equal(accepts(value), false);
+    { ...valid, extra: true }, { ...valid, base: '1' }, { ...valid, base: true }, { ...valid, base: false }]) assert.equal(accepts(value), false);
+});
+
+test('理科クエストの state の更新は現在の時刻と同じ base と、より大きい時刻が必要', () => {
+  const rule = rules.rika.state.$uid;
+  for (const before of [{ v: 1, updatedAt: 1000, json: '{}' }, { v: 1, updatedAt: 1000, json: '{}', base: 999 }]) {
+    for (const base of [undefined, 999, 1000, 1001, '1000', true, false]) {
+      for (const updatedAt of [999, 1000, 1001]) {
+        const value = { v: 1, updatedAt, json: '{}', ...(base === undefined ? {} : { base }) };
+        const accepts = evaluateRikaRule(rule['.validate'], { value, before })
+          && Object.entries(value).every(([key, v]) => evaluateRikaRule(rule[key]['.validate'], { value: v }));
+        assert.equal(accepts, base === 1000 && updatedAt > 1000);
+      }
+    }
+    // 削除時は .validate が実行されず、本人・先生の .write で許可される。
+    for (const uid of ['student', 'teacher']) {
+      assert.equal(evaluateRikaRule(rule['.write'], { auth: { uid }, value: null, before }), true);
+    }
+  }
 });
 
 test('理科クエストの log は新規のかたまりだけ書け、同じ内容の上書きと生徒の削除を拒む', () => {

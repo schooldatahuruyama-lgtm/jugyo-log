@@ -313,10 +313,11 @@
         "$uid": {
           ".read": "auth != null && auth.uid === $uid",
           ".write": "auth != null && ((auth.uid === $uid && (root.child('teacherList').child(auth.uid).val() === true || root.child('accounts').child(auth.uid).isString())) || (root.child('teacherList').child(auth.uid).val() === true && !newData.exists()))",
-          ".validate": "newData.hasChildren(['v', 'updatedAt', 'json'])",
+          ".validate": "newData.hasChildren(['v', 'updatedAt', 'json']) && (!data.exists() || (newData.child('base').val() === data.child('updatedAt').val() && newData.child('updatedAt').val() > data.child('updatedAt').val()))",
           "v": { ".validate": "newData.val() === 1" },
           "updatedAt": { ".validate": "newData.isNumber()" },
           "json": { ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 500000" },
+          "base": { ".validate": "newData.isNumber()" },
           "$other": { ".validate": false }
         }
       },
