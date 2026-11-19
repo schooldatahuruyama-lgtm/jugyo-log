@@ -12,6 +12,7 @@ export const PROBE_CLASS_NAME = '（規則の確認用）';
 export const PREPARE_LABEL = '準備';
 export const CLEANUP_LABEL = '片付け';
 
+const PROBE_OTHER_UID = 'rules-probe-other-uid';
 const failRow = (label) => ({ label, expect: 'ok', got: 'error', pass: false });
 // 1 ピクセルの確認用画像。Drive に実物のファイルは作らない。
 const PROBE_THUMB = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
@@ -67,6 +68,7 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
 
   try {
     // 1. 確認用の生徒を発行してログインし、前回の記録を消してから今回の準備をする
+    if (!await removeRika(PROBE_OTHER_UID)) leftoversFailed = true;
     const students = await teacherRepo.listStudents();
     const mine = students.find((s) => s.id === sid) || null;
     // students/<id>/createdAt は、すでにあれば書けない規則なので、無いときだけ書く
@@ -74,6 +76,11 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
     const g = await teacherRepo.getGeneration(sid);
     const generation = typeof g === 'number' && Number.isFinite(g) ? g + 1 : CONFIG.firstGeneration;
     const oldUid = mine && mine.uid ? mine.uid : null;
+    // 発行で uid が変わる前に消す。失敗したら台帳の uid を残し、次回も同じ場所を片付ける。
+    if (oldUid && !await removeRika(oldUid)) {
+      leftoversFailed = true;
+      throw new NetError('denied', '前回の理科クエストの記録を片付けられませんでした');
+    }
     issueTried = true;
     const r = await issuer.issueOne(sid, { generation, oldUid });
     issued = { generation: r.generation };
@@ -144,6 +151,9 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
     const reply = { text: 'あ'.repeat(CONFIG.reply.textMax), updatedAt: now() };
     const aiPath = `aiSummaries/${inId}/${inLessonId}`;
     const aiSummary = { v: 1, createdAt: now(), overview: '規則の確認用のまとめ' };
+    const rikaState = `rika/state/${uid}`;
+    const rikaLog = `rika/log/${uid}/probe_01`;
+    const rikaValue = { v: 1, updatedAt: now(), json: '{}' };
 
     const checks = [
       ['先生として aiSummaries を書く', 'ok', () => teacherNet.set(aiPath, aiSummary)],
@@ -151,6 +161,24 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       ['先生として overview のない aiSummaries を書く', 'denied', () => teacherNet.set(aiPath, { v: 1, createdAt: aiSummary.createdAt })],
       ['生徒として入っているクラスの aiSummaries を読む', 'denied', () => net.get(aiPath)],
       ['生徒として入っているクラスの aiSummaries を書く', 'denied', () => net.set(aiPath, aiSummary)],
+      ['自分の rika/state に正しい形を書く', 'ok', () => net.set(rikaState, rikaValue)],
+      ['自分の rika/state を読む', 'ok', () => net.get(rikaState)],
+      ['json のない rika/state を書く', 'denied', () => net.set(rikaState, { v: 1, updatedAt: rikaValue.updatedAt })],
+      ['知らない項目（extra）のある rika/state を書く', 'denied', () => net.set(rikaState, { ...rikaValue, extra: true })],
+      ['json が 500001 文字の rika/state を書く', 'denied', () => net.set(rikaState, { ...rikaValue, json: 'あ'.repeat(500001) })],
+      ['自分の rika/log にかたまりを書く', 'ok', () => net.set(rikaLog, '[]')],
+      ['すでにある自分の rika/log のかたまりを同じ内容で書き直す', 'denied', () => net.set(rikaLog, '[]')],
+      ['自分の rika/log のかたまりを消す', 'denied', () => net.remove(rikaLog)],
+      // net はパスをそのまま URL に使うため、使えない文字「.」ではなく短すぎる ID で試す。
+      ['id が 7 文字の rika/log を書く', 'denied', () => net.set(`rika/log/${uid}/probe_1`, '[]')],
+      ['ほかの人（確認用の uid）の rika/state を読む', 'denied', () => net.get(`rika/state/${PROBE_OTHER_UID}`)],
+      ['ほかの人（確認用の uid）の rika/state を書く', 'denied', () => net.set(`rika/state/${PROBE_OTHER_UID}`, rikaValue)],
+      ['ほかの人（確認用の uid）の rika/log に書く', 'denied', () => net.set(`rika/log/${PROBE_OTHER_UID}/probe_01`, '[]')],
+      ['rika/state 全体を読む', 'denied', () => net.get('rika/state')],
+      ['先生として確認用の生徒の rika/state を読む', 'ok', () => teacherNet.get(rikaState)],
+      ['先生として確認用の生徒の rika/log を読む', 'ok', () => teacherNet.get(`rika/log/${uid}`)],
+      ['先生として確認用の生徒の rika/state を書きかえる', 'denied', () => teacherNet.set(rikaState, { ...rikaValue, updatedAt: rikaValue.updatedAt + 1 })],
+      ['rika/state/（確認用の生徒の uid）を読む（ログインなし）', 'denied', () => net.getPublic(rikaState)],
       ['gen/s00-999 を読む（ログインなし）', 'ok', () => net.getPublic(`gen/${sid}`)],
       ['gen 全体を読む（ログインなし）', 'denied', () => net.getPublic('gen')],
       ['accounts/（自分の uid）を読む', 'ok', () => net.get(`accounts/${uid}`)],
@@ -277,7 +305,9 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
   const okRecords = await removeRecords();
   const okA = await removeKnown(okRecords);
   const okB = await removeAccount();
-  if (leftoversFailed || !okRecords || !okA || !okB) rows.push(failRow(CLEANUP_LABEL));
+  // 拒否された場合も、応答が失われた場合も、確認専用の uid の記録を消す。
+  const okOtherRika = await removeRika(PROBE_OTHER_UID);
+  if (leftoversFailed || !okRecords || !okA || !okB || !okOtherRika) rows.push(failRow(CLEANUP_LABEL));
   return rows;
 
   // 通常の保存は記録と印を同時に書く。拒否の確認だけは、ほかの規則に隠されないよう 1 か所ずつ試す。
@@ -392,6 +422,13 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
     }
   }
 
+  // 理科クエストの記録は生徒から消せないので、先生として uid ごとに片付ける。
+  async function removeRika(uid) {
+    return await attempt(() => teacherNet.update('', {
+      [`rika/state/${uid}`]: null, [`rika/log/${uid}`]: null,
+    })) === 'ok';
+  }
+
   // (b) 確認用の生徒のアカウントの対応（accounts/<uid>）を消す。
   // uid が分からなければ、台帳（students/s00-999/uid）を読み直す。発行の応答が失われても、
   // 反映されていれば台帳に今回の uid がある。済めば true
@@ -405,8 +442,10 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       }
       const patch = { [`initialPw/${sid}`]: null };
       if (uid) patch[`accounts/${uid}`] = null;
+      // 理科クエストの削除が拒否されても、アカウントの片付けは続ける。
+      const okRika = uid ? await removeRika(uid) : true;
       await teacherNet.update('', patch);
-      return true;
+      return okRika;
     } catch {
       return false;
     }

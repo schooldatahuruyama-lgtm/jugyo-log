@@ -306,6 +306,31 @@
           }
         }
       }
+    },
+    "rika": {
+      "state": {
+        ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && ((auth.uid === $uid && (root.child('teacherList').child(auth.uid).val() === true || root.child('accounts').child(auth.uid).isString())) || (root.child('teacherList').child(auth.uid).val() === true && !newData.exists()))",
+          ".validate": "newData.hasChildren(['v', 'updatedAt', 'json'])",
+          "v": { ".validate": "newData.val() === 1" },
+          "updatedAt": { ".validate": "newData.isNumber()" },
+          "json": { ".validate": "newData.isString() && newData.val().length >= 2 && newData.val().length <= 500000" },
+          "$other": { ".validate": false }
+        }
+      },
+      "log": {
+        ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true && !newData.exists()",
+          "$chunk": {
+            ".write": "auth != null && auth.uid === $uid && !data.exists() && (root.child('teacherList').child(auth.uid).val() === true || root.child('accounts').child(auth.uid).isString())",
+            ".validate": "$chunk.matches(/^[A-Za-z0-9_-]{8,40}$/) && newData.isString() && newData.val().length >= 2 && newData.val().length <= 200000"
+          }
+        }
+      }
     }
   }
 }

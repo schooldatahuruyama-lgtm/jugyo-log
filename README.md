@@ -146,7 +146,7 @@ PDF は 1 つ 10MB まで、資料は 1 つの授業につき 12 個までです
 
 1. [Firebase の手順書](docs/setup/firebase.md) の「9. 本番の規則を貼る」に従い、最新の [rules.json](docs/setup/rules.json) をすべて貼り直して公開します。生徒の添付・手書きの目録と小さい画像の規則が増えています。
 2. [GAS の手順書](docs/setup/gas.md) の「本番用のコードを直したあとに公開し直す」に従い、本番用プロジェクトへ最新の [gas/Code.gs](gas/Code.gs) を貼り、新しい版として同じデプロイを更新します。URL は変えません。確認用の `gas/check/` は変更しません。`ping` が `app-6` を返すことを確かめます。
-3. Claude Code がアプリを公開したあと、「規則の確認」の **107 項目すべてが ○** で、準備・片付けの失敗もないことを確かめます。確認用の記録・添付と手書きの目録・削除時刻・小さい画像は、生徒として消してから授業を片付けます。確認用の先生の返事・目印・AI のまとめは、先生として一緒に消します。
+3. Claude Code がアプリを公開したあと、「規則の確認」の **124 項目すべてが ○** で、準備・片付けの失敗もないことを確かめます。確認用の記録・添付と手書きの目録・削除時刻・小さい画像は、生徒として消してから授業を片付けます。確認用の先生の返事・目印・AI のまとめと、理科クエストの `rika/state/<uid>`・`rika/log/<uid>` は、先生として消します。
 4. 接続確認ページ・Drive・学校の iPad・ほかの生徒から見えないことを、[段階 1b-1 の確認結果](docs/reports/stage1b-1-check.md) の順に確かめ、結果を記録します。練習モードだけでは、本番の公開範囲を確認したことにはなりません。
 
 追加した規則の確認（「先生として」と書かれた行を除き、確認用の生徒として行います）:
@@ -158,6 +158,23 @@ PDF は 1 つ 10MB まで、資料は 1 つの授業につき 12 個までです
 | 先生として `overview` のない AI のまとめを書く | denied |
 | 生徒として入っているクラスの AI のまとめを読む | denied |
 | 生徒として入っているクラスの AI のまとめを書く | denied |
+| 自分の `rika/state/<自分の uid>` に正しい形を書く | ok |
+| 自分の `rika/state/<自分の uid>` を読む | ok |
+| `json` のない `rika/state` を書く | denied |
+| 知らない項目（`extra`）のある `rika/state` を書く | denied |
+| `json` が 500001 文字の `rika/state` を書く | denied |
+| 自分の `rika/log/<自分の uid>/<id>` にかたまりの文字列を書く | ok |
+| すでにある自分の `rika/log` のかたまりを、同じ内容で書き直す | denied |
+| 自分の `rika/log` のかたまりを消す | denied |
+| id が 7 文字の `rika/log` を書く | denied |
+| ほかの人（確認用の uid）の `rika/state` を読む | denied |
+| ほかの人（確認用の uid）の `rika/state` を書く | denied |
+| ほかの人（確認用の uid）の `rika/log` に書く | denied |
+| `rika/state` 全体を読む | denied |
+| 先生として確認用の生徒の `rika/state` を読む | ok |
+| 先生として確認用の生徒の `rika/log` を読む | ok |
+| 先生として確認用の生徒の `rika/state` を書きかえる（消す以外） | denied |
+| ログインなしで `rika/state/<確認用の生徒の uid>` を読む | denied |
 | すでにある `attachments/a1` を、同じ `fileId` で書き直す | ok |
 | すでにある `attachments/a1` を、別の `fileId` で書きかえる | denied |
 | `recThumbs/…/<自分>` に、文字を直接書く | denied |

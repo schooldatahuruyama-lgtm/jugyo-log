@@ -178,12 +178,96 @@ test('最上位の場所が決まりどおり', () => {
   const keys = Object.keys(rules).filter((k) => !k.startsWith('.')).sort();
   assert.deepEqual(keys, [
     'check', 'teacherList', 'gen', 'accounts', 'students', 'counters', 'initialPw', 'aiSummaries',
-    'classes', 'members', 'memberOf', 'units', 'lessons', 'thumbs', 'records', 'recThumbs', 'inkThumbs', 'marks', 'terms', 'replies', 'replyMarks',
+    'classes', 'members', 'memberOf', 'units', 'lessons', 'thumbs', 'records', 'recThumbs', 'inkThumbs', 'marks', 'terms', 'replies', 'replyMarks', 'rika',
   ].sort());
 });
 
 test('check は段階 0 の規則と同じ', () => {
   assert.deepEqual(rules.check, check);
+});
+
+// Firebase そのものではなく、式と値の組み合わせをローカルの代役で確かめる。
+function evaluateRikaRule(rule, { auth = null, uid = 'student', value = null, before = null, chunk = 'probe_01' } = {}) {
+  const root = snapshot({ teacherList: { teacher: true }, accounts: { student: 's00-001', other: 's00-002', invalid: 1 } });
+  const expression = String(rule).replace('$chunk.matches(/^[A-Za-z0-9_-]{8,40}$/)', '/^[A-Za-z0-9_-]{8,40}$/.test($chunk)');
+  return new Function('auth', 'root', '$uid', 'newData', 'data', '$chunk', `return (${expression});`)(
+    auth, root, uid, snapshot(value), snapshot(before), chunk);
+}
+
+test('理科クエストは本人と先生だけが読め、全体を読めるのは先生だけ', () => {
+  assert.deepEqual(Object.keys(rules.rika).sort(), ['log', 'state']);
+  for (const kind of ['state', 'log']) {
+    const rule = rules.rika[kind];
+    assert.equal(rule['.write'], undefined);
+    assert.deepEqual(rulesIn(rule).filter(([, k]) => k === '.read').map(([p]) => p), ['', '$uid']);
+    for (const uid of [null, 'teacher', 'student', 'other', 'unknown']) {
+      const auth = uid === null ? null : { uid };
+      const whole = evaluateRikaRule(rule['.read'], { auth });
+      const own = evaluateRikaRule(rule.$uid['.read'], { auth });
+      assert.equal(whole, uid === 'teacher');
+      assert.equal(whole || own, uid === 'teacher' || uid === 'student');
+    }
+  }
+});
+
+test('理科クエストの state は登録済みの本人が書け、先生はほかの人の削除だけできる', () => {
+  const rule = rules.rika.state.$uid;
+  assert.deepEqual(rulesIn(rules.rika.state).filter(([, k]) => k === '.write').map(([p]) => p), ['$uid']);
+  for (const uid of [null, 'student', 'teacher', 'other', 'unknown', 'invalid']) {
+    const auth = uid === null ? null : { uid };
+    for (const value of [null, { v: 1, updatedAt: 1, json: '{}' }]) {
+      assert.equal(evaluateRikaRule(rule['.write'], { auth, value }),
+        uid === 'student' || uid === 'teacher' && value === null);
+      if (auth) assert.equal(evaluateRikaRule(rule['.write'], { auth, uid, value }), ['student', 'teacher', 'other'].includes(uid));
+    }
+  }
+});
+
+test('理科クエストの state は必須項目・型・文字数を検証し、知らない項目は拒む', () => {
+  const rule = rules.rika.state.$uid;
+  assert.deepEqual(Object.keys(rule).filter((key) => !key.startsWith('.')).sort(), ['$other', 'json', 'updatedAt', 'v']);
+  const valid = { v: 1, updatedAt: 1, json: '{}' };
+  const accepts = (value) => evaluateRikaRule(rule['.validate'], { value })
+    && Object.entries(value).every(([key, v]) => evaluateRikaRule((rule[key] || rule.$other)['.validate'], { value: v }));
+  for (const json of ['{}', 'あ'.repeat(500000)]) assert.equal(accepts({ ...valid, json }), true);
+  for (const key of ['v', 'updatedAt', 'json']) {
+    const value = { ...valid };
+    delete value[key];
+    assert.equal(accepts(value), false);
+  }
+  for (const value of [{ ...valid, v: 2 }, { ...valid, v: '1' }, { ...valid, updatedAt: '1' },
+    { ...valid, json: 1 }, { ...valid, json: '' }, { ...valid, json: 'a' }, { ...valid, json: 'あ'.repeat(500001) },
+    { ...valid, extra: true }]) assert.equal(accepts(value), false);
+});
+
+test('理科クエストの log は新規のかたまりだけ書け、同じ内容の上書きと生徒の削除を拒む', () => {
+  const rule = rules.rika.log.$uid;
+  assert.deepEqual(rulesIn(rules.rika.log).filter(([, k]) => k === '.write').map(([p]) => p), ['$uid', '$uid/$chunk']);
+  for (const uid of [null, 'teacher', 'student', 'other', 'unknown', 'invalid']) {
+    const auth = uid === null ? null : { uid };
+    for (const value of [null, { probe_01: '[]' }]) {
+      assert.equal(evaluateRikaRule(rule['.write'], { auth, value }), uid === 'teacher' && value === null);
+    }
+    for (const before of [null, '[]']) {
+      assert.equal(evaluateRikaRule(rule.$chunk['.write'], { auth, value: '[]', before }), uid === 'student' && before === null);
+      if (auth) assert.equal(evaluateRikaRule(rule.$chunk['.write'], { auth, uid, value: '[]', before }),
+        ['teacher', 'student', 'other'].includes(uid) && before === null);
+    }
+    assert.equal(evaluateRikaRule(rule.$chunk['.write'], { auth, value: null, before: '[]' }), false);
+  }
+});
+
+test('理科クエストの log は 8〜40 文字の id と 2〜200000 文字の文字列だけ通す', () => {
+  const rule = rules.rika.log.$uid.$chunk;
+  for (const chunk of ['aB0_-123', 'a'.repeat(40)]) {
+    for (const value of ['[]', 'あ'.repeat(200000)]) assert.equal(evaluateRikaRule(rule['.validate'], { chunk, value }), true);
+  }
+  for (const chunk of ['a.b', '1234567', 'a'.repeat(41), '1234567.', '1234567/', '1234567あ']) {
+    assert.equal(evaluateRikaRule(rule['.validate'], { chunk, value: '[]' }), false);
+  }
+  for (const value of [1, {}, [], '', 'a', 'あ'.repeat(200001)]) {
+    assert.equal(evaluateRikaRule(rule['.validate'], { value }), false);
+  }
 });
 
 test('AI のまとめは先生だけが読み書きでき、版・時刻・600 文字以内の概要が必要', () => {
