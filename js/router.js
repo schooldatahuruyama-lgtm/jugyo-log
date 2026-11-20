@@ -6,6 +6,7 @@ const ROUTES = {
   login: ['#/login', 'login', 'public'],
   home: ['#/', 'student-home', 'student'],
   lesson: [null, 'student-lesson', 'student'],
+  export: [null, 'student-export', 'student'],
   password: ['#/password', 'password', 'student'],
   't-classes': ['#/t', 'teacher-classes', 'teacher'],
   't-units': ['#/t/units', 'teacher-units', 'teacher'],
@@ -44,6 +45,9 @@ export function parseRoute(hash) {
   if (SIMPLE[h]) return { name: SIMPLE[h], params: {} };
   // #/t/class/<classId> と #/t/class/<classId>/sheet
   const parts = h.split('/');
+  if (parts.length === 3 && parts[0] === '#' && parts[1] === 'export' && CLASS_ID.test(parts[2])) {
+    return { name: 'export', params: { classId: parts[2] } };
+  }
   if (parts.length === 4 && parts[0] === '#' && parts[1] === 'lesson'
       && CLASS_ID.test(parts[2]) && CLASS_ID.test(parts[3])) {
     return { name: 'lesson', params: { classId: parts[2], lessonId: parts[3] } };
@@ -68,6 +72,7 @@ export function parseRoute(hash) {
 }
 
 export function routeHash(name, params = {}) {
+  if (name === 'export') return `#/export/${encodeURIComponent(params.classId)}`;
   if (name === 'home' && params.classId) return `#/?c=${encodeURIComponent(params.classId)}`;
   if (name === 'lesson') return `#/lesson/${encodeURIComponent(params.classId)}/${encodeURIComponent(params.lessonId)}`;
   if (name === 't-lesson') return `#/t/lesson/${encodeURIComponent(params.classId)}/${encodeURIComponent(params.lessonId)}`;

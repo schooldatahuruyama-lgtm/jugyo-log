@@ -24,4 +24,11 @@
   .sheet-table .sheet-name { width: 40%; border-left: 0.5pt solid #888888; border-right: 0.5pt solid #888888; }
   .sheet-pw { font-size: 16pt; }
   .muted { color: #000000; }
+
+  .export-reading { max-width: none; margin: 0; padding: 0; border: 0; box-shadow: none; background: #FFFFFF; color: #000000; }
+  .export-lesson { break-before: page; }
+  .export-cover + .export-lesson { break-before: auto; }
+  .export-reading img { max-width: 100%; max-height: 240mm; width: auto; height: auto; object-fit: contain; break-inside: avoid; }
+  .export-reading h1, .export-reading h2, .export-reading h3, .export-reading h4 { color: #000000; break-after: avoid; }
+  .export-problem { border-color: #000000; color: #000000; background: #FFFFFF; }
 }

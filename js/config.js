@@ -30,6 +30,8 @@ export const CONFIG = {
   // 自分の記録の文字数と、残り文字数を出し始める位置
   recordTextMax: 2000,
   recordCountFrom: 1800,
+  // 記録の書き出し: 一度に作れる授業の数、絵の数、PDF 1 つのページ数、絵の長辺と画質
+  export: { maxLessons: 15, maxPictures: 150, pdfPages: 20, imageEdge: 1200, jpegQuality: 0.8 },
   // 先生の返事の文字数
   reply: { textMax: 400 },
   // 自動保存までの待ち時間と、失敗したときにやり直す間隔

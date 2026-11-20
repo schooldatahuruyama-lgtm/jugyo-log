@@ -9,6 +9,7 @@ const TABLE = [
   ['home', {}, '#/', 'student-home', 'student'],
   ['home', { classId: 'abc' }, '#/?c=abc', 'student-home', 'student'],
   ['lesson', { classId: 'a', lessonId: 'b' }, '#/lesson/a/b', 'student-lesson', 'student'],
+  ['export', { classId: 'A1b2' }, '#/export/A1b2', 'student-export', 'student'],
   ['password', {}, '#/password', 'password', 'student'],
   ['t-classes', {}, '#/t', 'teacher-classes', 'teacher'],
   ['t-units', {}, '#/t/units', 'teacher-units', 'teacher'],
@@ -28,6 +29,14 @@ test('表の 1 行ずつ、parseRoute と routeHash が行き来する', () => {
     assert.equal(routeHash(name, params), hash, name);
     assert.deepEqual(parseRoute(routeHash(name, params)), { name, params }, name);
   }
+});
+
+test('書き出しは英数字のクラス id と、ちょうど 3 部品だけを受けつける', () => {
+  for (const hash of ['#/export', '#/export/', '#/export/a/', '#/export/a/b', '#/export/a-b', '#/export/a_b',
+    '#/export/a%2Fb', '#/export/a?c=b', '#/export/日本語', '#/export/a#b']) {
+    assert.equal(parseRoute(hash).name, 'not-found', hash);
+  }
+  assert.equal(parseRoute(routeHash('export', { classId: 'a/b' })).name, 'not-found');
 });
 
 test('空と # だけは home', () => {
