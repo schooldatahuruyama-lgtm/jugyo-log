@@ -52,9 +52,11 @@ export function mount(root, ctx) {
   });
   const dateButton = el('button', { type: 'button', class: 'btn', text: '日付順', onclick: () => changeOrder('date') });
   const unitButton = el('button', { type: 'button', class: 'btn', text: '単元別', onclick: () => changeOrder('unit') });
+  const exportButton = el('button', { type: 'button', class: 'btn', text: '記録をまとめて保存',
+    onclick: () => { if (current) go('export', { classId: current.id }); } });
   const filters = el('div', { class: 'student-filters', hidden: true },
     el('label', { class: 'field' }, el('span', { class: 'label', text: '年度' }), yearSelect),
-    el('div', { class: 'student-order', role: 'group', 'aria-label': '授業の並べ方' }, dateButton, unitButton));
+    el('div', { class: 'student-order', role: 'group', 'aria-label': '授業の並べ方' }, dateButton, unitButton), exportButton);
   const searchInput = el('input', { id: 'lesson-term-search', type: 'search', placeholder: '用語でさがす（例: 反射）',
     oninput: () => {
       searchClear.hidden = searchInput.value === '';
@@ -135,6 +137,7 @@ export function mount(root, ctx) {
   function syncControls() {
     const busy = navigating || signingOut;
     yearSelect.disabled = busy;
+    exportButton.disabled = busy || !current;
     dateButton.disabled = busy || !ready;
     unitButton.disabled = busy || !ready;
     todoButton.disabled = busy || !ready;

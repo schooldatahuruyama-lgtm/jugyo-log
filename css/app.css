@@ -584,6 +584,28 @@ button.term-pill:disabled { opacity: 0.55; cursor: not-allowed; }
 .ink-message { margin: var(--s-1) 0 0; overflow-wrap: anywhere; }
 .ink-message:empty { display: none; }
 .ink-empty { margin: 0; }
+
+/* 記録の書き出し: 選ぶ部分と、紙として残す読み物 */
+.export-main { max-width: 880px; min-width: 0; }
+.export-controls { min-width: 0; margin: 0 0 20px; padding: 16px; border: 1px solid var(--c-line); border-radius: 12px; }
+.export-controls legend { font-weight: 700; }
+.export-controls select { width: 100%; min-width: 0; max-width: 100%; }
+.export-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.export-page button { min-height: 44px; max-width: 100%; white-space: normal; }
+.export-check { display: flex; align-items: center; gap: 10px; min-height: 44px; overflow-wrap: anywhere; }
+.export-check input { flex: 0 0 auto; width: 20px; height: 20px; }
+.export-reading { box-sizing: border-box; width: 100%; max-width: 800px; margin: 20px auto; padding: 24px; background: #FFFFFF; color: #111111; border: 1px solid #D5D5D5; border-radius: 4px; overflow-wrap: anywhere; }
+.export-reading img { display: block; max-width: 100%; height: auto; margin: 12px 0; }
+.export-cover { border-bottom: 2px solid #333333; padding-bottom: 16px; }
+.export-lesson { margin-top: 28px; }
+.export-reading h2, .export-reading h3, .export-reading h4 { margin-top: 20px; }
+.export-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.export-problem { border: 2px solid #9A4427; padding: 12px; background: #FFF7EF; color: #673019; white-space: pre-wrap; overflow-wrap: anywhere; }
+.export-tools, .export-steps { overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  .export-reading { padding: 16px; }
+  .export-controls { padding: 12px; }
+}
 .student-lesson-reflection .ink-tools { border-color: var(--reflect); background: var(--reflect-bg); }
 .student-lesson-reflection .ink-tool,
 .student-lesson-reflection .ink-paper,
