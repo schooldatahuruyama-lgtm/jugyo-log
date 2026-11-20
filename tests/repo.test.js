@@ -54,6 +54,40 @@ function setup(initial = null) {
 
 const writes = (calls) => calls.set.length + calls.update.length + calls.remove.length;
 
+test('クラスの理科の単元は、形を確かめて読み、保存・削除できる', async () => {
+  const { repo, mem, calls } = setup();
+  assert.equal(await repo.getClassUnit('c1'), null);
+  assert.deepEqual(await repo.listClassUnits(), {});
+  await repo.setClassUnit('c1', 'light');
+  assert.deepEqual(calls.set, [['rika/classUnit/c1', 'light']]);
+  assert.equal(await repo.getClassUnit('c1'), 'light');
+  await repo.setClassUnit('c2', 'unknown-unit');
+  await repo.setClassUnit('c3', 'a'.repeat(40));
+  for (const value of [1, '', {}, [], 'a'.repeat(41), 'Light', 'a_b']) {
+    await mem.set('rika/classUnit/bad', value);
+    assert.equal(await repo.getClassUnit('bad'), null);
+    assert.deepEqual(await repo.listClassUnits(), { c1: 'light', c2: 'unknown-unit', c3: 'a'.repeat(40) });
+  }
+  assert.ok(calls.get.some(([path]) => path === 'rika/classUnit/c1'));
+  assert.ok(calls.get.some(([path]) => path === 'rika/classUnit'));
+  await repo.setClassUnit('c1', null);
+  assert.deepEqual(calls.remove, [['rika/classUnit/c1']]);
+  assert.equal(await mem.get('rika/classUnit/c1'), null);
+});
+
+test('クラスの理科の単元は、不正な入力やキーを一度も書かない', async () => {
+  const { repo, calls } = setup();
+  for (const value of [undefined, 1, true, '', {}, [], 'a'.repeat(41), 'Light', 'a/b', 'light\n']) {
+    await assert.rejects(repo.setClassUnit('c1', value), TypeError);
+  }
+  for (const id of ['', null, 'a/b']) {
+    await assert.rejects(repo.setClassUnit(id, 'light'), TypeError);
+    await assert.rejects(repo.setClassUnit(id, null), TypeError);
+    await assert.rejects(repo.getClassUnit(id), TypeError);
+  }
+  assert.equal(writes(calls), 0);
+});
+
 test('AI のまとめを整えて保存・読み取り・上書きし、授業と同じ update で消す', async () => {
   const { repo, calls, mem } = setup();
   const summary = { overview: ' 見本のまとめ ', questionGroups: [], misconceptions: [], nextLesson: [], followUp: [{ number: '名前の見本', reason: '説明' }] };

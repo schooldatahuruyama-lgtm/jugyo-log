@@ -13,6 +13,7 @@ export const PREPARE_LABEL = '準備';
 export const CLEANUP_LABEL = '片付け';
 
 const PROBE_OTHER_UID = 'rules-probe-other-uid';
+const PROBE_NO_CLASS = 'rules-probe-no-class';
 const failRow = (label) => ({ label, expect: 'ok', got: 'error', pass: false });
 // 1 ピクセルの確認用画像。Drive に実物のファイルは作らない。
 const PROBE_THUMB = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
@@ -63,6 +64,7 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
   let classesMade = false;
   let unitTried = false;
   let leftoversFailed = false;
+  let keepLeftoverMemberships = false;
   const recordCleanup = new Map(); // 書けた場所と、応答が失われて書けたかもしれない場所
   const rows = [];
 
@@ -294,6 +296,17 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       ['PDF の置き場所に写真の ink/a2 を書く', 'denied', () => writeInk('a2', { ...ink, on: 'probe-pdf', updatedAt: ink.updatedAt + 1 })],
       ['自分の inkPages/a2/p1 を前より古い時刻で書く', 'denied', () => writePageInk('a2', 'p1', { ...ink, on: 'probe-pdf', updatedAt: ink.updatedAt - 1 })],
       ['授業の PDF の資料と同じ on で inkPages/（資料）/p1 を書く', 'ok', () => writePageInk(pdfMaterialId, 'p1', { ...ink, on: 'probe-pdf' })],
+      ['先生として入っているクラスの rika/classUnit に light を書く', 'ok', () => teacherNet.set(`rika/classUnit/${inId}`, 'light')],
+      ['先生として入っていないクラスの rika/classUnit に sound を書く', 'ok', () => teacherNet.set(`rika/classUnit/${outId}`, 'sound')],
+      ['自分のクラスの rika/classUnit を読む', 'ok', () => net.get(`rika/classUnit/${inId}`)],
+      ['入っていないクラスの rika/classUnit を読む', 'denied', () => net.get(`rika/classUnit/${outId}`)],
+      ['rika/classUnit 全体を読む（生徒）', 'denied', () => net.get('rika/classUnit')],
+      ['自分のクラスの rika/classUnit を書きかえる（生徒）', 'denied', () => net.set(`rika/classUnit/${inId}`, 'sound')],
+      ['自分のクラスの rika/classUnit を消す（生徒）', 'denied', () => net.remove(`rika/classUnit/${inId}`)],
+      ['rika/classUnit を読む（ログインなし）', 'denied', () => net.getPublic(`rika/classUnit/${inId}`)],
+      ['先生として rika/classUnit に数を書く', 'denied', () => teacherNet.set(`rika/classUnit/${inId}`, 1)],
+      ['先生として無いクラスの rika/classUnit に書く', 'denied', () => teacherNet.set(`rika/classUnit/${PROBE_NO_CLASS}`, 'light')],
+      ['先生として rika/classUnit 全体を読む', 'ok', () => teacherNet.get('rika/classUnit')],
     ];
     for (const [label, expect, fn] of checks) {
       const got = await attempt(fn);
@@ -354,17 +367,23 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
   // - 年度 0 の単元（名前を書きかえられていても消す）
   // - memberOf/s00-999 の下のクラス ID（classes に無くても）の members/<ID>/s00-999 と、memberOf/s00-999
   async function removeLeftovers() {
-    const old = (await teacherRepo.listClasses()).filter((c) => c.year === 0);
+    const classes = await teacherRepo.listClasses();
+    const old = classes.filter((c) => c.year === 0);
     const units = await teacherRepo.listUnits(0);
     const of = await teacherNet.get(`memberOf/${sid}`);
     const ofIds = of !== null && typeof of === 'object' && !Array.isArray(of) ? Object.keys(of) : [];
-    if (old.length === 0 && ofIds.length === 0 && units.length === 0) return;
     const patch = {};
+    const unitPatch = { [`rika/classUnit/${PROBE_NO_CLASS}`]: null };
     let recordsRemoved = true;
     if (old.length > 0 || ofIds.length > 0) patch[`memberOf/${sid}`] = null;
-    for (const id of ofIds) patch[`members/${id}/${sid}`] = null;
+    for (const id of ofIds) {
+      patch[`members/${id}/${sid}`] = null;
+      // 確認用の生徒が本物のクラスに入っていても、そのクラスの単元は消さない。
+      if (!classes.some((c) => c.id === id && c.year !== 0)) unitPatch[`rika/classUnit/${id}`] = null;
+    }
     for (const c of old) {
       patch[`classes/${c.id}`] = null;
+      unitPatch[`rika/classUnit/${c.id}`] = null;
       patch[`members/${c.id}`] = null;
       patch[`thumbs/${c.id}`] = null;
       patch[`replies/${c.id}`] = null;
@@ -392,11 +411,23 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
     for (const u of units) patch[`units/${u.id}`] = null;
     // 消せなかった記録を次の回に片付けられるよう、クラス・授業・所属を残す。
     if (!recordsRemoved) throw new NetError('denied', '前回の記録を片付けられませんでした');
-    await teacherNet.update('', patch);
+    // 単元の規則が古くても、ほかの片付けと今回の確認は続ける。
+    const unitsResult = await attempt(() => teacherNet.update('', unitPatch));
+    if (unitsResult !== 'ok') leftoversFailed = true;
+    // 通信失敗などでは、単元を次回も見つけられるようクラス・授業・所属を残す。
+    if (unitsResult === 'error') {
+      keepLeftoverMemberships = true;
+      return;
+    }
+    if (Object.keys(patch).length > 0) await teacherNet.update('', patch);
   }
 
   // (a) 確認用のクラス 2 つ・授業・資料・単元・members・memberOf・initialPw を消し、gen を戻す。済めば true
   async function removeKnown(recordsRemoved) {
+    const unitPatch = { [`rika/classUnit/${PROBE_NO_CLASS}`]: null };
+    if (classesMade) for (const { classId } of targets) unitPatch[`rika/classUnit/${classId}`] = null;
+    const unitsResult = await attempt(() => teacherNet.update('', unitPatch));
+    let ok = true;
     try {
       const patch = {};
       // 拒否のはずの書きこみが通った場合や、応答だけ失われた場合も、先生として返事と目印を消す。
@@ -407,24 +438,29 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
           patch[`replyMarks/${sid}/${classId}`] = null;
         }
       }
-      // 生徒の片付けに失敗したときは、次の回に必要なクラス・授業・所属を残す。
-      if (classesMade && recordsRemoved) {
+      // 生徒の片付けや単元の通信に失敗したときは、次の回に必要なクラス・授業・所属を残す。
+      if (classesMade && recordsRemoved && unitsResult !== 'error') {
         for (const { classId: id, lessonId } of targets) {
           patch[`classes/${id}`] = null;
           patch[`members/${id}`] = null;
           patch[`lessons/${id}/${lessonId}`] = null;
           patch[`thumbs/${id}`] = null;
         }
-        patch[`memberOf/${sid}`] = null;
+        // 準備で残した所属は消さず、今回のクラスの分だけ片付ける。
+        if (keepLeftoverMemberships) {
+          for (const { classId } of targets) patch[`memberOf/${sid}/${classId}`] = null;
+        } else {
+          patch[`memberOf/${sid}`] = null;
+        }
       }
       if (unitTried) patch[`units/${unitId}`] = null;
       if (issueTried) patch[`initialPw/${sid}`] = null;
       if (issued) patch[`gen/${sid}`] = issued.generation; // 書きかえの確かめの前の値に戻す
       if (Object.keys(patch).length > 0) await teacherNet.update('', patch);
-      return true;
     } catch {
-      return false;
+      ok = false;
     }
+    return ok && unitsResult === 'ok';
   }
 
   // 理科クエストの記録は生徒から消せないので、先生として uid ごとに片付ける。

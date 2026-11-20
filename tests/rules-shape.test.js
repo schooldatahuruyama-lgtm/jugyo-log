@@ -194,8 +194,34 @@ function evaluateRikaRule(rule, { auth = null, uid = 'student', value = null, be
     auth, root, uid, snapshot(value), snapshot(before), chunk);
 }
 
+test('理科のクラスの単元は先生と所属生徒だけが読み、先生だけが正しい値を書ける', () => {
+  const rule = rules.rika.classUnit;
+  const root = snapshot({ teacherList: { teacher: true }, accounts: { student: 's00-001', other: 's00-002' },
+    memberOf: { 's00-001': { c1: true }, 's00-002': { c2: true } }, classes: { c1: { year: 2026 }, c2: { year: 2026 } } });
+  const evaluate = (expression, uid, classId, value) => new Function('auth', 'root', '$classId', 'newData',
+    `return (${String(expression).replace('newData.val().matches(/^[a-z0-9-]{1,40}$/)', '/^[a-z0-9-]{1,40}$/.test(newData.val())')});`)(
+    uid === null ? null : { uid }, root, classId, snapshot(value));
+  assert.equal(rule['.write'], undefined);
+  assert.deepEqual(Object.keys(rule.$classId).sort(), ['.read', '.validate', '.write']);
+  for (const uid of ['teacher', 'student', 'other', 'unknown', null]) {
+    assert.equal(evaluate(rule['.read'], uid), uid === 'teacher');
+    for (const classId of ['c1', 'c2', 'missing']) {
+      assert.equal(evaluate(rule.$classId['.read'], uid, classId),
+        uid === 'teacher' || uid === 'student' && classId === 'c1' || uid === 'other' && classId === 'c2');
+      for (const value of [null, 'light', 'unknown-unit', 'a'.repeat(40), 'a'.repeat(41), '', 1, {}, 'Light', 'a_b']) {
+        const write = evaluate(rule.$classId['.write'], uid, classId, value);
+        assert.equal(write, uid === 'teacher' && (value === null || classId !== 'missing'));
+        const valid = value === null || evaluate(rule.$classId['.validate'], uid, classId, value);
+        assert.equal(valid, value === null || ['light', 'unknown-unit', 'a'.repeat(40)].includes(value));
+        assert.equal(write && valid, uid === 'teacher' && (value === null
+          || classId !== 'missing' && ['light', 'unknown-unit', 'a'.repeat(40)].includes(value)));
+      }
+    }
+  }
+});
+
 test('理科クエストは本人と先生だけが読め、全体を読めるのは先生だけ', () => {
-  assert.deepEqual(Object.keys(rules.rika).sort(), ['log', 'state']);
+  assert.deepEqual(Object.keys(rules.rika).sort(), ['classUnit', 'log', 'state']);
   for (const kind of ['state', 'log']) {
     const rule = rules.rika[kind];
     assert.equal(rule['.write'], undefined);

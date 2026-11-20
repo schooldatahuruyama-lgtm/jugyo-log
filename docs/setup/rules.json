@@ -308,6 +308,14 @@
       }
     },
     "rika": {
+      "classUnit": {
+        ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+        "$classId": {
+          ".read": "auth != null && (root.child('teacherList').child(auth.uid).val() === true || root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true)",
+          ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true && (!newData.exists() || root.child('classes').child($classId).exists())",
+          ".validate": "newData.isString() && newData.val().matches(/^[a-z0-9-]{1,40}$/)"
+        }
+      },
       "state": {
         ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
         "$uid": {

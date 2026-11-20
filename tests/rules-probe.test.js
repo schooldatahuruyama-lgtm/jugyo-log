@@ -86,7 +86,7 @@ function validReply(value) {
     && Object.keys(value).every((key) => ['text', 'seen', 'updatedAt'].includes(key));
 }
 
-function fakeTeacherNet({ failUpdate = () => false, data = {}, answer = () => undefined } = {}) {
+function fakeTeacherNet({ failUpdate = () => false, data = {}, answer = () => undefined, classExists = () => false } = {}) {
   const calls = [];
   return {
     calls,
@@ -101,6 +101,7 @@ function fakeTeacherNet({ failUpdate = () => false, data = {}, answer = () => un
       calls.push(['set', path, value]);
       const a = answer('set', path, value) ?? (path.startsWith('records/')
         || path.startsWith('rika/state/')
+        || path.startsWith('rika/classUnit/') && (typeof value !== 'string' || !/^[a-z0-9-]{1,40}$/.test(value) || !classExists(path.split('/')[2]))
         || path.startsWith('replies/') && !validReply(value)
         || path.startsWith('aiSummaries/') && !validAiSummary(value) ? 'denied' : 'ok');
       if (a instanceof Error) throw a;
@@ -108,6 +109,9 @@ function fakeTeacherNet({ failUpdate = () => false, data = {}, answer = () => un
     },
     async update(path, patch) {
       calls.push(['update', path, patch]);
+      const a = answer('update', path, patch);
+      if (a instanceof Error) throw a;
+      if (a === 'denied') throw new NetError('denied', '権限がありません');
       // 本番の規則は授業 1 件から下にだけ書きこみを許す。クラス単位の削除は通らない。
       if (Object.keys(patch).some((p) => /^lessons\/[^/]+$/.test(p))) throw new NetError('denied', '権限がありません');
       if (failUpdate(patch)) throw new NetError('network', 'つながりません');
@@ -137,6 +141,9 @@ function fakeIssuer(repo, { throwAfterLink = false, returnUid = false } = {}) {
 // 規則が正しいときの答え（'ok' か 'denied'）
 function correctAnswer(method, path, repo, value, chunks, states) {
   const inId = repo.state.members[0] && repo.state.members[0].classId;
+  if (path === 'rika/classUnit' || path.startsWith('rika/classUnit/')) {
+    return method === 'get' && path === `rika/classUnit/${inId}` ? 'ok' : 'denied';
+  }
   if (path.startsWith('rika/')) {
     if (method === 'get') return path === `rika/state/${STUDENT_UID}` ? 'ok' : 'denied';
     if (method === 'set' && path === `rika/state/${STUDENT_UID}` && validRikaState(value, states.get(path))) {
@@ -220,6 +227,7 @@ function setup({
   const teacherRepo = fakeTeacherRepo({ generation, students, classes, units, lessons, listStudentsFails, failPrepare });
   // updateFails: 片付けの書きこみ（null を含むもの）をすべて失敗させる
   const teacherNet = fakeTeacherNet({
+    classExists: (id) => [...teacherRepo.state.existing, ...teacherRepo.state.classes].some((c) => c.id === id),
     failUpdate: failUpdate || ((patch) => updateFails && Object.values(patch).includes(null)),
     data: { ...Object.fromEntries(classes.map((c) => [`lessons/${c.id}`,
       Object.fromEntries(lessons.filter((l) => l.classId === c.id).map((l) => [l.id, true]))])), ...teacherData },
@@ -401,7 +409,237 @@ function pageChecks(repo) {
   ];
 }
 
-const LABEL_COUNT = 128;
+const LABEL_COUNT = 139;
+
+function classUnitChecks(repo) {
+  const inside = `rika/classUnit/${repo.state.members[0].classId}`;
+  const outside = `rika/classUnit/${repo.state.classes.find((c) => c.id !== repo.state.members[0].classId).id}`;
+  return [
+    ['teacher', 'set', inside, 'ok', 'light'],
+    ['teacher', 'set', outside, 'ok', 'sound'],
+    ['student', 'get', inside, 'ok'],
+    ['student', 'get', outside, 'denied'],
+    ['student', 'get', 'rika/classUnit', 'denied'],
+    ['student', 'set', inside, 'denied', 'sound'],
+    ['student', 'remove', inside, 'denied'],
+    ['student', 'getPublic', inside, 'denied'],
+    ['teacher', 'set', inside, 'denied', 1],
+    ['teacher', 'set', 'rika/classUnit/rules-probe-no-class', 'denied', 'light'],
+    ['teacher', 'get', 'rika/classUnit', 'ok'],
+  ];
+}
+
+test('クラスの理科の単元の 11 行は末尾で、指定の順・権限・値を試して片付ける', async () => {
+  const calls = [];
+  const record = (who) => (m, p, repo, v) => {
+    if (p === 'rika/classUnit' || p.startsWith('rika/classUnit/')) calls.push([who, m, p, v]);
+  };
+  const s = setup({ override: record('student'), overrideTeacher: record('teacher') });
+  const rows = await runRulesProbe(s.args);
+  const expected = classUnitChecks(s.teacherRepo);
+  assert.equal(rows.length, LABEL_COUNT);
+  assert.ok(rows.every((r) => r.pass));
+  assert.equal(calls.length, 11);
+  expected.forEach(([who, method, path, expect, value], i) => {
+    assert.deepEqual(calls[i], [who, method, path, value]);
+    assert.equal(rows[128 + i].expect, expect);
+    assert.match(rows[128 + i].label, /rika\/classUnit/);
+  });
+  for (const cls of s.teacherRepo.state.classes) assert.equal(cleanupPatch(s.teacherNet)[`rika/classUnit/${cls.id}`], null);
+  assert.equal(cleanupPatch(s.teacherNet)['rika/classUnit/rules-probe-no-class'], null);
+});
+
+for (const index of [3, 4, 5, 6, 7, 8, 9]) {
+  test(`クラスの理科の単元: 拒否されるはずの ${index + 1} 行目が通ると不合格`, async () => {
+    const override = (who) => (m, p, repo, v) => {
+      if (repo.state.members.length === 0) return;
+      const [actor, method, path, , value] = classUnitChecks(repo)[index];
+      if (who === actor && m === method && p === path && v === value) return 'ok';
+    };
+    const s = setup({ override: override('student'), overrideTeacher: override('teacher') });
+    const rows = await runRulesProbe(s.args);
+    assert.equal(rows.length, LABEL_COUNT);
+    assert.equal(rows[128 + index].pass, false);
+    assert.equal(rows[128 + index].got, 'ok');
+  });
+}
+
+test('クラスの理科の単元: 前回分・今回分・無いクラスの分を片付け、ほかのクラスは残す', async () => {
+  const s = recordCleanupSetup({ initial: {
+    classes: { old: { year: 0, name: '確認用' }, keep: { year: 2026, name: '見本' } },
+    memberOf: { 's00-999': { orphan: true, keep: true } },
+    rika: { classUnit: { old: 'light', orphan: 'sound', keep: 'weather', 'rules-probe-no-class': 'light' } },
+  } });
+  const rows = await runRulesProbe(s.args);
+  assert.equal(rows.length, LABEL_COUNT);
+  assert.deepEqual(await s.mem.get('rika/classUnit'), { keep: 'weather' });
+  const patches = s.events.filter(([who, method]) => who === '先生' && method === 'update').map(([, , , patch]) => patch);
+  const created = s.events.filter(([who, method, path]) => who === '先生' && method === 'set' && path.startsWith('classes/'));
+  for (const [, , path] of created) assert.ok(patches.some((patch) => patch[path.replace('classes/', 'rika/classUnit/')] === null));
+});
+
+test('クラスの理科の単元: 古い規則で書きこみと削除が拒否されても、139 項目を確認する', async () => {
+  const s = setup({ overrideTeacher: (m, p, repo, v) => {
+    if (m === 'set' && p.startsWith('rika/classUnit/')
+      || m === 'update' && Object.keys(v).some((key) => key.startsWith('rika/classUnit/'))) return 'denied';
+  } });
+  const rows = await runRulesProbe(s.args);
+  assert.equal(rows.length, LABEL_COUNT + 1);
+  assert.ok(rows.slice(0, 128).every((r) => r.pass));
+  classUnitChecks(s.teacherRepo).forEach(([who, method, , expect], i) => {
+    const row = rows[128 + i];
+    assert.equal(row.expect, expect);
+    assert.equal(row.pass, !(who === 'teacher' && method === 'set' && expect === 'ok'));
+    if (who === 'teacher' && method === 'set') assert.equal(row.got, 'denied');
+  });
+  assert.deepEqual(rows.at(-1), { label: '片付け', expect: 'ok', got: 'error', pass: false });
+});
+
+for (const hasLeftovers of [false, true]) {
+  test(`クラスの理科の単元: 削除が続けて拒否されても、${hasLeftovers ? '前回の残りと' : ''}今回のクラスなどを消す`, async () => {
+    const initial = { classes: { keep: { year: 2026, name: '残す見本' } } };
+    if (hasLeftovers) Object.assign(initial, {
+      classes: { ...initial.classes, old: { year: 0, name: '確認用' } },
+      lessons: { old: { lesson: { title: '確認用' } } },
+      members: { old: { 's00-999': 1 } }, memberOf: { 's00-999': { old: true } },
+      units: { oldUnit: { year: 0, name: '確認用' } }, thumbs: { old: { lesson: { material: '確認用' } } },
+      records: { old: { lesson: { 's00-999': { memo: '確認用' } } } },
+      marks: { 's00-999': { old: { lesson: 1 } } }, terms: { 's00-999': { old: { lesson: { t1: '確認用' } } } },
+    });
+    const s = recordCleanupSetup({ initial, denyClassUnitWrites: true });
+    const expected = await runRulesProbe(setup().args);
+    for (let i = 0; i < 2; i++) {
+      const rows = await runRulesProbe(s.args);
+      assert.equal(rows.length, LABEL_COUNT + 1);
+      assert.deepEqual(rows.slice(0, LABEL_COUNT).map(({ label, expect }) => [label, expect]),
+        expected.map(({ label, expect }) => [label, expect]));
+      assert.deepEqual(rows.at(-1), { label: '片付け', expect: 'ok', got: 'error', pass: false });
+      for (const row of rows.slice(128, 130)) {
+        assert.equal(row.expect, 'ok'); assert.equal(row.got, 'denied'); assert.equal(row.pass, false);
+      }
+      assert.deepEqual(await s.mem.get('classes'), { keep: initial.classes.keep });
+      for (const path of ['lessons', 'members', 'memberOf', 'units', 'thumbs', 'records', 'marks', 'terms',
+        'replies', 'replyMarks', 'aiSummaries', 'recThumbs', 'inkThumbs', 'accounts', 'initialPw', 'rika/classUnit']) {
+        assert.equal(await s.mem.get(path), null, path);
+      }
+    }
+    const updates = s.events.filter(([who, method]) => who === '先生' && method === 'update');
+    const unitUpdates = updates.filter(([, , , patch]) => Object.keys(patch).some((p) => p.startsWith('rika/classUnit/')));
+    assert.equal(unitUpdates.length, 4, '各回の準備と終了で、単元の削除を別々に試す');
+    for (const update of unitUpdates) {
+      const patch = update[3];
+      assert.ok(Object.keys(patch).every((p) => p.startsWith('rika/classUnit/')));
+      for (const p of Object.keys(patch)) {
+        const id = p.split('/')[2];
+        if (id === 'rules-probe-no-class') continue;
+        assert.ok(updates.slice(updates.indexOf(update) + 1)
+          .some(([, , , later]) => later[`classes/${id}`] === null), '単元を先に削除してからクラスを消す');
+      }
+    }
+  });
+}
+
+test('クラスの理科の単元: 準備中だけ削除が失敗しても、最後に片付けの失敗を出す', async () => {
+  let cleanups = 0;
+  const s = setup({ overrideTeacher: (m, p, repo, v) => {
+    if (m === 'update' && Object.keys(v).some((key) => key.startsWith('rika/classUnit/'))
+      && ++cleanups === 1) return 'denied';
+  } });
+  const rows = await runRulesProbe(s.args);
+  assert.equal(cleanups, 2);
+  assert.equal(rows.length, LABEL_COUNT + 1);
+  assert.ok(rows.slice(0, LABEL_COUNT).every((r) => r.pass));
+  assert.deepEqual(rows.at(-1), { label: '片付け', expect: 'ok', got: 'error', pass: false });
+});
+
+test('クラスの理科の単元: 削除だけが通信で失敗しても、クラスと所属を残して次の実行で片付ける', async (t) => {
+  for (const failures of [1, 2]) {
+    await t.test(`${failures} 回失敗してから成功`, async () => {
+      let cleanups = 0;
+      const s = recordCleanupSetup({ failClassUnitCleanup: () => {
+        cleanups += 1;
+        return cleanups >= 2 && cleanups <= failures + 1;
+      } });
+      const expected = await runRulesProbe(setup().args);
+      const first = await runRulesProbe(s.args);
+      assert.equal(first.length, LABEL_COUNT + 1);
+      assert.deepEqual(first.slice(0, LABEL_COUNT).map(({ label, expect }) => [label, expect]),
+        expected.map(({ label, expect }) => [label, expect]));
+      assert.ok(first.slice(128, LABEL_COUNT).every((r) => r.pass));
+      assert.deepEqual(first.at(-1), { label: '片付け', expect: 'ok', got: 'error', pass: false });
+      const units = await s.mem.get('rika/classUnit');
+      assert.deepEqual(Object.values(units).sort(), ['light', 'sound']);
+      const classes = await s.mem.get('classes');
+      assert.deepEqual(Object.keys(classes).sort(), Object.keys(units).sort());
+      const members = await s.mem.get('members');
+      const memberOf = await s.mem.get('memberOf/s00-999');
+      const classId = Object.keys(memberOf)[0];
+      assert.equal(memberOf[classId], true);
+      assert.equal(members[classId]['s00-999'], 1);
+      for (const id of Object.keys(classes)) assert.notEqual(await s.mem.get(`lessons/${id}`), null);
+      for (const path of ['records', 'marks', 'terms', 'recThumbs', 'inkThumbs', 'accounts', 'initialPw', 'rika/state', 'rika/log']) {
+        assert.equal(await s.mem.get(path), null, path);
+      }
+      if (failures === 2) {
+        // 準備の削除だけが失敗しても 139 項目を続け、最後に前回の所属まで消さない。
+        const second = await runRulesProbe(s.args);
+        assert.equal(second.length, LABEL_COUNT + 1);
+        assert.deepEqual(second.slice(0, LABEL_COUNT), first.slice(0, LABEL_COUNT));
+        assert.deepEqual(second.at(-1), { label: '片付け', expect: 'ok', got: 'error', pass: false });
+        assert.deepEqual(await s.mem.get('rika/classUnit'), units);
+        assert.deepEqual(await s.mem.get('classes'), classes);
+        assert.deepEqual(await s.mem.get('members'), members);
+        assert.deepEqual(await s.mem.get('memberOf/s00-999'), memberOf);
+      }
+      const start = s.events.length;
+      const last = await runRulesProbe(s.args);
+      assert.equal(last.length, LABEL_COUNT);
+      assert.deepEqual(last, first.slice(0, LABEL_COUNT));
+      for (const path of ['rika/classUnit', 'classes', 'members', 'memberOf', 'lessons', 'thumbs', 'units']) {
+        assert.equal(await s.mem.get(path), null, path);
+      }
+      const events = s.events.slice(start);
+      const createClass = events.findIndex(([who, method, path]) => who === '先生' && method === 'set' && path.startsWith('classes/'));
+      for (const id of Object.keys(classes)) {
+        const removeUnit = events.findIndex(([who, method, , patch]) => who === '先生' && method === 'update'
+          && patch[`rika/classUnit/${id}`] === null);
+        const removeClass = events.findIndex(([who, method, , patch]) => who === '先生' && method === 'update'
+          && patch[`classes/${id}`] === null);
+        assert.ok(removeUnit >= 0 && removeUnit < removeClass && removeClass < createClass, '準備中に単元、クラスの順で消す');
+      }
+    });
+  }
+});
+
+test('クラスの理科の単元: 削除で NetError 以外の例外が出ても、クラスと所属を残す', async () => {
+  let cleanups = 0;
+  const s = recordCleanupSetup({ failClassUnitCleanup: () => {
+    if (++cleanups === 2) throw new TypeError('確認用の失敗');
+    return false;
+  } });
+  const rows = await runRulesProbe(s.args);
+  assert.equal(rows.length, LABEL_COUNT + 1);
+  assert.deepEqual(rows.at(-1), { label: '片付け', expect: 'ok', got: 'error', pass: false });
+  assert.equal(Object.keys(await s.mem.get('classes')).length, 2);
+  const classId = Object.keys(await s.mem.get('memberOf/s00-999'))[0];
+  assert.equal(await s.mem.get(`members/${classId}/s00-999`), 1);
+  assert.equal(await s.mem.get(`rika/classUnit/${classId}`), 'light');
+});
+
+test('クラスの理科の単元: 単元を消したあとにクラスの削除が失敗しても、次回にクラスを消す', async () => {
+  const s = recordCleanupSetup({ failTeacherCleanup: true });
+  const rows = await runRulesProbe(s.args);
+  assert.equal(rows.length, LABEL_COUNT + 1);
+  assert.deepEqual(rows.at(-1), { label: '片付け', expect: 'ok', got: 'error', pass: false });
+  assert.equal(await s.mem.get('rika/classUnit'), null);
+  assert.equal(Object.keys(await s.mem.get('classes')).length, 2);
+  const next = recordCleanupSetup({ initial: s.mem.dump() });
+  const retried = await runRulesProbe(next.args);
+  assert.equal(retried.length, LABEL_COUNT);
+  for (const path of ['rika/classUnit', 'classes', 'members', 'memberOf', 'lessons']) {
+    assert.equal(await next.mem.get(path), null, path);
+  }
+});
 
 function rikaChecks() {
   const state = `rika/state/${STUDENT_UID}`;
@@ -435,7 +673,7 @@ function rikaChecks() {
 test('理科クエストの 21 行は指定の順・uid・値・期待で試し、権限の書きかえより前に行う', async () => {
   const calls = [];
   const record = (who) => (m, p, repo, v) => {
-    if (p.startsWith('rika/')) calls.push([who, m, p, v]);
+    if (/^rika\/(state|log)(\/|$)/.test(p)) calls.push([who, m, p, v]);
     if (m === 'set' && p.startsWith('accounts/')) assert.equal(calls.length, 21);
   };
   const s = setup({ override: record('student'), overrideTeacher: record('teacher') });
@@ -465,7 +703,11 @@ test('理科クエストの規則が無いと、通るはずの 6 行が不合�
     assert.equal(row.got, 'denied');
     assert.equal(row.pass, row.expect === 'denied');
   }
-  assert.ok(rows.slice(26, LABEL_COUNT).every((r) => r.pass));
+  assert.ok(rows.slice(26, 128).every((r) => r.pass));
+  for (const row of rows.slice(128, LABEL_COUNT)) {
+    assert.equal(row.got, 'denied');
+    assert.equal(row.pass, row.expect === 'denied');
+  }
   assert.deepEqual(rows.at(-1), { label: '片付け', expect: 'ok', got: 'error', pass: false });
   assert.equal(cleanupPatch(s.teacherNet)[`accounts/${STUDENT_UID}`], null);
 });
@@ -1125,7 +1367,7 @@ test('runRulesProbe: 小さい画像を片付けられないときは、片付�
   assert.equal(await s.mem.get('accounts'), null);
 });
 
-test('runRulesProbe: 規則が正しければ、全部の行が pass: true（128 行）', async () => {
+test('runRulesProbe: 規則が正しければ、全部の行が pass: true（139 行）', async () => {
   const s = setup();
   const rows = await runRulesProbe(s.args);
   assert.equal(rows.length, LABEL_COUNT);
@@ -1154,6 +1396,7 @@ test('runRulesProbe: 規則が正しければ、全部の行が pass: true（128
     'ok', 'denied',
     'ok', 'denied', 'denied', 'denied', 'ok', 'denied',
     'ok', 'denied', 'denied', 'denied', 'denied', 'denied', 'ok',
+    'ok', 'ok', 'ok', 'denied', 'denied', 'denied', 'denied', 'denied', 'denied', 'denied', 'ok',
   ]);
 });
 
@@ -1250,7 +1493,8 @@ function recordCleanupSetup({ initial = {}, failStudentCleanup = false, failTeac
   allowForbidden = false, loseRecordReply = false, allowRecords = false, allowMarks = false,
   failCleanup = () => false, loseReplyResponse = false, failReplyCleanup = false, allowStudentReply = false,
   loseAiResponse = false, failAiCleanup = false, loseRikaResponse = false, failRikaCleanup = false,
-  allowOtherRika = false, failOtherRikaCleanup = false, ignoreRikaBase = false } = {}) {
+  allowOtherRika = false, failOtherRikaCleanup = false, ignoreRikaBase = false, denyClassUnitWrites = false,
+  failClassUnitCleanup = () => false } = {}) {
   const mem = createMemoryNet({ now: () => 1000, initial });
   const events = [];
   const denied = () => { throw new NetError('denied', '権限がありません'); };
@@ -1260,6 +1504,9 @@ function recordCleanupSetup({ initial = {}, failStudentCleanup = false, failTeac
       events.push(['先生', 'set', path, value]);
       if (path.startsWith('records/')) denied();
       if (path.startsWith('rika/state/')) denied();
+      if (denyClassUnitWrites && path.startsWith('rika/classUnit/')) denied();
+      if (path.startsWith('rika/classUnit/') && (typeof value !== 'string' || !/^[a-z0-9-]{1,40}$/.test(value)
+        || !await mem.get(`classes/${path.split('/')[2]}`))) denied();
       if (path.startsWith('replies/') && !validReply(value)) denied();
       if (path.startsWith('aiSummaries/') && !validAiSummary(value)) denied();
       await mem.set(path, value);
@@ -1268,8 +1515,10 @@ function recordCleanupSetup({ initial = {}, failStudentCleanup = false, failTeac
     },
     async update(path, patch) {
       events.push(['先生', 'update', path, patch]);
+      if (Object.keys(patch).some((p) => p.startsWith('rika/classUnit/')) && failClassUnitCleanup(patch)) throw new NetError('network');
       for (const [p, v] of Object.entries(patch)) {
-        if (failRikaCleanup && p.startsWith('rika/') && v === null) throw new NetError('network');
+        if (denyClassUnitWrites && p.startsWith('rika/classUnit/')) denied();
+        if (failRikaCleanup && /^rika\/(state|log)\//.test(p) && v === null) throw new NetError('network');
         if (failOtherRikaCleanup && p.startsWith('rika/') && p.split('/')[2] === OTHER_UID && v === null) throw new NetError('network');
         if (failAiCleanup && p.startsWith('aiSummaries/') && v === null) throw new NetError('network');
         if (failReplyCleanup && /^(replies|replyMarks)\//.test(p) && v === null) throw new NetError('network');
@@ -1279,13 +1528,18 @@ function recordCleanupSetup({ initial = {}, failStudentCleanup = false, failTeac
       }
       return mem.update(path, patch);
     },
-    async remove(path) { events.push(['先生', 'remove', path]); return mem.remove(path); },
+    async remove(path) {
+      events.push(['先生', 'remove', path]);
+      if (denyClassUnitWrites && path.startsWith('rika/classUnit/')) denied();
+      return mem.remove(path);
+    },
   };
   const teacherRepo = createRepo(teacherNet);
   async function canWrite(path, value) {
     const parts = path.split('/');
     const [kind] = parts;
     if (kind === 'rika') {
+      if (parts[1] === 'classUnit') return false;
       if ((!allowOtherRika && parts[2] !== STUDENT_UID) || typeof await mem.get(`accounts/${STUDENT_UID}`) !== 'string') return false;
       if (parts[1] === 'state') return parts.length === 3
         && (value === null || validRikaState(value, ignoreRikaBase ? null : await mem.get(path)));
@@ -1360,7 +1614,12 @@ function recordCleanupSetup({ initial = {}, failStudentCleanup = false, failTeac
     },
     async get(path) {
       const parts = path.split('/');
-      if (parts[0] === 'rika' && (parts.length < 3 || parts[2] !== STUDENT_UID)) denied();
+      if (parts[0] === 'rika') {
+        if (parts[1] === 'classUnit') {
+          const sid = await mem.get(`accounts/${STUDENT_UID}`);
+          if (parts.length !== 3 || await mem.get(`memberOf/${sid}/${parts[2]}`) !== true) denied();
+        } else if (parts.length < 3 || parts[2] !== STUDENT_UID) denied();
+      }
       if (parts[0] === 'aiSummaries') denied();
       if (parts[0] === 'records' && (parts.length !== 4 || parts[3] !== 's00-999')) denied();
       if (parts[0] === 'replies' && (parts.length !== 4 || parts[3] !== 's00-999')) denied();
@@ -1874,6 +2133,7 @@ test('runRulesProbe: 確認用の生徒としてする読み書き（表の順�
     }),
     ['set', `records/${inId}/${s.teacherRepo.state.lessons.find((l) => l.classId === inId).id}/s00-999/attachments/a2`],
     ...pageChecks(s.teacherRepo).map(([m, p]) => [m, p]),
+    ...classUnitChecks(s.teacherRepo).filter(([who]) => who === 'student').map(([, m, p]) => [m, p]),
   ]);
   const sets = s.studentNet().calls.filter(([m, p]) => m === 'set' && !/^(lessons|thumbs|units|records|marks|recThumbs|inkThumbs|terms|replies|replyMarks|aiSummaries|rika)\//.test(p));
   assert.equal(sets[1][2], true);                       // memberOf に true

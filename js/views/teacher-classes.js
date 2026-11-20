@@ -7,6 +7,7 @@ import { newId } from '../ids.js';
 import { createIssuer } from '../issue.js';
 import { schoolYear, entryYY, isProbeId } from '../roster-logic.js';
 import { teacherNav } from './parts/teacher-nav.js';
+import { RIKA_UNITS, cleanClassUnit, rikaUnitLabel } from '../rika-units.js';
 
 const NAME_MAX = 40;    // クラス名の長さの上限
 const ISSUE_MAX = 200;  // 一度に発行できる人数の上限
@@ -47,6 +48,11 @@ export function mount(root, ctx) {
   let issuing = false;  // この画面で発行を始めた・始めようとしている途中か
   let busy = false;     // 作成・名前の変更の送信中か
   let classes = [];
+  let classUnits = {};
+  let classUnitsReady = false;
+  let unitSaving = false;
+  let classUnitsVersion = 0;
+  let classesLoadId = 0;
   let myRun = null;     // この画面が始めた発行（画面を離れたら止める）
 
   const issuer = createIssuer({
@@ -92,6 +98,7 @@ export function mount(root, ctx) {
   const pendingArea = el('div', { class: 'pending-area' }); // 「続きを発行する」
   const progress = el('div', { class: 'issue-progress', role: 'status', 'aria-live': 'polite' });
   const listArea = el('div', { class: 'class-list' });
+  const unitMessage = el('div', { class: 'class-unit-message' });
 
   const openRules = () => ctx.navigate('t-rules');
 
@@ -101,6 +108,7 @@ export function mount(root, ctx) {
     formArea,
     progress,
     pendingArea,
+    unitMessage,
     listArea,
     el('section', { class: 'rules-link' },
       el('h2', { text: '規則の確認' }),
@@ -120,7 +128,7 @@ export function mount(root, ctx) {
   }
 
   // 入力の form を作って formArea に出す。onSubmit(values, showError) が true を返したら閉じる
-  function openForm({ title, fields, okLabel, onSubmit }) {
+  function openForm({ title, description, fields, okLabel, onSubmit }) {
     const error = el('div', { class: 'error', role: 'alert', hidden: true });
     const showError = (text) => { error.textContent = text; error.hidden = false; };
     const ok = el('button', { type: 'submit', class: 'btn btn-primary', text: okLabel });
@@ -128,11 +136,14 @@ export function mount(root, ctx) {
     const inputs = {};
     const rows = fields.map((f) => {
       const id = `f-${f.key}`;
-      const input = el('input', {
+      const input = f.options ? el('select', { id }, f.options.map((option) => option.options
+        ? el('optgroup', { label: option.label }, option.options.map((item) => el('option', { value: item.value, text: item.label })))
+        : el('option', { value: option.value, text: option.label }))) : el('input', {
         id, type: 'text', value: f.value ?? '',
         inputmode: f.numeric ? 'numeric' : null,
         autocomplete: 'off',
       });
+      if (f.options) input.value = f.value ?? '';
       inputs[f.key] = input;
       return el('div', { class: 'field' },
         el('label', { class: 'label', for: id, text: f.label }),
@@ -141,6 +152,7 @@ export function mount(root, ctx) {
     });
     const form = el('form', { class: 'card inline-form', novalidate: true, 'aria-label': title },
       el('h2', { text: title }),
+      description ? el('p', { text: description }) : null,
       rows,
       error,
       el('div', { class: 'dialog-actions' }, cancel, ok));
@@ -258,6 +270,46 @@ export function mount(root, ctx) {
     });
   }
 
+  function showClassUnitForm(cls) {
+    if (!alive || unitSaving || !classUnitsReady) return;
+    const current = cleanClassUnit(classUnits[cls.id]);
+    openForm({
+      title: '理科クエストの単元を決める',
+      description: '決めると、このクラスの生徒が次に理科クエストを開いたときに、この単元になります。生徒は、ほかの単元も進められます。',
+      okLabel: '決める',
+      fields: [{ key: 'unit', label: '単元', value: rikaUnitLabel(current) === null ? '' : current,
+        options: [{ value: '', label: '決めない（生徒が選ぶ）' }, ...[1, 2, 3].map((grade) => ({
+          label: `${grade}年`, options: RIKA_UNITS.filter((unit) => unit.grade === grade)
+            .map((unit) => ({ value: unit.id, label: unit.title })),
+        }))] }],
+      onSubmit: async (v, showError) => {
+        if (!classUnitsReady) {
+          showError('理科クエストの単元を読みこめていません。この窓をとじて、「もう一度」を押してください。');
+          return false;
+        }
+        const unit = v.unit === '' ? null : v.unit;
+        if (unit === cleanClassUnit(classUnits[cls.id])) return true;
+        busy = true;
+        setUnitSaving(true);
+        try {
+          await ctx.repo.setClassUnit(cls.id, unit);
+        } catch {
+          if (alive) showError('つながりません。もう一度ためしてください。');
+          return false;
+        } finally {
+          busy = false;
+          if (alive) setUnitSaving(false);
+        }
+        if (!alive) return false;
+        classUnitsVersion += 1; // 保存前に始まった読みこみで、送った値を戻さない
+        classUnits[cls.id] = unit;
+        renderClasses();
+        toast(unit === null ? '理科クエストの単元を、決めない に戻しました。' : '理科クエストの単元を決めました。');
+        return true;
+      },
+    });
+  }
+
   // ---- 発行 ----
 
   // 前の画面で始めた発行が残っていれば、止まる（終わる）のを待つ
@@ -355,6 +407,25 @@ export function mount(root, ctx) {
 
   // ---- クラスの一覧 ----
 
+  function setUnitSaving(v) {
+    unitSaving = v;
+    for (const b of listArea.querySelectorAll('.class-unit-button')) b.disabled = v;
+  }
+
+  function classUnitRow(cls) {
+    if (!classUnitsReady) return null;
+    const unit = cleanClassUnit(classUnits[cls.id]);
+    const label = rikaUnitLabel(unit);
+    const unknown = unit !== null && label === null;
+    const text = label ?? (unknown
+      ? `教材にない単元です（${unit}）。生徒の側では、決めていないのと同じになります。`
+      : '決めていません（生徒が選びます）');
+    return el('div', { class: 'class-unit' },
+      el('p', {}, `理科クエストの単元: ${text}`, unknown ? statusChip('warn', '要確認') : null),
+      el('button', { type: 'button', class: 'btn class-unit-button', text: '単元を決める', disabled: unitSaving,
+        'aria-label': `${cls.name} の理科クエストの単元を決める`, onclick: () => showClassUnitForm(cls) }));
+  }
+
   function renderClasses() {
     if (classes.length === 0) {
       listArea.replaceChildren(el('p', { class: 'home-empty', text: 'まだクラスがありません。「クラスを作る」で作ってください。' }));
@@ -378,22 +449,35 @@ export function mount(root, ctx) {
           },
           el('span', { class: 'class-name', text: c.name || '（名前なし）' }),
           el('span', { class: 'class-go', 'aria-hidden': 'true', text: '名簿 ›' })),
-          el('button', { type: 'button', class: 'btn', text: '名前を変える', onclick: () => showRenameForm(c) }))))));
+          el('button', { type: 'button', class: 'btn', text: '名前を変える', onclick: () => showRenameForm(c) }),
+          classUnitRow(c))))));
     }
     listArea.replaceChildren(...sections);
   }
 
   async function loadClasses() {
-    try {
-      classes = await ctx.repo.listClasses();
-    } catch (e) {
-      if (!alive) return;
+    const id = ++classesLoadId;
+    const unitVersion = classUnitsVersion;
+    const [classResult, unitResult] = await Promise.allSettled([
+      ctx.repo.listClasses(), Promise.resolve().then(() => ctx.repo.listClassUnits()),
+    ]);
+    if (!alive || id !== classesLoadId) return;
+    if (classResult.status === 'rejected') {
       listArea.replaceChildren(
         el('p', { class: 'error', role: 'alert', text: 'つながりません。電波を確かめて、もう一度ためしてください。' }),
         el('p', {}, el('button', { type: 'button', class: 'btn btn-primary', text: 'もう一度ためす', onclick: () => loadClasses() })));
       return;
     }
-    if (alive) renderClasses();
+    classes = classResult.value;
+    if (!unitSaving && unitVersion === classUnitsVersion) {
+      unitMessage.replaceChildren();
+      classUnitsReady = unitResult.status === 'fulfilled';
+      classUnits = classUnitsReady ? unitResult.value : {};
+      if (!classUnitsReady) unitMessage.replaceChildren(
+        el('p', { class: 'error', role: 'alert', text: '理科クエストの単元を読みこめませんでした。' }),
+        el('button', { type: 'button', class: 'btn', text: 'もう一度', onclick: loadClasses }));
+    }
+    renderClasses();
   }
 
   listArea.replaceChildren(el('p', { class: 'loading', role: 'status', text: '読みこんでいます…' }));

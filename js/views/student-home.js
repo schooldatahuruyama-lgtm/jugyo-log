@@ -2,6 +2,7 @@
 import { el, confirmDialog, toast } from '../ui.js';
 import { CONFIG } from '../config.js';
 import { rikaEntryUrl } from '../rika-link.js';
+import { rikaUnitLabel } from '../rika-units.js';
 import { sortUnits } from '../lesson-logic.js';
 import { cleanTerm, termKey, matchLessons, frequentTerms } from '../term-logic.js';
 import { classLabel, groupByDate, groupByUnit, todoLessons } from '../student-list-logic.js';
@@ -76,10 +77,12 @@ export function mount(root, ctx) {
     } });
   const todoArea = el('div', { class: 'notice student-todo', hidden: true }, todoMessage, todoButton);
   const rikaUrl = rikaEntryUrl(CONFIG.rika?.url);
+  const rikaText = el('div', { class: 'rika-entry-text' },
+    el('h2', { text: '理科クエスト' }),
+    el('p', { text: '理科の問題に、自分のペースで取り組めます。' }));
+  let rikaUnitLine = null;
   const rikaEntry = rikaUrl === null ? null : el('section', { class: 'rika-entry', 'aria-label': '理科クエスト' },
-    el('div', { class: 'rika-entry-text' },
-      el('h2', { text: '理科クエスト' }),
-      el('p', { text: '理科の問題に、自分のペースで取り組めます。' })),
+    rikaText,
     el('a', { class: 'btn btn-primary rika-entry-link', href: rikaUrl, text: 'ひらく' }));
 
   async function logout() {
@@ -295,6 +298,8 @@ export function mount(root, ctx) {
     if (!alive || leaving || signingOut) return;
     const id = ++loadId;
     const stale = () => !alive || leaving || id !== loadId;
+    rikaUnitLine?.remove();
+    rikaUnitLine = null;
     ready = false;
     todoArea.hidden = true;
     searchArea.hidden = true;
@@ -320,12 +325,18 @@ export function mount(root, ctx) {
       sub.textContent = current.number === null ? current.name : `${current.name}　出席番号 ${current.number}`;
       yearSelect.value = current.id;
       filters.hidden = false;
-      const [lessonResult, markResult, unitResult, termResult, replyMarkResult] = await Promise.allSettled([
+      const [lessonResult, markResult, unitResult, termResult, replyMarkResult, classUnitResult] = await Promise.allSettled([
         ctx.repo.listLessons(current.id), ctx.repo.getMarks(studentId, current.id), ctx.repo.listUnits(current.year),
         ctx.repo.getMyTerms(studentId, current.id),
         ctx.repo.getReplyMarks(studentId, current.id),
+        ctx.repo.getClassUnit ? ctx.repo.getClassUnit(current.id) : Promise.resolve(null),
       ]);
       if (stale()) return;
+      const unitLabel = classUnitResult.status === 'fulfilled' ? rikaUnitLabel(classUnitResult.value) : null;
+      if (rikaEntry && unitLabel !== null) {
+        rikaUnitLine = el('p', { class: 'rika-entry-unit', text: `今の単元: ${unitLabel}` });
+        rikaText.append(rikaUnitLine);
+      }
       if (lessonResult.status === 'rejected') throw lessonResult.reason;
       lessons = lessonResult.value;
       marks = markResult.status === 'fulfilled' ? markResult.value : null;
