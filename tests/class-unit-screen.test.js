@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { CONFIG } from '../js/config.js';
 import { mount as teacherMount } from '../js/views/teacher-classes.js';
 import { mount as studentMount } from '../js/views/student-home.js';
 import { installDom, all, byClass, buttons, settle } from './helpers/picture-dom.js';
@@ -44,6 +45,57 @@ function choose(root, value) {
 }
 function unitLines(root) { return byClass(root, 'rika-entry-unit').map((node) => node.textContent); }
 function checkCard(root) { assert.equal(byClass(root, 'rika-entry').length, 1); }
+function progressLinks(root) { return all(root, (node) => node.tagName === 'a' && node.textContent === '進み具合を見る'); }
+function checkProgressLinks(root) {
+  const rows = byClass(root, 'class-row');
+  assert.equal(rows.length, classes.length);
+  for (let i = 0; i < rows.length; i++) {
+    const links = progressLinks(rows[i]);
+    assert.equal(links.length, 1);
+    const url = new URL(links[0].getAttribute('href'));
+    assert.equal(url.origin, new URL(CONFIG.rika.url).origin);
+    assert.equal(url.pathname, new URL(CONFIG.rika.url).pathname);
+    assert.equal(url.searchParams.get('teacher'), '1');
+    assert.equal(url.searchParams.get('class'), classes[i].id);
+    assert.equal(url.hash, '');
+    assert.equal(links[0].getAttribute('target'), '_blank');
+    const rel = links[0].getAttribute('rel').split(' ');
+    assert.ok(rel.includes('noopener')); assert.ok(rel.includes('noreferrer'));
+    assert.equal(links[0].getAttribute('aria-label'), `${classes[i].name} の理科クエストの進み具合を見る（別のタブで開きます）`);
+  }
+}
+
+test('先生: 各クラスの単元ボタンのとなりに、別のタブで進み具合を見るリンクを出す', async (t) => {
+  const h = setup(t, true); await settle();
+  checkProgressLinks(h.root);
+  for (const row of byClass(h.root, 'class-row')) {
+    const unit = byClass(row, 'class-unit')[0];
+    const button = buttons(unit, '単元を決める')[0];
+    assert.equal(unit.children[unit.children.indexOf(button) + 1], progressLinks(row)[0]);
+  }
+});
+
+for (const [label, rika] of [['設定なし', undefined], ['URL なし', {}],
+  ['HTTP', { url: 'http://example.com/' }], ['不正な URL', { url: 'not a url' }]]) {
+  test(`先生: ${label}のときは進み具合のリンクだけを出さない`, async (t) => {
+    const original = CONFIG.rika;
+    t.after(() => { CONFIG.rika = original; });
+    if (rika === undefined) delete CONFIG.rika; else CONFIG.rika = rika;
+    const h = setup(t, true); await settle();
+    assert.equal(progressLinks(h.root).length, 0);
+    assert.equal(byClass(h.root, 'class-row').length, classes.length);
+    assert.equal(buttons(h.root, '単元を決める').length, classes.length);
+  });
+}
+
+test('先生: 記号つき・空のクラス id の行だけ、進み具合のリンクを出さない', async (t) => {
+  const h = setup(t, true, { listClasses: async () => [classes[0],
+    { ...classes[1], id: 'c-2' }, { ...classes[2], id: '' }] }); await settle();
+  const rows = byClass(h.root, 'class-row');
+  assert.deepEqual(rows.map((row) => progressLinks(row).length), [1, 0, 0]);
+  assert.equal(new URL(progressLinks(rows[0])[0].getAttribute('href')).searchParams.get('class'), 'c1');
+  assert.equal(buttons(h.root, '単元を決める').length, 3);
+});
 
 test('先生: 決めた単元・未設定・教材にない単元を、クラスごとに表示する', async (t) => {
   const h = setup(t, true); await settle();
@@ -149,6 +201,7 @@ for (const retryPending of [false, true]) {
     assert.equal(form(h.root), current);
     assert.equal(byClass(h.root, 'class-unit').length, 0);
     assert.equal(buttons(h.root, '単元を決める').length, 0);
+    checkProgressLinks(h.root);
     const message = byClass(h.root, 'class-unit-message')[0];
     h.repo.listClassUnits = () => retry.promise;
     if (retryPending) { buttons(message, 'もう一度')[0].click(); await settle(); }
@@ -165,6 +218,7 @@ for (const retryPending of [false, true]) {
     if (!retryPending) { buttons(message, 'もう一度')[0].click(); await settle(); }
     assert.equal(byClass(h.root, 'class-unit').length, 0);
     assert.equal(buttons(h.root, '単元を決める').length, 0);
+    checkProgressLinks(h.root);
     retry.resolve({ c1: 'light' }); await settle();
     assert.equal(message.textContent, '');
     assert.equal(buttons(h.root, '単元を決める').length, 3);
@@ -233,6 +287,7 @@ test('先生: 単元の読みこみ失敗でもクラスを表示し、もう一
   assert.equal(byClass(h.root, 'class-row').length, 3);
   assert.equal(byClass(h.root, 'class-unit').length, 0);
   assert.equal(buttons(h.root, '単元を決める').length, 0);
+  checkProgressLinks(h.root);
   const message = byClass(h.root, 'class-unit-message')[0];
   assert.equal(byClass(message, 'error')[0].getAttribute('role'), 'alert');
   assert.match(message.textContent, /理科クエストの単元を読みこめませんでした。/);
@@ -240,12 +295,14 @@ test('先生: 単元の読みこみ失敗でもクラスを表示し、もう一
   buttons(message, 'もう一度')[0].click(); await settle();
   assert.equal(message.textContent, '');
   assert.equal(buttons(h.root, '単元を決める').length, 3);
+  checkProgressLinks(h.root);
 });
 
 test('先生: クラスが 0 個なら従来の案内だけを表示する', async (t) => {
   const h = setup(t, true, { listClasses: async () => [] }); await settle();
   assert.match(h.root.textContent, /まだクラスがありません/);
   assert.equal(byClass(h.root, 'class-unit').length, 0);
+  assert.equal(progressLinks(h.root).length, 0);
 });
 
 test('生徒: カードの説明の下に今の単元を表示し、年度を切りかえる', async (t) => {

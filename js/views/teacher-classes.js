@@ -8,6 +8,7 @@ import { createIssuer } from '../issue.js';
 import { schoolYear, entryYY, isProbeId } from '../roster-logic.js';
 import { teacherNav } from './parts/teacher-nav.js';
 import { RIKA_UNITS, cleanClassUnit, rikaUnitLabel } from '../rika-units.js';
+import { rikaProgressUrl } from '../rika-link.js';
 
 const NAME_MAX = 40;    // クラス名の長さの上限
 const ISSUE_MAX = 200;  // 一度に発行できる人数の上限
@@ -413,7 +414,12 @@ export function mount(root, ctx) {
   }
 
   function classUnitRow(cls) {
-    if (!classUnitsReady) return null;
+    const progressUrl = rikaProgressUrl(CONFIG.rika?.url, cls.id);
+    const progressLink = progressUrl === null ? null : el('a', {
+      class: 'btn', href: progressUrl, target: '_blank', rel: 'noopener noreferrer', text: '進み具合を見る',
+      'aria-label': `${cls.name} の理科クエストの進み具合を見る（別のタブで開きます）`,
+    });
+    if (!classUnitsReady) return progressLink;
     const unit = cleanClassUnit(classUnits[cls.id]);
     const label = rikaUnitLabel(unit);
     const unknown = unit !== null && label === null;
@@ -423,7 +429,8 @@ export function mount(root, ctx) {
     return el('div', { class: 'class-unit' },
       el('p', {}, `理科クエストの単元: ${text}`, unknown ? statusChip('warn', '要確認') : null),
       el('button', { type: 'button', class: 'btn class-unit-button', text: '単元を決める', disabled: unitSaving,
-        'aria-label': `${cls.name} の理科クエストの単元を決める`, onclick: () => showClassUnitForm(cls) }));
+        'aria-label': `${cls.name} の理科クエストの単元を決める`, onclick: () => showClassUnitForm(cls) }),
+      progressLink);
   }
 
   function renderClasses() {
