@@ -99,7 +99,7 @@
   .lesson-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* 生徒の授業。資料と記録を同じ幅で並べ、下に振り返りを置く。縦向きでは一列にする。 */
+/* 生徒の授業。資料と記録を同じ幅で並べ、2 つの枠は同じ高さにする（枠の中ではスクロールしない）。下に振り返りを置く。縦向きでは一列にする。 */
 .student-lesson-page { max-width: 1400px; margin: 0 auto; padding: var(--s-2); }
 .student-lesson-header { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-1) var(--s-2); margin-bottom: var(--s-2); padding-bottom: var(--s-2); border-bottom: 1px solid var(--soft-line); }
 .student-lesson-title { flex: 1; min-width: 180px; overflow-wrap: anywhere; }
@@ -115,7 +115,7 @@
 .student-lesson-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: var(--s-2); }
 .student-lesson-columns[hidden] { display: none; }
 .student-lesson-teacher, .student-lesson-mine, .student-lesson-reflection { min-width: 0; border: 1px solid var(--section-band); border-radius: 14px; box-shadow: var(--soft-shadow); }
-.student-lesson-teacher { --section-color: var(--teacher); --section-band: var(--teacher-band); background: var(--teacher-bg); max-height: calc(100vh - 160px); max-height: calc(100dvh - 160px); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.student-lesson-teacher { --section-color: var(--teacher); --section-band: var(--teacher-band); background: var(--teacher-bg); }
 .student-lesson-mine { --section-color: var(--mine); --section-band: var(--mine-band); background: var(--mine-bg); }
 .student-lesson-reflection { --section-color: var(--reflect); --section-band: var(--reflect-band); grid-column: 1 / -1; background: var(--reflect-bg); overflow-wrap: anywhere; }
 .reply-box { --section-color: var(--teacher); --section-band: var(--teacher-band); grid-column: 1 / -1; min-width: 0; border: 1px solid var(--teacher-band); border-radius: 14px; background: var(--teacher-bg); box-shadow: var(--soft-shadow); overflow-wrap: anywhere; }
@@ -192,10 +192,6 @@
   .student-record-level-buttons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .student-lesson-page .student-record-level-buttons .btn:nth-child(odd) { border-left: 0; }
   .student-lesson-page .student-record-level-buttons .btn:nth-child(n+3) { border-top: 1px solid var(--soft-line); }
-}
-
-@media (orientation: portrait) {
-  .student-lesson-teacher { max-height: none; overflow-y: visible; }
 }
 
 /* 先生の画面の共通: ボタンの並び、画面の中の入力の form */
@@ -512,7 +508,6 @@ dialog.material-viewer[open] { display: flex; flex-direction: column; gap: var(-
 .attachment-actions .btn { min-width: 44px; min-height: 44px; }
 .attachment-message { margin: var(--s-1) 0 0; overflow-wrap: anywhere; }
 .record-values .attachment-pane { margin-bottom: 0; }
-.teacher-record-page .student-lesson-teacher { max-height: calc(100vh - 300px); max-height: calc(100dvh - 300px); }
 
 /* 重要用語。先生と自分の用語は同じ色・並びにし、外せるものだけボタンにする。 */
 .term-row, .term-search, .lesson-terms { min-width: 0; margin-bottom: var(--s-3); overflow-wrap: anywhere; }
@@ -594,5 +589,4 @@ button.term-pill:disabled { opacity: 0.55; cursor: not-allowed; }
 
 @media (orientation: portrait), (max-width: 899px) {
   .teacher-record-page .student-lesson-columns { grid-template-columns: minmax(0, 1fr); }
-  .teacher-record-page .student-lesson-teacher { max-height: none; overflow-y: visible; }
 }
