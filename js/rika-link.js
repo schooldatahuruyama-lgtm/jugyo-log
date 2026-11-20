@@ -9,3 +9,14 @@ export function rikaEntryUrl(value) {
     return null;
   }
 }
+
+// 先生の進み具合の画面を、そのクラスを選んで開く。
+export function rikaProgressUrl(baseUrl, classId) {
+  const entry = rikaEntryUrl(baseUrl);
+  if (entry === null || typeof classId !== 'string' || !/^[A-Za-z0-9]+$/.test(classId)) return null;
+  const url = new URL(entry);
+  url.searchParams.set('teacher', '1');
+  url.searchParams.set('class', classId);
+  url.hash = '';
+  return url.href;
+}
