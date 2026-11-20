@@ -9,6 +9,7 @@ import { cleanReply, checkReply, toReply } from './reply-logic.js';
 import { CONFIG } from './config.js';
 import { inkPlaceKind, inkPagePlace, splitInkPlace } from './ink-logic.js';
 import { cleanAiSummary } from './ai-summary-logic.js';
+import { cleanClassUnit } from './rika-units.js';
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -171,6 +172,27 @@ export function createRepo(net) {
 
     async renameClass(id, name) {
       await net.set(`classes/${key(id)}/name`, name);
+    },
+
+    async getClassUnit(classId) {
+      return cleanClassUnit(await net.get(`rika/classUnit/${key(classId)}`));
+    },
+
+    async listClassUnits() {
+      return Object.fromEntries(entriesOf(await net.get('rika/classUnit'))
+        .map(([id, value]) => [id, cleanClassUnit(value)])
+        .filter(([, value]) => value !== null));
+    },
+
+    async setClassUnit(classId, unitId) {
+      const path = `rika/classUnit/${key(classId)}`;
+      if (unitId === null) {
+        await net.remove(path);
+        return;
+      }
+      const unit = cleanClassUnit(unitId);
+      if (unit === null) throw new TypeError('理科クエストの単元の ID が正しくありません。');
+      await net.set(path, unit);
     },
 
     // その年度の単元（順番が同じなら名前順）
