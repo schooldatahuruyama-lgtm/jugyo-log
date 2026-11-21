@@ -84,7 +84,7 @@ function sameDraft(current, draft) {
 }
 
 export async function resendInkDrafts({ repo, files, inkDrafts, studentId, queue, makeThumb }) {
-  const result = { sent: 0, kept: 0, dropped: 0 };
+  const result = { sent: 0, kept: 0, dropped: 0, sentLessons: [] };
   for (const draft of inkDrafts.list(studentId)) {
     const { classId, lessonId, field } = draft;
     const current = () => inkDrafts.get(studentId, classId, lessonId, field);
@@ -101,7 +101,12 @@ export async function resendInkDrafts({ repo, files, inkDrafts, studentId, queue
         const unchanged = sameDraft(current(), draft);
         if (unchanged) remove();
         if (saved.superseded || saved.gone) result[unchanged ? 'dropped' : 'kept'] += 1;
-        else result.sent += 1;
+        else {
+          result.sent += 1;
+          if (!result.sentLessons.some((lesson) => lesson.classId === classId && lesson.lessonId === lessonId)) {
+            result.sentLessons.push({ classId, lessonId });
+          }
+        }
       });
     } catch {
       // 規則に断られた場合も消さずに残し、次の下書きを試す。

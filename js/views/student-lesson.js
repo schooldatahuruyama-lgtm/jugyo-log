@@ -41,6 +41,12 @@ export function mount(root, ctx) {
   const inkFields = {};
   const writingFields = {};
   const saveStates = { text: 'idle' };
+  function savedState(field, state) {
+    saveStates[field] = state;
+    showSaveState();
+    if (!alive || state !== 'saved') return;
+    ctx.offline?.touch?.(classId, lessonId, studentId);
+  }
   const levelButtons = new Map();
   const saveStatus = el('div', { class: 'student-lesson-status', role: 'status', 'aria-live': 'polite' });
   const connectionStatus = el('div', { class: 'student-lesson-status', role: 'status', 'aria-live': 'polite' });
@@ -244,8 +250,9 @@ export function mount(root, ctx) {
         ctx.repo.getLesson(classId, lessonId),
         ctx.recordQueue.run(key, async () => {
           const server = await ctx.repo.getRecord(classId, lessonId, studentId);
+          const fromCache = Boolean(ctx.offline?.down);
           const draft = ctx.drafts.get(studentId, classId, lessonId);
-          return { server, draft };
+          return { server, draft, fromCache };
         }),
       ]);
       if (!alive) return;
@@ -256,25 +263,44 @@ export function mount(root, ctx) {
       }
       if (lessonResult.status === 'rejected' || recordResult.status === 'rejected') throw new Error('読みこめませんでした');
       const lesson = lessonResult.value;
-      const { server, draft } = recordResult.value;
+      const { server, draft, fromCache } = recordResult.value;
+      let needsServerCheck = fromCache;
       const initial = pickInitial(server, draft, { max: CONFIG.recordTextMax });
       record = initial.record;
       updatedAt = initial.updatedAt;
       if (draft && !initial.fromDraft) ctx.drafts.remove(studentId, classId, lessonId);
       saver = createRecordSaver({
-        save: (value, editedAt) => ctx.recordQueue.run(key, async () => {
-          await ctx.repo.saveRecord(classId, lessonId, studentId, value, editedAt);
-          if (alive) updatedAt = Math.max(updatedAt, editedAt);
-        }),
+        save: (value, editedAt) => {
+          const startedRevision = revision;
+          return ctx.recordQueue.run(key, async () => {
+            if (needsServerCheck) {
+              const latest = await ctx.liveRepo.getRecord(classId, lessonId, studentId);
+              if (Number.isFinite(latest?.updatedAt) && latest.updatedAt > editedAt) {
+                needsServerCheck = startedRevision !== revision;
+                ctx.offline?.touch?.(classId, lessonId, studentId);
+                if (alive && startedRevision === revision) {
+                  record = normalizeRecord(latest, { max: CONFIG.recordTextMax });
+                  updatedAt = latest.updatedAt;
+                  syncRecord();
+                  toast('ほかの端末で書いた新しい記録があったので、そちらを出しています。');
+                }
+                return { superseded: true };
+              }
+            }
+            await ctx.repo.saveRecord(classId, lessonId, studentId, value, editedAt);
+            needsServerCheck = false;
+            if (alive) updatedAt = Math.max(updatedAt, editedAt);
+          });
+        },
         saveDraft, removeDraft: () => ctx.drafts.remove(studentId, classId, lessonId),
         now: ctx.now, ...ctx.timers, delayMs: CONFIG.save.delayMs, retryMs: CONFIG.save.retryMs,
-        onState(state) { saveStates.text = state; showSaveState(); },
+        onState: (state) => savedState('text', state),
       });
       for (const field of CONFIG.inkFields) {
         const entry = writingFields[field];
         inkFields[field] = inkField({ ctx, classId, lessonId, studentId, field, label: entry.label,
           index: server?.ink?.[field] ?? null, cleared: server?.inkCleared?.[field],
-          onState(state) { saveStates[field] = state; showSaveState(); },
+          onState: (state) => savedState(field, state),
           onChange: () => syncWritingMode(field) });
         entry.inkArea.replaceChildren(inkFields[field].node);
         entry.mode = inkFields[field].hasInk() && record[field].length === 0 ? 'ink' : 'text';
@@ -294,7 +320,7 @@ export function mount(root, ctx) {
       }
       materials = materialPane({ ctx, classId, lessonId, lesson, studentId, readOnly: false,
         ink: server?.ink, inkCleared: server?.inkCleared,
-        onState(state) { saveStates.materials = state; showSaveState(); } });
+        onState: (state) => savedState('materials', state) });
       materialsArea.replaceChildren(materials.node);
       links = linkPane({ lesson });
       linksArea.replaceChildren(links.node);
@@ -302,7 +328,7 @@ export function mount(root, ctx) {
       attachments = attachmentPane({ ctx, classId, lessonId, studentId,
         attachments: Array.isArray(server?.attachments) ? server.attachments : [], readOnly: false,
         ink: server?.ink, inkCleared: server?.inkCleared,
-        onState(state) { saveStates.attachments = state; showSaveState(); } });
+        onState: (state) => savedState('attachments', state) });
       attachmentsArea.replaceChildren(attachments.node);
       terms = termRow({ ctx, classId, lessonId, studentId, lesson, readOnly: false });
       termsArea.replaceChildren(terms.node);
@@ -310,7 +336,9 @@ export function mount(root, ctx) {
       content.append(reply.node);
     } catch {
       if (alive) pageMessage.replaceChildren(
-        el('p', { class: 'error', text: 'つながりません。電波を確かめて、もう一度ためしてください。' }),
+        el('p', { class: 'error', text: ctx.offline?.down || navigator.onLine === false
+          ? 'この授業は、まだこの iPad に入っていません。電波のある所で一度開くと、電波がなくても開けるようになります。'
+          : 'つながりません。電波を確かめて、もう一度ためしてください。' }),
         el('button', { type: 'button', class: 'btn', text: 'もう一度ためす', onclick: load }));
     } finally { loading = false; }
   }
