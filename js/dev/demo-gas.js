@@ -145,11 +145,31 @@ export function createDemoGas({ net, getUser, random = Math.random }) {
   }
 
   async function handle(op, payload) {
-    if (op === 'ping') return { ok: true, version: 'app-6' };
+    if (op === 'ping') return { ok: true, version: 'app-7' };
     if (!['whoami', 'putMaterial', 'getMaterials', 'getFile', 'trashFile',
-      'putStudentFile', 'getStudentFile', 'getStudentFiles', 'trashStudentFile', 'summarize'].includes(op)) throw new NetError('unknown');
+      'putStudentFile', 'getStudentFile', 'getStudentFiles', 'trashStudentFile', 'trashStudentFiles', 'summarize'].includes(op)) throw new NetError('unknown');
     const user = await identify(op === 'putStudentFile');
     if (op === 'whoami') return { ok: true, ...user };
+    if (op === 'trashStudentFiles') {
+      if (user.role !== 'teacher') throw new NetError('denied');
+      const { fileIds, studentIds } = payload;
+      if (!Array.isArray(fileIds) || fileIds.length < 1 || fileIds.length > 20 || fileIds.some((id) => !matches(id, ID_RE))
+        || !Array.isArray(studentIds) || studentIds.length < 1 || studentIds.length > 60
+        || studentIds.some((id) => !matches(id, STUDENT_ID_RE))) throw new NetError('bad');
+      const allowed = new Set();
+      for (const id of studentIds) {
+        const value = await net.get(`removed/${id}`);
+        if (Number.isFinite(value?.removedAt)) allowed.add(id);
+      }
+      const result = { ok: true, trashed: 0, missing: 0, skipped: 0, unknown: 0 };
+      for (const id of fileIds) {
+        const file = studentFile(user, id);
+        if (!file) result.missing += 1;
+        else if (!allowed.has(file.studentId)) result.skipped += 1;
+        else { studentFiles.delete(id); result.trashed += 1; }
+      }
+      return result;
+    }
     if (op === 'summarize') {
       if (user.role !== 'teacher') throw new NetError('denied');
       const { title, terms, board = '', entries } = payload;

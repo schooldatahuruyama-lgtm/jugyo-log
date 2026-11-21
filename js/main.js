@@ -325,9 +325,14 @@ function start() {
       put: (value) => { if (epoch === sessionEpoch) memo.put(value); },
       clear: () => { if (epoch === sessionEpoch) memo.clear(); },
     };
-    sessionChecking = resolveSession({ auth, repo: liveRepo, memo: currentMemo }).then((value) => {
+    sessionChecking = resolveSession({ auth, repo: liveRepo, memo: currentMemo }).then(async (value) => {
       if (epoch !== sessionEpoch) return session || { role: 'none' };
       session = value;
+      if (value.role === 'none') {
+        refresh.clear();
+        try { await store.clear(); } catch { /* 取り置きを消せなくても、ログインの確認結果を使う */ }
+        if (epoch !== sessionEpoch) return session || { role: 'none' };
+      }
       lastSessionCheck = now();
       showOfflineBanner();
       return session;

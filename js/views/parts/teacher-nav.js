@@ -3,7 +3,7 @@ import { el, confirmDialog, toast } from '../../ui.js';
 
 export function teacherNav(ctx, current) {
   let signingOut = false;
-  const menu = [['classes', 'クラス'], ['units', '単元'], ['lessons', '授業'], ['review', '記録']];
+  const menu = [['classes', 'クラス'], ['units', '単元'], ['lessons', '授業'], ['review', '記録'], ['graduates', '卒業']];
   const bar = el('header', { class: 'topbar topbar-teacher' },
     el('div', { class: 'topbar-title' },
       el('span', { class: 'topbar-brand', text: '授業ログ' }),

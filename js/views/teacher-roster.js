@@ -24,6 +24,7 @@ function errorText(code, otherClass) {
 const snapshot = (rows) => JSON.stringify(rows.map((r) => [r.studentId, String(r.number).trim()]));
 
 export function mount(root, ctx) {
+  let removed = {};
   let alive = true;
   const classId = ctx.params.classId;
 
@@ -111,6 +112,8 @@ export function mount(root, ctx) {
   // ---- 表 ----
 
   function stateCell(id) {
+    if (removed[id]?.purging === true) return el('td', { class: 'state' }, statusChip('warn', '完全に消している途中'));
+    if (removed[id]) return el('td', { class: 'state' }, statusChip('warn', '消してあります'));
     if (fresh.has(id)) {
       return el('td', { class: 'state' },
         statusChip('info', '出し直しました'),
@@ -141,16 +144,17 @@ export function mount(root, ctx) {
       });
       const s = students.get(r.studentId);
       const canReissue = !!(s && s.uid);
+      const purging = removed[r.studentId]?.purging === true;
       trs.push(el('tr', { class: code ? 'row-has-error' : null },
         el('td', { class: 'num' }, input),
         el('td', { class: 'mono sid', text: r.studentId }),
         stateCell(r.studentId),
         el('td', {}, el('button', {
           type: 'button', class: 'btn', text: 'パスワードを出し直す',
-          disabled: busy || !canReissue,
+          disabled: busy || !canReissue || purging,
           'aria-label': `${r.studentId} のパスワードを出し直す`,
           onclick: () => reissue(r.studentId),
-        })),
+        }), purging ? el('p', { class: 'small', text: '完全に消している途中の生徒は、出し直せません。' }) : null),
         el('td', {}, el('button', {
           type: 'button', class: 'btn', text: '外す',
           disabled: busy,
@@ -359,12 +363,12 @@ export function mount(root, ctx) {
   // ---- パスワードの出し直し ----
 
   async function reissue(id) {
-    if (busy) return;
+    if (busy || removed[id]?.purging === true) return;
     const s = students.get(id);
     if (!s || !s.uid) return; // ボタンを出すかどうかだけに使う（出し直しには、覚えている uid・回数を渡さない）
     const ok = await confirmDialog({
       title: 'パスワードを出し直しますか？',
-      body: `${id} のパスワードを出し直します。今のパスワードでは入れなくなります。記録は残ります。`,
+      body: `${id} のパスワードを出し直します。今のパスワードでは入れなくなります。授業ログの記録は残ります。出し直すと、前のアカウントの理科クエストの記録は消えます。`,
       okLabel: '出し直す',
       danger: true,
     });
@@ -401,6 +405,7 @@ export function mount(root, ctx) {
     students.set(id, { uid: result.uid, gen: result.generation });
     passwords = { ...passwords, [id]: result.password };
     fresh.set(id, result.password);
+    delete removed[id];
     setBusy(false);
     say('notice', `${id} のパスワードを出し直しました。新しいパスワードは表に出ています（この画面を離れると、ここには出ません。ID の一覧の印刷にも出ます）。`);
   }
@@ -408,7 +413,9 @@ export function mount(root, ctx) {
   // ---- 読みこみ ----
 
   async function loadAccounts() {
-    const [list, pw] = await Promise.all([ctx.repo.listStudents(), ctx.repo.getInitialPasswords()]);
+    const [list, pw, deleted] = await Promise.all([ctx.repo.listStudents(), ctx.repo.getInitialPasswords(),
+      Promise.resolve().then(() => ctx.repo.listRemoved()).catch(() => ({}))]);
+    removed = deleted;
     students = new Map(list.map((s) => [s.id, { uid: s.uid, gen: null }]));
     passwords = pw;
   }

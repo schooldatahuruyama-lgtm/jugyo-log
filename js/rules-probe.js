@@ -61,6 +61,8 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
   let issued = null;      // { generation }（発行の応答が届いたら）
   let studentUid = null;  // 確認用の生徒の uid（分かったら）
   let studentNet = null;
+  let graduateTried = false;
+  let graduateRestored = false;
   let classesMade = false;
   let unitTried = false;
   let leftoversFailed = false;
@@ -307,6 +309,42 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
       ['先生として rika/classUnit に数を書く', 'denied', () => teacherNet.set(`rika/classUnit/${inId}`, 1)],
       ['先生として無いクラスの rika/classUnit に書く', 'denied', () => teacherNet.set(`rika/classUnit/${PROBE_NO_CLASS}`, 'light')],
       ['先生として rika/classUnit 全体を読む', 'ok', () => teacherNet.get('rika/classUnit')],
+      ['先生として消していない生徒の records を消す', 'denied', () => teacherNet.remove(ownRecord)],
+      ['生徒として removed/自分 を読む', 'denied', () => net.get(`removed/${sid}`)],
+      ['生徒として removed/自分 を書く', 'denied', () => {
+        graduateTried = true;
+        return net.set(`removed/${sid}`, { removedAt: now() });
+      }],
+      ['先生として台帳とちがう uid で removed を書く', 'denied', () => {
+        graduateTried = true;
+        return teacherNet.set(`removed/${sid}`, { uid: `${uid}-old`, removedAt: now() });
+      }],
+      ['先生として生徒を消す', 'ok', () => {
+        graduateTried = true;
+        return teacherRepo.removeStudents([{ id: sid, uid }], now());
+      }],
+      ['消してある生徒として自分の records を読む', 'denied', () => net.get(ownRecord)],
+      ['消してある生徒として自分の rika/state を読む', 'denied', () => net.get(rikaState)],
+      ['先生として消してある生徒の records を消す', 'ok', () => teacherNet.remove(ownRecord)],
+      ['先生として消してある生徒の recThumbs を消す', 'ok', () => teacherNet.remove(ownThumbs)],
+      ['先生として消してある生徒の inkThumbs/learned を消す', 'ok', () => teacherNet.remove(`${inkThumbs}/learned/${sid}`)],
+      ['先生として消してある生徒の inkThumbs/question を消す', 'ok', () => teacherNet.remove(`${inkThumbs}/question/${sid}`)],
+      ['先生として消してある生徒の terms を消す', 'ok', () => teacherNet.remove(`terms/${sid}`)],
+      ['先生として消してある生徒の marks を消す', 'ok', () => teacherNet.remove(`marks/${sid}`)],
+      ['先生として消してある生徒の records に書く', 'denied', () => writeRecord(teacherNet, inId, inLessonId, sid, record)],
+      ['先生として生徒をもどす', 'ok', async () => {
+        await teacherRepo.restoreStudents([{ id: sid, uid }]);
+        graduateRestored = true;
+      }],
+      ['もどした生徒として自分の records を読む', 'ok', () => net.get(ownRecord)],
+      ['先生として完全削除の印を付ける', 'ok', async () => {
+        graduateRestored = false;
+        await teacherRepo.removeStudents([{ id: sid, uid }], now());
+        await teacherRepo.markPurging([sid]);
+      }],
+      ['先生として完全削除中の生徒に accounts を結びつける', 'denied', () => teacherNet.set(`accounts/${uid}`, sid)],
+      ['先生として purging だけを外す', 'denied', () => teacherNet.set(`removed/${sid}`, { uid, removedAt: now() })],
+      ['先生として purging のある removed を丸ごと消す', 'ok', () => teacherNet.remove(`removed/${sid}`)],
     ];
     for (const [label, expect, fn] of checks) {
       const got = await attempt(fn);
@@ -320,12 +358,19 @@ export async function runRulesProbe({ teacherRepo, teacherNet, issuer, makeStude
   // 3. 生徒として記録・印・小さい画像・用語を消してから、先生として片付ける（途中で失敗しても）。
   // students/s00-999 と gen/s00-999 は残す。
   // (a) 分かっている場所の削除と (b) uid を読み直しての accounts の削除は、別々に試みる
+  // もどす通信が失敗していても、本人として記録を片付けられる状態に戻す。
+  let okGraduate = true;
+  if (graduateTried && !graduateRestored) {
+    const removed = await attempt(() => teacherNet.remove(`removed/${sid}`));
+    const account = await attempt(() => teacherNet.set(`accounts/${studentUid}`, sid));
+    okGraduate = account === 'ok' && removed === 'ok';
+  }
   const okRecords = await removeRecords();
   const okA = await removeKnown(okRecords);
   const okB = await removeAccount();
   // 拒否された場合も、応答が失われた場合も、確認専用の uid の記録を消す。
   const okOtherRika = await removeRika(PROBE_OTHER_UID);
-  if (leftoversFailed || !okRecords || !okA || !okB || !okOtherRika) rows.push(failRow(CLEANUP_LABEL));
+  if (leftoversFailed || !okGraduate || !okRecords || !okA || !okB || !okOtherRika) rows.push(failRow(CLEANUP_LABEL));
   return rows;
 
   // 通常の保存は記録と印を同時に書く。拒否の確認だけは、ほかの規則に隠されないよう 1 か所ずつ試す。

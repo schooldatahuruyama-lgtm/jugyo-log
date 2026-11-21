@@ -202,6 +202,11 @@
 /* 先生の画面の共通: ボタンの並び、画面の中の入力の form */
 .page-actions { display: flex; flex-wrap: wrap; gap: var(--s-1); margin-bottom: var(--s-2); }
 .page-actions-end { justify-content: flex-end; margin-top: var(--s-2); }
+.graduate-list { display: grid; gap: var(--s-2); }
+.graduate-row { min-width: 0; overflow-wrap: anywhere; }
+.graduate-row input { width: 100%; max-width: 20rem; box-sizing: border-box; }
+.graduate-row .dialog-actions { flex-wrap: wrap; }
+.graduate-row .btn { max-width: 100%; white-space: normal; }
 .form-area:empty { display: none; }
 .inline-form { max-width: 640px; margin-bottom: var(--s-3); }
 .inline-form h2 { font-size: 22px; }
