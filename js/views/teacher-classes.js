@@ -10,6 +10,7 @@ import { teacherNav } from './parts/teacher-nav.js';
 import { RIKA_UNITS, cleanClassUnit, rikaUnitLabel } from '../rika-units.js';
 import { rikaProgressUrl } from '../rika-link.js';
 import { cohorts } from '../graduate-logic.js';
+import { PROBE_ID } from '../rules-probe.js';
 
 const NAME_MAX = 40;    // クラス名の長さの上限
 const ISSUE_MAX = 200;  // 一度に発行できる人数の上限
@@ -496,7 +497,7 @@ export function mount(root, ctx) {
   async function loadGraduateNotice() {
     try {
       const [students, removed] = await Promise.all([ctx.repo.listStudents(), ctx.repo.listRemoved()]);
-      if (!alive || !cohorts({ students, removed, now: ctx.now(), graceDays: CONFIG.graduate.graceDays })
+      if (!alive || !cohorts({ students, removed, now: ctx.now(), graceDays: CONFIG.graduate.graceDays, exclude: [PROBE_ID] })
         .some((group) => group.state === 'purging')) return;
       graduateMessage.replaceChildren(el('div', { class: 'notice' },
         el('p', { text: '消してから 30 日をすぎた学年があります。『卒業』の画面を開くと、完全に消します。' }),
