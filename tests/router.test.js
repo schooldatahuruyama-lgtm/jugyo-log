@@ -16,6 +16,7 @@ const TABLE = [
   ['t-lessons', {}, '#/t/lessons', 'teacher-lessons', 'teacher'],
   ['t-lesson', { classId: 'A1b2', lessonId: 'c3D4' }, '#/t/lesson/A1b2/c3D4', 'teacher-lesson', 'teacher'],
   ['t-review', {}, '#/t/review', 'teacher-review', 'teacher'],
+  ['t-graduates', {}, '#/t/graduates', 'teacher-graduates', 'teacher'],
   ['t-review', { classId: 'a', lessonId: 'b' }, '#/t/review/a/b', 'teacher-review', 'teacher'],
   ['t-record', { classId: 'a', lessonId: 'b', studentId: 's26-001' }, '#/t/review/a/b/s26-001', 'teacher-record', 'teacher'],
   ['t-roster', { classId: 'abc123XYZ' }, '#/t/class/abc123XYZ', 'teacher-roster', 'teacher'],

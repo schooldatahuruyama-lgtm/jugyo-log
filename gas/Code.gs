@@ -8,7 +8,7 @@
  * スクリプト プロパティ DATABASE_URL に、データベースの URL を入れておくこと。
  */
 
-var VERSION = 'app-6';
+var VERSION = 'app-7';
 var FOLDER_NAME = '授業ログ_資料';
 var STUDENT_FOLDER_NAME = '授業ログ_生徒';
 var IMAGE_MAX_B64 = 1400000;
@@ -65,7 +65,7 @@ function handle_(e) {
   var op = req.op;
   if (op === 'ping') return { ok: true, version: VERSION };
   if (op !== 'whoami' && op !== 'putMaterial' && op !== 'getMaterials' && op !== 'getFile' && op !== 'trashFile' &&
-      op !== 'putStudentFile' && op !== 'getStudentFile' && op !== 'getStudentFiles' && op !== 'trashStudentFile' && op !== 'summarize') {
+      op !== 'putStudentFile' && op !== 'getStudentFile' && op !== 'getStudentFiles' && op !== 'trashStudentFile' && op !== 'trashStudentFiles' && op !== 'summarize') {
     return fail_('bad');
   }
 
@@ -81,6 +81,10 @@ function handle_(e) {
   if (op === 'summarize') {
     if (user.role !== 'teacher') return fail_('denied');
     return summarize_(req);
+  }
+  if (op === 'trashStudentFiles') {
+    if (user.role !== 'teacher') return fail_('denied');
+    return trashStudentFiles_(req, base);
   }
   if (op === 'putMaterial' || op === 'trashFile') {
     if (user.role !== 'teacher') return fail_('denied');
@@ -561,4 +565,46 @@ function trashStudentFile_(req, user) {
   if (!file) return { ok: true, trashed: false };
   file.setTrashed(true);
   return { ok: true, trashed: true };
+}
+
+// 卒業後の片付け。先生のトークンで removed を毎回読み、持ち主を確かめる。
+function trashStudentFiles_(req, base) {
+  if (!Array.isArray(req.fileIds) || req.fileIds.length < 1 || req.fileIds.length > 20 ||
+      req.fileIds.some(function (id) { return !matches_(id, ID_RE); }) ||
+      !Array.isArray(req.studentIds) || req.studentIds.length < 1 || req.studentIds.length > 60 ||
+      req.studentIds.some(function (id) { return !matches_(id, STUDENT_ID_RE); })) return fail_('bad');
+  var allowed = Object.create(null);
+  for (var i = 0; i < req.studentIds.length; i++) {
+    var sid = req.studentIds[i];
+    var res = UrlFetchApp.fetch(base + '/removed/' + sid + '.json?auth=' + req.token, { muteHttpExceptions: true });
+    if (res.getResponseCode() !== 200) return fail_('denied');
+    var value = JSON.parse(res.getContentText());
+    if (value && typeof value.removedAt === 'number' && isFinite(value.removedAt)) allowed[sid] = true;
+  }
+  var folder = findFolder_(STUDENT_FOLDER_NAME);
+  var result = { ok: true, trashed: 0, missing: 0, skipped: 0, unknown: 0 };
+  for (var j = 0; j < req.fileIds.length; j++) {
+    var file;
+    try {
+      file = DriveApp.getFileById(req.fileIds[j]);
+    } catch (err) {
+      Utilities.sleep(500);
+      try {
+        file = DriveApp.getFileById(req.fileIds[j]);
+      } catch (retryError) {
+        result.unknown += 1;
+        continue;
+      }
+    }
+    try {
+      if (file.isTrashed() || !folder || !isInFolder_(file, folder)) { result.missing += 1; continue; }
+      var owner = studentOwner_(file);
+      if (!owner) result.missing += 1;
+      else if (!allowed[owner]) result.skipped += 1;
+      else { file.setTrashed(true); result.trashed += 1; }
+    } catch (err) {
+      result.unknown += 1;
+    }
+  }
+  return result;
 }

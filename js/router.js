@@ -13,6 +13,7 @@ const ROUTES = {
   't-lessons': ['#/t/lessons', 'teacher-lessons', 'teacher'],
   't-lesson': [null, 'teacher-lesson', 'teacher'],
   't-review': ['#/t/review', 'teacher-review', 'teacher'],
+  't-graduates': ['#/t/graduates', 'teacher-graduates', 'teacher'],
   't-record': [null, 'teacher-record', 'teacher'],
   't-roster': [null, 'teacher-roster', 'teacher'],
   't-sheet': [null, 'teacher-sheet', 'teacher'],
@@ -28,6 +29,7 @@ const SIMPLE = {
   '#/t/units': 't-units',
   '#/t/lessons': 't-lessons',
   '#/t/review': 't-review',
+  '#/t/graduates': 't-graduates',
   '#/t/rules': 't-rules',
 };
 

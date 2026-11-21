@@ -11,6 +11,33 @@ import { NetError } from '../js/errors.js';
 const upload = { key: 'test-key-1', mime: 'image/jpeg', name: '板書', dataB64: 'AQID' };
 const refs = { classId: 'c1', lessonId: 'l1' };
 
+test('卒業の削除: 先生だけが removed の生徒のファイルを消し、違う持ち主は skipped', async () => {
+  const { gas, net, setUser } = make();
+  await net.set('lessons/c1/l1/createdAt', 1);
+  setUser('student');
+  const { id } = await gas.call('putStudentFile', { ...upload, ...refs });
+  await rejectsCode(gas.call('trashStudentFiles', { fileIds: [id], studentIds: ['s26-001'] }), 'denied');
+  setUser('teacher');
+  for (const value of [null, { removedAt: '1' }]) {
+    await net.set('removed/s26-001', value);
+    assert.deepEqual(await gas.call('trashStudentFiles', { fileIds: [id], studentIds: ['s26-001'] }),
+      { ok: true, trashed: 0, missing: 0, skipped: 1, unknown: 0 });
+  }
+  await net.set('removed/s26-001', { removedAt: 0 });
+  assert.deepEqual(await gas.call('trashStudentFiles', { fileIds: [id], studentIds: ['s26-002'] }),
+    { ok: true, trashed: 0, missing: 0, skipped: 1, unknown: 0 });
+  assert.deepEqual(await gas.call('trashStudentFiles', { fileIds: [id, 'gone'], studentIds: ['s26-001'] }),
+    { ok: true, trashed: 1, missing: 1, skipped: 0, unknown: 0 });
+  assert.deepEqual(await gas.call('trashStudentFiles', { fileIds: [id], studentIds: ['s26-001'] }),
+    { ok: true, trashed: 0, missing: 1, skipped: 0, unknown: 0 });
+  for (const fileIds of [[], Array(21).fill(id), ['bad/id'], [1]]) {
+    await rejectsCode(gas.call('trashStudentFiles', { fileIds, studentIds: ['s26-001'] }), 'bad');
+  }
+  for (const studentIds of [[], Array(61).fill('s26-001'), ['bad'], ['s26-001\n']]) {
+    await rejectsCode(gas.call('trashStudentFiles', { fileIds: [id], studentIds }), 'bad');
+  }
+});
+
 test('練習用のまとめ: 先生だけが呼べる。先頭の疑問 3 人と見本の印を返す', async () => {
   const { gas, setUser } = make();
   const request = { title: '確認用の授業', terms: [], entries: Array.from({ length: 4 }, (_, i) => ({
@@ -48,7 +75,7 @@ test('先生は保存でき、同じ key を同時に頼んでも 1 個になる
 
 test('ping と whoami は本物と同じ形。未ログイン・対応のないアカウントは auth', async () => {
   const { gas, setUser } = make();
-  assert.deepEqual(await gas.call('ping'), { ok: true, version: 'app-6' });
+  assert.deepEqual(await gas.call('ping'), { ok: true, version: 'app-7' });
   assert.deepEqual(await gas.call('whoami'), { ok: true, role: 'teacher' });
   setUser('student');
   assert.deepEqual(await gas.call('whoami'), { ok: true, role: 'student', studentId: 's26-001' });

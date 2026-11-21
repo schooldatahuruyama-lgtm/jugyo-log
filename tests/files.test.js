@@ -7,12 +7,42 @@ import { NetError } from '../js/errors.js';
 
 const image = (id) => ({ id, type: 'image', fileId: `file-${id}` });
 const encoded = { mime: 'image/jpeg', dataB64: 'AP+A' };
+
+test('卒業のファイル削除は空なら通信せず、件数を返して取り置きを消す', async () => {
+  const h = make(() => ({ ok: true, trashed: 1, missing: 1, skipped: 1, unknown: 0 }));
+  assert.deepEqual(await h.files.trashStudents([], []), { trashed: 0, missing: 0, skipped: 0, unknown: 0 });
+  assert.equal(h.calls.length, 0);
+  for (const id of ['f1', 'f2', 'f3', 'keep']) await h.cache.put(id, new Blob(['見本']));
+  assert.deepEqual(await h.files.trashStudents(['f1', 'f2', 'f3'], ['s26-001']), { trashed: 1, missing: 1, skipped: 1, unknown: 0 });
+  assert.deepEqual(h.calls, [{ op: 'trashStudentFiles', payload: { fileIds: ['f1', 'f2', 'f3'], studentIds: ['s26-001'] } }]);
+  for (const id of ['f1', 'f2', 'f3']) assert.equal(await h.cache.get(id), null);
+  assert.ok(await h.cache.get('keep'));
+});
+
+test('卒業のファイル削除は失敗・不正な返事でも消した可能性のある取り置きを残さない', async () => {
+  for (const response of [null, { trashed: '1', missing: 0, skipped: 0 }, { trashed: 0, missing: 0, skipped: 0, unknown: 0 }]) {
+    const h = make(() => { if (response === null) throw new NetError('network'); return response; });
+    await h.cache.put('f1', new Blob(['見本']));
+    await assert.rejects(h.files.trashStudents(['f1'], ['s26-001']));
+    assert.equal(await h.cache.get('f1'), null);
+  }
+});
 function make(handler) {
   const calls = [];
   const cache = createFileCache({ caches: undefined });
   const gas = { call: async (op, payload) => { calls.push({ op, payload }); return handler(op, payload); } };
   return { calls, cache, files: createFiles({ gas, cache }) };
 }
+
+test('卒業のファイル削除: unknown の数を返し、古い GAS や数でない値は 0 として扱う', async () => {
+  for (const unknown of [undefined, null, '1', false, {}, [], NaN, Infinity, -1, 0.5]) {
+    const h = make(() => ({ trashed: 1, missing: 0, skipped: 0, unknown }));
+    assert.deepEqual(await h.files.trashStudents(['f1'], ['s26-001']), { trashed: 1, missing: 0, skipped: 0, unknown: 0 });
+  }
+  const h = make(() => ({ trashed: 1, missing: 0, skipped: 0, unknown: 2 }));
+  assert.deepEqual(await h.files.trashStudents(['f1', 'f2', 'f3'], ['s26-001']), { trashed: 1, missing: 0, skipped: 0, unknown: 2 });
+  await assert.rejects(h.files.trashStudents(['f1'], ['s26-001']), { code: 'unknown' });
+});
 
 function useFileReader(t, FileReader) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'FileReader');

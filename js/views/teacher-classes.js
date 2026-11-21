@@ -9,6 +9,7 @@ import { schoolYear, entryYY, isProbeId } from '../roster-logic.js';
 import { teacherNav } from './parts/teacher-nav.js';
 import { RIKA_UNITS, cleanClassUnit, rikaUnitLabel } from '../rika-units.js';
 import { rikaProgressUrl } from '../rika-link.js';
+import { cohorts } from '../graduate-logic.js';
 
 const NAME_MAX = 40;    // クラス名の長さの上限
 const ISSUE_MAX = 200;  // 一度に発行できる人数の上限
@@ -100,11 +101,13 @@ export function mount(root, ctx) {
   const progress = el('div', { class: 'issue-progress', role: 'status', 'aria-live': 'polite' });
   const listArea = el('div', { class: 'class-list' });
   const unitMessage = el('div', { class: 'class-unit-message' });
+  const graduateMessage = el('div', { class: 'graduate-notice' });
 
   const openRules = () => ctx.navigate('t-rules');
 
   root.replaceChildren(bar, el('main', { class: 'page-main' },
     el('h1', { text: 'クラス' }),
+    graduateMessage,
     el('div', { class: 'page-actions' }, createBtn, issueBtn),
     formArea,
     progress,
@@ -489,6 +492,18 @@ export function mount(root, ctx) {
 
   listArea.replaceChildren(el('p', { class: 'loading', role: 'status', text: '読みこんでいます…' }));
   loadClasses();
+
+  async function loadGraduateNotice() {
+    try {
+      const [students, removed] = await Promise.all([ctx.repo.listStudents(), ctx.repo.listRemoved()]);
+      if (!alive || !cohorts({ students, removed, now: ctx.now(), graceDays: CONFIG.graduate.graceDays })
+        .some((group) => group.state === 'purging')) return;
+      graduateMessage.replaceChildren(el('div', { class: 'notice' },
+        el('p', { text: '消してから 30 日をすぎた学年があります。『卒業』の画面を開くと、完全に消します。' }),
+        el('button', { type: 'button', class: 'btn', text: '卒業の画面へ', onclick: () => ctx.navigate('t-graduates') })));
+    } catch { /* 知らせを読めなくても、クラスの画面は使える */ }
+  }
+  loadGraduateNotice();
 
   // 前の画面で始めた発行が、まだ止まりきっていなければ、終わるまで発行のボタンを押せなくする
   async function start() {

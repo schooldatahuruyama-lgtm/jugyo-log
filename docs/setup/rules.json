@@ -29,7 +29,7 @@
       ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
       "$uid": {
         ".read": "auth != null && auth.uid === $uid",
-        ".validate": "newData.isString()"
+        ".validate": "newData.isString() && !root.child('removed').child(newData.val()).child('purging').exists()"
       }
     },
     "students": {
@@ -101,7 +101,7 @@
         "$lessonId": {
           "$sid": {
             ".read": "auth != null && root.child('accounts').child(auth.uid).val() === $sid",
-            ".write": "auth != null && root.child('accounts').child(auth.uid).val() === $sid && root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true && root.child('lessons').child($classId).child($lessonId).exists()",
+            ".write": "(auth != null && root.child('accounts').child(auth.uid).val() === $sid && root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true && root.child('lessons').child($classId).child($lessonId).exists()) || (auth != null && root.child('teacherList').child(auth.uid).val() === true && !newData.exists() && root.child('removed').child($sid).exists())",
             ".validate": "newData.hasChildren()",
             "memo": {
               ".validate": "newData.isString() && newData.val().length <= 2000"
@@ -212,7 +212,7 @@
         "$lessonId": {
           "$sid": {
             ".read": "auth != null && root.child('accounts').child(auth.uid).val() === $sid",
-            ".write": "auth != null && root.child('accounts').child(auth.uid).val() === $sid && root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true && root.child('lessons').child($classId).child($lessonId).exists()",
+            ".write": "(auth != null && root.child('accounts').child(auth.uid).val() === $sid && root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true && root.child('lessons').child($classId).child($lessonId).exists()) || (auth != null && root.child('teacherList').child(auth.uid).val() === true && !newData.exists() && root.child('removed').child($sid).exists())",
             ".validate": "newData.hasChildren()",
             "$aid": {
               ".validate": "$aid.matches(/^a[1-6]$/) && newData.isString() && newData.val().length <= 20000"
@@ -229,7 +229,7 @@
             ".validate": "$field === 'learned' || $field === 'question'",
             "$sid": {
               ".read": "auth != null && root.child('accounts').child(auth.uid).val() === $sid",
-              ".write": "auth != null && root.child('accounts').child(auth.uid).val() === $sid && root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true && root.child('lessons').child($classId).child($lessonId).exists()",
+              ".write": "(auth != null && root.child('accounts').child(auth.uid).val() === $sid && root.child('memberOf').child(root.child('accounts').child(auth.uid).val()).child($classId).val() === true && root.child('lessons').child($classId).child($lessonId).exists()) || (auth != null && root.child('teacherList').child(auth.uid).val() === true && !newData.exists() && root.child('removed').child($sid).exists())",
               ".validate": "newData.isString() && newData.val().length <= 20000"
             }
           }
@@ -248,7 +248,8 @@
               ".validate": "$tid.matches(/^t[1-8]$/) && newData.isString() && newData.val().length >= 1 && newData.val().length <= 20"
             }
           }
-        }
+        },
+        ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true && !newData.exists() && root.child('removed').child($sid).exists()"
       }
     },
     "replies": {
@@ -304,7 +305,8 @@
           "$lessonId": {
             ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 4 && newData.val() % 1 === 0"
           }
-        }
+        },
+        ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true && !newData.exists() && root.child('removed').child($sid).exists()"
       }
     },
     "rika": {
@@ -319,7 +321,7 @@
       "state": {
         ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
         "$uid": {
-          ".read": "auth != null && auth.uid === $uid",
+          ".read": "auth != null && auth.uid === $uid && (root.child('teacherList').child(auth.uid).val() === true || root.child('accounts').child(auth.uid).isString())",
           ".write": "auth != null && ((auth.uid === $uid && (root.child('teacherList').child(auth.uid).val() === true || root.child('accounts').child(auth.uid).isString())) || (root.child('teacherList').child(auth.uid).val() === true && !newData.exists()))",
           ".validate": "newData.hasChildren(['v', 'updatedAt', 'json']) && (!data.exists() || (newData.child('base').val() === data.child('updatedAt').val() && newData.child('updatedAt').val() > data.child('updatedAt').val()))",
           "v": { ".validate": "newData.val() === 1" },
@@ -332,12 +334,31 @@
       "log": {
         ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
         "$uid": {
-          ".read": "auth != null && auth.uid === $uid",
+          ".read": "auth != null && auth.uid === $uid && (root.child('teacherList').child(auth.uid).val() === true || root.child('accounts').child(auth.uid).isString())",
           ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true && !newData.exists()",
           "$chunk": {
             ".write": "auth != null && auth.uid === $uid && !data.exists() && (root.child('teacherList').child(auth.uid).val() === true || root.child('accounts').child(auth.uid).isString())",
             ".validate": "$chunk.matches(/^[A-Za-z0-9_-]{8,40}$/) && newData.isString() && newData.val().length >= 2 && newData.val().length <= 200000"
           }
+        }
+      }
+    },
+    "removed": {
+      ".read": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+      ".write": "auth != null && root.child('teacherList').child(auth.uid).val() === true",
+      "$sid": {
+        ".validate": "newData.hasChildren(['removedAt']) && newData.child('removedAt').isNumber() && newData.child('uid').val() === root.child('students').child($sid).child('uid').val() && (!data.child('purging').exists() || newData.child('purging').val() === true)",
+        "removedAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "uid": {
+          ".validate": "newData.isString()"
+        },
+        "purging": {
+          ".validate": "newData.val() === true"
+        },
+        "$other": {
+          ".validate": false
         }
       }
     }

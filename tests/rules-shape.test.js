@@ -7,6 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRepo } from '../js/repo.js';
 import { createMemoryNet } from '../js/dev/memory-net.js';
+import { removeCohort, purgeCohort } from '../js/graduate-flow.js';
+import { cohorts } from '../js/graduate-logic.js';
+import { NetError } from '../js/errors.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const at = (p) => join(root, p);
@@ -178,7 +181,7 @@ test('最上位の場所が決まりどおり', () => {
   const keys = Object.keys(rules).filter((k) => !k.startsWith('.')).sort();
   assert.deepEqual(keys, [
     'check', 'teacherList', 'gen', 'accounts', 'students', 'counters', 'initialPw', 'aiSummaries',
-    'classes', 'members', 'memberOf', 'units', 'lessons', 'thumbs', 'records', 'recThumbs', 'inkThumbs', 'marks', 'terms', 'replies', 'replyMarks', 'rika',
+    'classes', 'members', 'memberOf', 'units', 'lessons', 'thumbs', 'records', 'recThumbs', 'inkThumbs', 'marks', 'terms', 'replies', 'replyMarks', 'rika', 'removed',
   ].sort());
 });
 
@@ -427,6 +430,7 @@ test('terms は先生と本人が読み、所属する本人だけが実在す�
   ]);
   assert.deepEqual(rulesIn(rules.terms).filter(([, k]) => k === '.write'), [
     ['$sid/$classId', '.write', rules.marks.$sid.$classId['.write']],
+    ['$sid', '.write', rules.marks.$sid['.write']],
   ]);
   for (const name of ['teacherList', 'accounts']) assert.ok(sid['.read'].includes(name));
   for (const name of ['accounts', 'memberOf']) assert.ok(cls['.write'].includes(name));
@@ -477,12 +481,165 @@ test('式はすべて true・false か文字', () => {
   }
 });
 
-test('先生は生徒の記録を書けない（records/$sid の .write に teacherList が出てこない）', () => {
-  const sid = rules.records.$classId.$lessonId.$sid;
-  assert.equal(typeof sid['.write'], 'string');
-  assert.equal(sid['.write'].includes('teacherList'), false);
-  for (const [p, k, v] of rulesIn(rules.records)) {
-    if (k === '.write') assert.equal(String(v).includes('teacherList'), false, `records/${p} に teacherList があります`);
+test('先生は消してある生徒のデータだけ削除でき、書きかえはできない', () => {
+  const nodes = [rules.records.$classId.$lessonId.$sid, rules.recThumbs.$classId.$lessonId.$sid,
+    rules.inkThumbs.$classId.$lessonId.$field.$sid, rules.terms.$sid, rules.marks.$sid];
+  for (const node of nodes) for (const removed of [false, true]) for (const deleting of [false, true]) {
+    const data = snapshot({ teacherList: { testTeacher: true }, removed: removed ? { 's26-001': { removedAt: 0 } } : {} });
+    const evaluate = new Function('auth', 'root', 'newData', '$sid', '$classId', '$lessonId', '$field', `return (${node['.write']});`);
+    assert.equal(evaluate({ uid: 'testTeacher' }, data, snapshot(deleting ? null : {}), 's26-001', 'c1', 'l1', 'learned'), removed && deleting);
+    assert.equal(evaluate(null, data, snapshot(null), 's26-001', 'c1', 'l1', 'learned'), false);
+  }
+});
+
+test('removed は先生だけが読み書きし、removedAt は数、uid は文字、ほかの項目は不可', () => {
+  const node = rules.removed;
+  for (const key of ['.read', '.write']) {
+    const evaluate = new Function('auth', 'root', `return (${node[key]});`);
+    const data = snapshot({ teacherList: { teacher: true } });
+    assert.equal(evaluate({ uid: 'teacher' }, data), true);
+    assert.equal(evaluate({ uid: 'student' }, data), false);
+    assert.equal(evaluate(null, data), false);
+  }
+  const valid = (newData, data) => new Function('newData', 'data', 'root', '$sid', `return (${node.$sid['.validate']});`)(
+    newData, data, snapshot({}), 's26-001');
+  assert.equal(valid(snapshot({ removedAt: 0 }), snapshot(null)), true);
+  for (const v of [{}, { removedAt: '0' }, { removedAt: null }]) assert.equal(valid(snapshot(v), snapshot(null)), false);
+  assert.equal(node.$sid.uid['.validate'], 'newData.isString()');
+  assert.equal(node.$sid.$other['.validate'], false);
+});
+
+test('完全削除の印は true だけ。印だけの解除とアカウント再接続を拒否し、丸ごとの削除は許す', async () => {
+  const node = rules.removed.$sid;
+  const validate = (newData, data) => new Function('newData', 'data', 'root', '$sid', `return (${node['.validate']});`)(
+    newData, data, snapshot({ students: { 's26-001': { uid: 'test1' } } }), 's26-001');
+  const flag = new Function('newData', `return (${node.purging['.validate']});`);
+  const before = { removedAt: 1, uid: 'test1', purging: true };
+  for (const purging of [true, undefined, null, false, 1, 'true', {}, []]) {
+    assert.equal(flag(snapshot(purging)), purging === true);
+    assert.equal(validate(snapshot({ ...before, purging }), snapshot(before)), purging === true);
+  }
+  const root = snapshot({ removed: { 's26-001': before }, teacherList: { teacher: true } });
+  const account = new Function('newData', 'root', `return (${rules.accounts.$uid['.validate']});`);
+  assert.equal(account(snapshot('s26-001'), root), false);
+  assert.equal(account(snapshot('s26-002'), root), true);
+  assert.equal(account(snapshot(1), root), false);
+  const write = new Function('auth', 'root', `return (${rules.removed['.write']});`);
+  assert.equal(write({ uid: 'teacher' }, root), true);
+  // 削除時は validate が走らない。復元・出し直しの update は更新前の root で全体を拒否する。
+  const mem = createMemoryNet({ initial: { removed: { 's26-001': before } } });
+  const repo = createRepo({ ...mem, update: async (path, patch) => {
+    for (const [p, value] of Object.entries(patch)) if (p.startsWith('accounts/') && value !== null) {
+      if (!account(snapshot(value), snapshot({ removed: await mem.get('removed') }))) throw new Error('denied');
+    }
+    await mem.update(path, patch);
+  } });
+  await assert.rejects(repo.restoreStudents([{ id: 's26-001', uid: 'test1' }]), /denied/);
+  await assert.rejects(repo.linkAccount('s26-001', { uid: 'test2', generation: 2, password: 'test-value' }), /denied/);
+  assert.deepEqual(await mem.get('removed/s26-001'), before);
+  assert.equal(await mem.get('accounts'), null);
+  await mem.remove('removed/s26-001');
+  assert.equal(await mem.get('removed'), null);
+});
+
+// removed に触れる update だけで、本番の式に書きこみ前の root と書きこみ後の newData を渡す。
+function removedSetup(initial) {
+  const mem = createMemoryNet({ initial });
+  const calls = [];
+  const validate = new Function('newData', 'data', 'root', '$sid', `return (${rules.removed.$sid['.validate']});`);
+  const repo = createRepo({ ...mem, update: async (path, patch) => {
+    assert.equal(path, '');
+    const before = snapshot(mem.dump());
+    const next = createMemoryNet({ initial: mem.dump() });
+    await next.update(path, patch);
+    const after = snapshot(next.dump());
+    const touched = new Set(Object.keys(patch).filter((p) => p.startsWith('removed/')).map((p) => p.split('/')[1]));
+    for (const sid of touched) {
+      const newData = after.child('removed').child(sid);
+      if (newData.exists() && !validate(newData, before.child('removed').child(sid), before, sid)) throw new NetError('denied');
+    }
+    calls.push(patch);
+    await mem.update(path, patch);
+  } });
+  return { mem, repo, calls };
+}
+
+test('removed の uid は書く前の台帳と一致する場合だけ許し、両方なしも通る', async () => {
+  for (const current of [null, 'test1']) for (const uid of [null, 'test1', 'test2']) {
+    const h = removedSetup({ students: { 's26-001': { createdAt: 1, uid: current } }, accounts: { test1: 's26-001' } });
+    const before = h.mem.dump();
+    const operation = h.repo.removeStudents([{ id: 's26-001', uid }], 42);
+    if (uid === current) {
+      await operation;
+      assert.deepEqual(await h.mem.get('removed/s26-001'), { removedAt: 42, ...(uid ? { uid } : {}) });
+    } else {
+      await assert.rejects(operation, { code: 'denied' });
+      assert.deepEqual(h.mem.dump(), before);
+    }
+  }
+});
+
+test('読み取り後に出し直すと学年全体の削除を拒否し、読み直した後は未発行の生徒も一緒に消す', async () => {
+  const h = removedSetup({ students: { 's26-001': { uid: 'test1', createdAt: 1 }, 's26-002': { createdAt: 1 } },
+    accounts: { test1: 's26-001' } });
+  const cohort = { active: await h.repo.listStudents() };
+  await h.repo.linkAccount('s26-001', { uid: 'test2', generation: 2, password: 'test-value' }, 'test1');
+  const before = h.mem.dump();
+  await assert.rejects(removeCohort({ repo: h.repo, cohort, now: 42 }), { code: 'changed' });
+  assert.deepEqual(h.mem.dump(), before);
+  assert.equal(await h.mem.get('accounts/test2'), 's26-001');
+  assert.equal(await h.mem.get('removed'), null);
+  cohort.active = await h.repo.listStudents();
+  assert.equal(await removeCohort({ repo: h.repo, cohort, now: 43 }), 2);
+  assert.equal(await h.mem.get('accounts'), null);
+  assert.deepEqual(await h.mem.get('removed'), { 's26-001': { removedAt: 43, uid: 'test2' }, 's26-002': { removedAt: 43 } });
+});
+
+test('purging だけを足せる。台帳の削除では removed を再検査せず、最後の片付けも通る', async () => {
+  for (const uid of ['test1', null]) {
+    const h = removedSetup({ students: { 's26-001': { createdAt: 1, uid } } });
+    await h.repo.removeStudents([{ id: 's26-001', uid }], 42);
+    await h.repo.markPurging(['s26-001']);
+    assert.equal(await h.mem.get('removed/s26-001/purging'), true);
+    await h.repo.purgeStudent({ id: 's26-001', uid, classIds: [] });
+    assert.ok(Object.keys(h.calls.at(-2)).every((p) => !p.startsWith('removed/')));
+    assert.deepEqual(h.calls.at(-1), { 'removed/s26-001': null });
+    assert.equal(await h.mem.get('students'), null);
+    assert.equal(await h.mem.get('removed'), null);
+  }
+});
+
+test('台帳を消した直後に止まったら、再開時に purging を書き直さず最後の removed を片付ける', async () => {
+  const h = removedSetup({ students: { 's26-001': { uid: 'test1', createdAt: 1 } } });
+  await h.repo.removeStudents([{ id: 's26-001', uid: 'test1' }], 0);
+  await h.repo.markPurging(['s26-001']);
+  const controller = new AbortController();
+  const repo = createRepo({ get: h.mem.get, update: async (...args) => {
+    await h.mem.update(...args); controller.abort();
+  } });
+  await assert.rejects(repo.purgeStudent({ id: 's26-001', uid: 'test1', classIds: [] }, controller.signal), { name: 'AbortError' });
+  assert.equal(await h.mem.get('students'), null);
+  assert.equal(await h.mem.get('removed/s26-001/purging'), true);
+  // この状態で印を書き直すと、新しい uid 検査で拒否される。
+  await assert.rejects(h.repo.markPurging(['s26-001']), { code: 'denied' });
+  const cohort = cohorts({ students: await h.repo.listStudents(), removed: await h.repo.listRemoved(), now: 1, graceDays: 30 })[0];
+  const start = h.calls.length;
+  assert.deepEqual(await purgeCohort({ repo: h.repo, cohort, files: {} }), { students: 1, files: 0, unknownFiles: 0 });
+  assert.ok(h.calls.slice(start).every((patch) => !Object.keys(patch).some((p) => p.endsWith('/purging'))));
+  assert.equal(await h.mem.get('removed'), null);
+});
+
+test('理科クエストの state・log は消した生徒の本人でも読めず、先生と使用中の本人は読める', () => {
+  for (const kind of ['state', 'log']) {
+    const rule = rules.rika[kind];
+    for (const uid of [null, 'teacher', 'student', 'unknown', 'invalid']) {
+      const auth = uid === null ? null : { uid };
+      const own = evaluateRikaRule(rule.$uid['.read'], { auth, uid });
+      assert.equal(own, uid === 'teacher' || uid === 'student');
+    }
+    const read = new Function('auth', 'root', '$uid', `return (${rule.$uid['.read']});`);
+    const root = snapshot({ removed: { 's26-001': { removedAt: 1, uid: 'student' } } });
+    assert.equal(read({ uid: 'student' }, root, 'student'), false);
   }
 });
 

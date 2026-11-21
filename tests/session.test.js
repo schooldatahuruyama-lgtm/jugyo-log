@@ -9,6 +9,24 @@ import { installDom, byClass, settle } from './helpers/picture-dom.js';
 
 const DOMAIN = 'jugyolog.invalid';
 
+test('main: 対応が消えて none になったら、取り置きと読み直しの予約を消す', async (t) => {
+  const jobs = new Map(); let serial = 0;
+  const timers = { setTimeout(fn) { jobs.set(++serial, fn); return serial; }, clearTimeout(id) { jobs.delete(id); } };
+  const h = await startApp(t, { offline: false, timers });
+  await h.store.put('u1', 'records/c1/l1/s26-001', { memo: '確認用の記録' });
+  h.ctx.offline.touch('c1', 'l1', 's26-001');
+  assert.equal(jobs.size, 1);
+  const pending = [...jobs.values()];
+  await h.backend.net.remove('accounts/u1');
+  window.fire('online'); await settle();
+  assert.equal(h.ctx.session.role, 'none');
+  assert.equal(jobs.size, 0);
+  assert.equal(await h.store.get('u1', 'records/c1/l1/s26-001'), null);
+  h.backend.net.get = async () => assert.fail('対応が消えたあとには読み直さない');
+  for (const fn of pending) await fn();
+  assert.equal(await h.store.get('u1', 'records/c1/l1/s26-001'), null);
+});
+
 // main の入口も実行する。画面モジュールの読みこみだけを、入力欄を持つ代役に置きかえる。
 async function startApp(t, { offline = true, timers = { setTimeout, clearTimeout } } = {}) {
   const dom = installDom();

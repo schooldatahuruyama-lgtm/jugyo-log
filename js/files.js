@@ -92,6 +92,21 @@ export function createFiles({ gas, cache, atob = globalThis.atob, btoa = globalT
       await cache.remove(fileId);
       return result.trashed;
     },
+    async trashStudents(fileIds, studentIds) {
+      if (!fileIds.length) return { trashed: 0, missing: 0, skipped: 0, unknown: 0 };
+      generation += 1;
+      try {
+        const { trashed, missing, skipped, unknown: value } = await gas.call('trashStudentFiles', { fileIds, studentIds });
+        const unknown = Number.isInteger(value) && value >= 0 ? value : 0;
+        if (![trashed, missing, skipped].every((n) => Number.isInteger(n) && n >= 0)
+          || trashed + missing + skipped + unknown !== fileIds.length) throw new NetError('unknown');
+        return { trashed, missing, skipped, unknown };
+      } finally {
+        // 応答だけ失われたときにも、消した可能性のあるファイルを取り置きに残さない。
+        generation += 1;
+        for (const id of fileIds) await cache.remove(id);
+      }
+    },
     async clearCache() {
       // 消去前に始めた取得は、遅れて返ってきても取り置きに戻さない
       generation += 1;

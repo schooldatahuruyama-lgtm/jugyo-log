@@ -316,6 +316,10 @@ export function createRepo(net) {
         inkCleared: { ...toInkCleared(value.inkCleared), ...toInkCleared(flatInkPages(value.inkPagesCleared)) } };
     },
 
+    async listRecordIds(classId, lessonId) {
+      return entriesOf(await net.get(`records/${key(classId)}/${key(lessonId)}`, { shallow: true })).map(([id]) => id);
+    },
+
     // 先生が読む、授業 1 回分の全員の記録。書きかけも含め、1 回で読む
     async listRecords(classId, lessonId) {
       const value = await net.get(`records/${key(classId)}/${key(lessonId)}`);
@@ -569,6 +573,77 @@ export function createRepo(net) {
         .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     },
 
+    async listRemoved() {
+      return Object.fromEntries(entriesOf(await net.get('removed'))
+        .filter(([sid, v]) => isStudentId(sid) && sid.length === 7 && isObj(v) && isNum(v.removedAt)
+          && (v.uid === undefined || typeof v.uid === 'string')
+          && Object.keys(v).every((k) => k === 'removedAt' || k === 'uid' || k === 'purging'))
+        .map(([sid, v]) => [sid, { removedAt: v.removedAt, uid: v.uid ?? null, purging: v.purging === true }]));
+    },
+
+    async removeStudents(list, now) {
+      const patch = {};
+      for (const { id, uid } of list) {
+        patch[`removed/${key(id)}`] = uid ? { uid, removedAt: now } : { removedAt: now };
+        if (uid) patch[`accounts/${key(uid)}`] = null;
+      }
+      if (list.length) await net.update('', patch);
+    },
+
+    async restoreStudents(list) {
+      const patch = {};
+      for (const { id, uid } of list) {
+        patch[`removed/${key(id)}`] = null;
+        if (uid) patch[`accounts/${key(uid)}`] = id;
+      }
+      if (list.length) await net.update('', patch);
+    },
+
+    async listMemberOf() {
+      return Object.fromEntries(entriesOf(await net.get('memberOf')).map(([sid, value]) =>
+        [sid, entriesOf(value).filter(([, v]) => v === true).map(([id]) => id)]));
+    },
+
+    async listStudentIndex(studentId) {
+      const sid = key(studentId);
+      const indexes = await Promise.all(['marks', 'terms', 'replyMarks'].map((name) => net.get(`${name}/${sid}`)));
+      return [...new Set(indexes.flatMap((value) => entriesOf(value).filter(([, v]) => isObj(v)).map(([id]) => id)))];
+    },
+
+    async markPurging(ids) {
+      const patch = {};
+      for (const id of ids) patch[`removed/${key(id)}/purging`] = true;
+      if (ids.length) await net.update('', patch);
+    },
+
+    async purgeLessonRecords(classId, lessonId, studentIds) {
+      const path = `${key(classId)}/${key(lessonId)}`;
+      const patch = { [`aiSummaries/${path}`]: null };
+      for (const id of studentIds) {
+        const sid = key(id);
+        for (const name of ['records', 'recThumbs', 'replies']) patch[`${name}/${path}/${sid}`] = null;
+        for (const field of ['learned', 'question']) patch[`inkThumbs/${path}/${field}/${sid}`] = null;
+        patch[`replyMarks/${sid}/${path}`] = null;
+      }
+      await net.update('', patch);
+    },
+
+    async purgeStudent({ id, uid, classIds }, signal) {
+      const sid = key(id);
+      const patch = {};
+      for (const name of ['terms', 'marks', 'replyMarks', 'memberOf', 'initialPw', 'gen', 'students']) patch[`${name}/${sid}`] = null;
+      for (const cid of classIds) patch[`members/${key(cid)}/${sid}`] = null;
+      if (uid) {
+        patch[`rika/state/${key(uid)}`] = null;
+        patch[`rika/log/${key(uid)}`] = null;
+      }
+      signal?.throwIfAborted();
+      await net.update('', patch);
+      // 削除を許す規則が removed を見るため、必ず別の通信で最後に消す。
+      signal?.throwIfAborted();
+      await net.update('', { [`removed/${sid}`]: null });
+    },
+
     // 入学年度の下 2 けた yy で、count 人分の生徒 ID を取る。
     // counters/<yy> を進め、students/<id> を作る（1 回のルート update）。
     // count が 1 以上の整数でないときや、連番が 999 をこえるときは、書く前に例外
@@ -607,8 +682,13 @@ export function createRepo(net) {
         [`gen/${sid}`]: generation,
         [`initialPw/${sid}`]: password,
         [`students/${sid}/uid`]: uid,
+        [`removed/${sid}`]: null,
       };
-      if (oldUid !== null && oldUid !== undefined && oldUid !== uid) patch[`accounts/${key(oldUid)}`] = null;
+      if (oldUid !== null && oldUid !== undefined && oldUid !== uid) {
+        patch[`accounts/${key(oldUid)}`] = null;
+        patch[`rika/state/${key(oldUid)}`] = null;
+        patch[`rika/log/${key(oldUid)}`] = null;
+      }
       await net.update('', patch);
     },
 

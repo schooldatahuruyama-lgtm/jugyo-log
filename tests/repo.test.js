@@ -62,6 +62,112 @@ function setup(initial = null) {
 
 const writes = (calls) => calls.set.length + calls.update.length + calls.remove.length;
 
+test('卒業: 記録の ID だけを shallow で読み、空・不正なキー・通信失敗も扱う', async () => {
+  const h = setup({ records: { c1: { l1: { 's26-001': { memo: '確認用' }, 's26-002': { level: 3 } } } } });
+  assert.deepEqual(await h.repo.listRecordIds('c1', 'l1'), ['s26-001', 's26-002']);
+  assert.deepEqual(h.calls.get, [['records/c1/l1', { shallow: true }]]);
+  assert.deepEqual(await h.repo.listRecordIds('c1', 'l2'), []);
+  for (const bad of ['', 'bad/key', null, undefined]) {
+    await assert.rejects(h.repo.listRecordIds(bad, 'l1'), TypeError);
+    await assert.rejects(h.repo.listRecordIds('c1', bad), TypeError);
+  }
+  assert.equal(h.calls.get.length, 2);
+  assert.equal(writes(h.calls), 0);
+  await assert.rejects(createRepo({ get: async () => { throw new NetError('network'); } }).listRecordIds('c1', 'l1'), { code: 'network' });
+});
+
+test('卒業: 完全削除の印は全員を一度の update で書き、二度書いても同じ。true 以外は印なし', async () => {
+  const h = setup({ removed: { 's26-001': { removedAt: 0, uid: 'test1' }, 's26-002': { removedAt: 1 } } });
+  const ids = ['s26-001', 's26-002'];
+  const expected = ['', { 'removed/s26-001/purging': true, 'removed/s26-002/purging': true }];
+  for (let i = 0; i < 2; i++) {
+    await h.repo.markPurging(ids);
+    assert.deepEqual(h.calls.update[i], expected);
+    assert.deepEqual(await h.repo.listRemoved(), { 's26-001': { removedAt: 0, uid: 'test1', purging: true },
+      's26-002': { removedAt: 1, uid: null, purging: true } });
+  }
+  await h.repo.markPurging([]);
+  assert.equal(h.calls.update.length, 2);
+  for (const value of [null, false, 1, 'true', [], {}]) {
+    await h.mem.set('removed/s26-001/purging', value);
+    assert.equal((await h.repo.listRemoved())['s26-001'].purging, false);
+  }
+});
+
+test('卒業: removed と所属の読み取りは形を確かめる', async () => {
+  const { repo } = setup({ removed: { 's26-001': { removedAt: 0, uid: 'test1' }, 's26-002': { removedAt: 1 },
+    's26-003': { removedAt: '0' }, 's26-004': { removedAt: 1, uid: 1 }, 's26-005': { removedAt: 1, extra: true }, bad: { removedAt: 0 } },
+    memberOf: { 's26-001': { c1: true, c2: false, c3: true }, 's26-002': 42 } });
+  assert.deepEqual(await repo.listRemoved(), { 's26-001': { removedAt: 0, uid: 'test1', purging: false }, 's26-002': { removedAt: 1, uid: null, purging: false } });
+  assert.deepEqual(await repo.listMemberOf(), { 's26-001': ['c1', 'c3'], 's26-002': [] });
+});
+
+test('卒業: 全員の消す・もどすを各 1 回で送り、uid なしも扱う。空なら送らない', async () => {
+  const { repo, calls } = setup();
+  const list = [{ id: 's26-001', uid: 'test1' }, { id: 's26-002', uid: null }];
+  await repo.removeStudents(list, 42);
+  await repo.restoreStudents(list);
+  assert.deepEqual(calls.update, [['', { 'removed/s26-001': { uid: 'test1', removedAt: 42 },
+    'accounts/test1': null, 'removed/s26-002': { removedAt: 42 } }],
+  ['', { 'removed/s26-001': null, 'accounts/test1': 's26-001', 'removed/s26-002': null }]]);
+  await repo.removeStudents([], 42); await repo.restoreStudents([]);
+  assert.equal(calls.update.length, 2);
+});
+
+test('卒業: 生徒の印 3 か所からクラスを重複なく返し、不正な値は除く', async () => {
+  const h = setup({ marks: { 's26-001': { c1: { l1: 3 }, c2: { l1: 2 }, bad: true } },
+    terms: { 's26-001': { c2: { l1: { t1: '確認用語' } }, c3: { l2: { t1: '用語' } }, bad: '値' } },
+    replyMarks: { 's26-001': { c1: { l1: 1 }, c4: { l2: 2 }, bad: [1] } } });
+  assert.deepEqual(await h.repo.listStudentIndex('s26-001'), ['c1', 'c2', 'c3', 'c4']);
+  assert.deepEqual(h.calls.get, [['marks/s26-001'], ['terms/s26-001'], ['replyMarks/s26-001']]);
+  assert.equal(writes(h.calls), 0);
+  for (const value of [null, false, 1, '値', [], [1]]) {
+    for (const kind of ['marks', 'terms', 'replyMarks']) {
+      const repo = createRepo({ get: async (path) => path.startsWith(`${kind}/`) ? value : null });
+      assert.deepEqual(await repo.listStudentIndex('s26-001'), []);
+      const child = createRepo({ get: async (path) => path.startsWith(`${kind}/`) ? { bad: value, c1: { l1: 1 } } : null });
+      assert.deepEqual(await child.listStudentIndex('s26-001'), ['c1']);
+    }
+  }
+  for (const bad of ['', 'bad/key', null, undefined]) await assert.rejects(h.repo.listStudentIndex(bad), TypeError);
+  assert.equal(h.calls.get.length, 3);
+  await assert.rejects(createRepo({ get: async () => { throw new NetError('network'); } }).listStudentIndex('s26-001'), { code: 'network' });
+});
+
+test('卒業: 授業の記録・画像・返事・目印と AI のまとめを一度で消す', async () => {
+  const { repo, calls } = setup();
+  await repo.purgeLessonRecords('c1', 'l1', ['s26-001', 's26-002']);
+  const expected = { 'aiSummaries/c1/l1': null };
+  for (const sid of ['s26-001', 's26-002']) {
+    for (const kind of ['records', 'recThumbs', 'replies']) expected[`${kind}/c1/l1/${sid}`] = null;
+    for (const field of ['learned', 'question']) expected[`inkThumbs/c1/l1/${field}/${sid}`] = null;
+    expected[`replyMarks/${sid}/c1/l1`] = null;
+  }
+  assert.deepEqual(calls.update, [['', expected]]);
+});
+
+test('卒業: 生徒の全パスを一度で消したあと、removed だけを別の一度で消す', async () => {
+  const { repo, calls } = setup();
+  await repo.purgeStudent({ id: 's26-001', uid: 'test1', classIds: ['c1', 'c2'] });
+  assert.deepEqual(calls.update, [['', {
+    'terms/s26-001': null, 'marks/s26-001': null, 'replyMarks/s26-001': null, 'memberOf/s26-001': null,
+    'initialPw/s26-001': null, 'gen/s26-001': null, 'students/s26-001': null,
+    'members/c1/s26-001': null, 'members/c2/s26-001': null, 'rika/state/test1': null, 'rika/log/test1': null,
+  }], ['', { 'removed/s26-001': null }]]);
+  const noUid = setup();
+  await noUid.repo.purgeStudent({ id: 's26-002', uid: null, classIds: [] });
+  assert.equal(Object.keys(noUid.calls.update[0][1]).length, 7);
+  assert.deepEqual(noUid.calls.update[1], ['', { 'removed/s26-002': null }]);
+});
+
+test('卒業: 最初の削除に失敗したら removed は残す', async () => {
+  const calls = [];
+  const repo = createRepo({ update: async (...args) => { calls.push(args); throw new NetError('denied'); } });
+  await assert.rejects(repo.purgeStudent({ id: 's26-001', uid: null, classIds: [] }), { code: 'denied' });
+  assert.equal(calls.length, 1);
+  assert.ok(!('removed/s26-001' in calls[0][1]));
+});
+
 test('クラスの理科の単元は、形を確かめて読み、保存・削除できる', async () => {
   const { repo, mem, calls } = setup();
   assert.equal(await repo.getClassUnit('c1'), null);
@@ -1278,8 +1384,10 @@ test('linkAccount: 1 回のルート update で、対応・回数・最初のパ
   assert.equal(await mem.get('students/s26-001/createdAt'), 1);
 });
 
-test('linkAccount: 古いアカウントの対応を消す', async () => {
-  const { repo, mem } = setup();
+test('linkAccount: 古いアカウントの対応と理科クエストの記録を一緒に消す', async () => {
+  const { repo, mem, calls } = setup({ removed: { 's26-001': { removedAt: 0, uid: 'u1' } },
+    rika: { state: { u1: { json: '{}' }, u2: { json: '{"v":1}' }, other: { json: '{}' } },
+      log: { u1: { probe_01: '[]' }, u2: { probe_02: '[]' }, other: { probe_03: '[]' } } } });
   await repo.linkAccount('s26-001', { uid: 'u1', generation: 1, password: 'abcd2345' });
   await repo.linkAccount('s26-001', { uid: 'u2', generation: 2, password: 'x' }, 'u1');
   assert.equal(await mem.get('accounts/u1'), null);
@@ -1287,6 +1395,23 @@ test('linkAccount: 古いアカウントの対応を消す', async () => {
   assert.equal(await mem.get('gen/s26-001'), 2);
   assert.equal(await repo.getMyStudentId('u2'), 's26-001');
   assert.equal(await repo.getMyStudentId('u1'), null);
+  assert.equal(await mem.get('removed/s26-001'), null);
+  assert.equal(calls.update.at(-1)[1]['removed/s26-001'], null);
+  assert.equal(calls.update.length, 2);
+  assert.equal(calls.update.at(-1)[1]['rika/state/u1'], null);
+  assert.equal(calls.update.at(-1)[1]['rika/log/u1'], null);
+  assert.equal(await mem.get('rika/state/u1'), null);
+  assert.equal(await mem.get('rika/log/u1'), null);
+  for (const uid of ['u2', 'other']) for (const kind of ['state', 'log']) assert.ok(await mem.get(`rika/${kind}/${uid}`));
+});
+
+for (const oldUid of ['u1', null, undefined]) test(`linkAccount: oldUid が ${oldUid} なら理科クエストには書かない`, async () => {
+  const initial = { rika: { state: { u1: { json: '{}' } }, log: { u1: { probe_01: '[]' } } } };
+  const { repo, mem, calls } = setup(initial);
+  await repo.linkAccount('s26-001', { uid: 'u1', generation: 1, password: 'test-value' }, oldUid);
+  assert.equal(calls.update.length, 1);
+  assert.ok(Object.keys(calls.update[0][1]).every((p) => !p.startsWith('rika/')));
+  assert.deepEqual(await mem.get('rika'), initial.rika);
 });
 
 test('saveMembers: members と memberOf を 1 回で書き、getMembers は出席番号順', async () => {

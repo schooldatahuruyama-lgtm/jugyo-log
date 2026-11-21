@@ -32,6 +32,7 @@ function setup(options = {}) {
     accounts: { uidS: 's26-001', uidOther: 's26-002' },
     memberOf: { 's26-001': { classA: true, c1: true }, 's26-002': { classB: true, c1: true } },
     materials: {},
+    removed: {},
     createdAt: { 'lessons/c1/l1/createdAt': 1, 'lessons/c1/l2/createdAt': 2 },
   };
   const reads = [];
@@ -39,6 +40,9 @@ function setup(options = {}) {
     read(path, uid) {
       reads.push({ path, uid });
       const parts = path.split('/');
+      if (parts.length === 2 && parts[0] === 'removed' && state.teacherList[uid]) {
+        return { status: 200, body: state.removed[parts[1]] ?? null };
+      }
       if (parts.length === 2 && (parts[0] === 'teacherList' || parts[0] === 'accounts')) {
         if (parts[1] !== uid) return { status: 401, body: { error: 'Permission denied' } };
         return { status: 200, body: state[parts[0]][uid] ?? null };
@@ -58,6 +62,7 @@ function setup(options = {}) {
     db,
     ...options,
   });
+  fakes.Utilities.sleep = () => {};
   const gas = loadGas(CODE, fakes);
   const call = (body) => {
     const out = gas.doPost({ postData: { contents: typeof body === 'string' ? body : JSON.stringify(body) } });
@@ -94,6 +99,67 @@ function countDriveReads(fakes) {
   };
   return ids;
 }
+
+for (const failures of [1, 2]) test(`卒業の削除: Drive の取得が ${failures} 回失敗したら、500 ms 待って一度だけ再試行する`, () => {
+  const h = setup();
+  const { id } = h.putStudent();
+  h.state.removed['s26-001'] = { removedAt: 0 };
+  const original = h.fakes.DriveApp.getFileById;
+  const calls = [], waits = [];
+  h.fakes.Utilities.sleep = (ms) => waits.push(ms);
+  h.fakes.DriveApp.getFileById = (fileId) => {
+    calls.push(fileId);
+    if (calls.length <= failures) throw new Error('確認用の取得失敗');
+    return original(fileId);
+  };
+  assert.deepEqual(h.call({ op: 'trashStudentFiles', token: tokT, fileIds: [id], studentIds: ['s26-001'] }),
+    { ok: true, trashed: failures === 1 ? 1 : 0, missing: 0, skipped: 0, unknown: failures === 2 ? 1 : 0 });
+  assert.deepEqual(calls, [id, id]);
+  assert.deepEqual(waits, [500]);
+  assert.equal(original(id).isTrashed(), failures === 1);
+});
+
+test('卒業の削除: ゴミ箱への移動や属性の取得が失敗したファイルは unknown、後続の確認は続ける', () => {
+  for (const method of ['setTrashed', 'getDescription', 'isTrashed']) {
+    const h = setup();
+    const a = h.putStudent(), b = h.putStudent({ key: 'student-next' });
+    h.state.removed['s26-001'] = { removedAt: 0 };
+    h.fakes.files.find((f) => f.getId() === a.id)[method] = () => { throw new Error('確認用の失敗'); };
+    assert.deepEqual(h.call({ op: 'trashStudentFiles', token: tokT, fileIds: [a.id, b.id], studentIds: ['s26-001'] }),
+      { ok: true, trashed: 1, missing: 0, skipped: 0, unknown: 1 });
+  }
+});
+
+test('卒業の削除: 先生のトークンで毎回 removed を読み、持ち主・フォルダ・説明を確かめる', () => {
+  const h = setup();
+  const saved = h.putStudent();
+  const other = h.putStudent({ token: tokOther, key: 'student-other' });
+  const material = h.put();
+  const request = { op: 'trashStudentFiles', token: tokT, fileIds: [saved.id], studentIds: ['s26-001'] };
+  assert.deepEqual(h.call({ ...request, token: tokS }), { ok: false, error: 'denied' });
+  assert.deepEqual(h.call(request), { ok: true, trashed: 0, missing: 0, skipped: 1, unknown: 0 });
+  h.state.removed['s26-001'] = { removedAt: '0' };
+  assert.equal(h.call(request).skipped, 1);
+  h.state.removed['s26-001'] = { removedAt: 0 };
+  assert.deepEqual(h.call({ ...request, fileIds: [saved.id, other.id, material.id, 'gone'] }),
+    { ok: true, trashed: 1, missing: 1, skipped: 1, unknown: 1 });
+  assert.deepEqual(h.call(request), { ok: true, trashed: 0, missing: 1, skipped: 0, unknown: 0 });
+  assert.ok(h.reads.filter((r) => r.path === 'removed/s26-001').every((r) => r.uid === 'uidT'));
+  assert.equal(h.fakes.files.find((f) => f.getId() === other.id).isTrashed(), false);
+  assert.equal(h.fakes.files.find((f) => f.getId() === material.id).isTrashed(), false);
+  h.state.removed['s26-002'] = { removedAt: 0 };
+  h.fakes.files.find((f) => f.getId() === other.id).setDescription('broken');
+  assert.equal(h.call({ ...request, fileIds: [other.id], studentIds: ['s26-002'] }).missing, 1);
+});
+
+test('卒業の削除: 空・上限超過・型や形の違う ID は bad', () => {
+  const { call } = setup();
+  const request = { op: 'trashStudentFiles', token: tokT, fileIds: ['file1'], studentIds: ['s26-001'] };
+  for (const fileIds of [[], Array(21).fill('file1'), ['bad/id'], [1], ['file1\n']]) assert.deepEqual(call({ ...request, fileIds }), bad);
+  for (const studentIds of [[], Array(61).fill('s26-001'), ['bad'], [1], ['s26-001\n']]) assert.deepEqual(call({ ...request, studentIds }), bad);
+  assert.deepEqual(call({ ...request, fileIds: Array(20).fill('file1'), studentIds: Array(60).fill('s26-001') }),
+    { ok: true, trashed: 0, missing: 0, skipped: 0, unknown: 20 });
+});
 
 test('手書き JSON: 同じキーは 1 ファイル。本人と先生だけが読み、本人だけが片付ける', () => {
   const { putStudent, call, fakes } = setup();
@@ -154,12 +220,12 @@ test('手書き JSON: キー・授業・所属・所有者の確認と先生の�
   assert.equal(fakes.files.length, 1);
 });
 
-test('本番の ping と doGet は app-6 を JSON で返す', () => {
+test('本番の ping と doGet は app-7 を JSON で返す', () => {
   const { call, gas, fakes } = setup();
-  assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-6' });
+  assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-7' });
   const out = gas.doGet();
   assert.equal(out.getMimeType(), fakes.ContentService.MimeType.JSON);
-  assert.deepEqual(JSON.parse(out.getContent()), { ok: true, version: 'app-6' });
+  assert.deepEqual(JSON.parse(out.getContent()), { ok: true, version: 'app-7' });
   assert.equal(fakes.fetched.length, 0);
 });
 
@@ -564,8 +630,8 @@ test('DATABASE_URL が空なら ping と doGet のほかは config', () => {
     for (const op of ['whoami', 'putMaterial', 'getMaterials', 'getFile', 'trashFile']) {
       assert.deepEqual(call({ op, token: tokT }), { ok: false, error: 'config' });
     }
-    assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-6' });
-    assert.deepEqual(JSON.parse(gas.doGet().getContent()), { ok: true, version: 'app-6' });
+    assert.deepEqual(call({ op: 'ping' }), { ok: true, version: 'app-7' });
+    assert.deepEqual(JSON.parse(gas.doGet().getContent()), { ok: true, version: 'app-7' });
     assert.equal(fakes.fetched.length, 0);
     assert.equal(fakes.files.length, 0);
   }
