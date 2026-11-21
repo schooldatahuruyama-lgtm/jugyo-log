@@ -7,6 +7,7 @@ import { mount as rosterMount } from '../js/views/teacher-roster.js';
 import { createRepo } from '../js/repo.js';
 import { createMemoryNet } from '../js/dev/memory-net.js';
 import { NetError } from '../js/errors.js';
+import { PROBE_ID } from '../js/rules-probe.js';
 import { closeAllDialogs } from '../js/ui.js';
 import { installDom, all, byClass, buttons, settle } from './helpers/picture-dom.js';
 
@@ -35,8 +36,9 @@ const input = (root) => all(root, (n) => n.tagName === 'input')[0];
 function year(root, value) { const field = input(root); field.value = value; field.fire('input'); }
 
 test('使用中・消してある学年の表示、年度入力の確認と消す・もどす', async (t) => {
-  const h = setup(t, { students: { 's26-001': { uid: 'test1' }, 's25-001': {} }, removed: { 's25-001': { removedAt: now } } });
+  const h = setup(t, { students: { 's26-001': { uid: 'test1' }, 's25-001': {}, [PROBE_ID]: {} }, removed: { 's25-001': { removedAt: now } } });
   await settle();
+  assert.doesNotMatch(h.root.textContent, /2000 年度入学/);
   assert.match(h.root.textContent, /2026 年度入学生徒 1 人✓使用中/);
   assert.match(h.root.textContent, /消してあります（1 人）。あと 30 日は、もどせます。/);
   buttons(h.root, 'この学年の記録を消す')[0].click();
@@ -55,6 +57,37 @@ test('使用中・消してある学年の表示、年度入力の確認と消�
   assert.equal(await h.mem.get('removed/s26-001'), null);
   assert.equal(await h.mem.get('accounts/test1'), student.id);
 });
+
+test('台帳に確認用の生徒だけなら、卒業の画面は生徒なしと表示する', async (t) => {
+  const h = setup(t, { students: { [PROBE_ID]: { createdAt: 1 } } });
+  await settle();
+  assert.match(h.root.textContent, /まだ生徒がいません。/);
+  assert.equal(byClass(h.root, 'graduate-row').length, 0);
+  assert.equal(buttons(h.root, 'この学年の記録を消す').length, 0);
+  assert.deepEqual(await h.mem.get(`students/${PROBE_ID}`), { createdAt: 1 });
+});
+
+for (const [name, view] of [['卒業', mount], ['クラス', classesMount]]) {
+  for (const inStudents of [true, false]) test(`${name}: 30 日をすぎた確認用の生徒は表示も完全削除もしない（台帳 ${inStudents}）`, async (t) => {
+    const calls = [];
+    const h = setup(t, { view, students: inStudents ? { [PROBE_ID]: { createdAt: 1 } } : {},
+      removed: { [PROBE_ID]: { removedAt: 0 } } });
+    for (const method of ['markPurging', 'purgeStudent']) {
+      const original = h.repo[method];
+      h.repo[method] = async (...args) => { calls.push(method); return original(...args); };
+    }
+    h.ctx.files.trashStudents = async () => { calls.push('file'); return { trashed: 0, missing: 0, skipped: 0 }; };
+    const before = h.mem.dump();
+    await settle();
+    assert.doesNotMatch(h.root.textContent, /2000 年度入学|消してから 30 日をすぎた学年があります|完全に消しています/);
+    assert.equal(buttons(h.root, '卒業の画面へ').length, 0);
+    assert.equal(buttons(h.root, '続きから消す').length, 0);
+    assert.equal(buttons(h.root, 'この学年の記録を消す').length, 0);
+    if (view === mount) assert.match(h.root.textContent, /まだ生徒がいません。/);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(h.mem.dump(), before);
+  });
+}
 
 test('読み取り後の出し直しで消せなければ名簿を読み直して案内し、押し直すと新しい uid で消す', async (t) => {
   const h = setup(t, { initial: { accounts: { test1: student.id } } });

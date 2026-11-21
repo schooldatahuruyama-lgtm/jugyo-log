@@ -1,6 +1,7 @@
 // 卒業した学年を消す・もどす。期限後の片付けは、この画面を開いている間だけ行う。
 import { el, confirmDialog, toast, statusChip } from '../ui.js';
 import { CONFIG } from '../config.js';
+import { PROBE_ID } from '../rules-probe.js';
 import { cohorts, daysLeft, matchesYear } from '../graduate-logic.js';
 import { removeCohort, restoreCohort, purgeCohort } from '../graduate-flow.js';
 import { teacherNav } from './parts/teacher-nav.js';
@@ -123,7 +124,7 @@ export function mount(root, ctx) {
   async function load() {
     const [students, removed] = await Promise.all([ctx.repo.listStudents(), ctx.repo.listRemoved()]);
     if (!alive) return;
-    list = cohorts({ students, removed, now: ctx.now(), graceDays: CONFIG.graduate.graceDays });
+    list = cohorts({ students, removed, now: ctx.now(), graceDays: CONFIG.graduate.graceDays, exclude: [PROBE_ID] });
   }
 
   async function change(yy, removing) {

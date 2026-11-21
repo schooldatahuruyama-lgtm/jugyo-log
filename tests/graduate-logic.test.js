@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cohortOf, cohorts, daysLeft, matchesYear, fileIdsOf } from '../js/graduate-logic.js';
+import { PROBE_ID } from '../js/rules-probe.js';
 
 const DAY = 86400000;
 
@@ -45,6 +46,36 @@ test('壊れた removed は使わず、台帳の削除後に残った removed �
   const result = cohorts({ students: [], removed: { 's26-001': { removedAt: 0, uid: 'test1' } }, now: 30 * DAY, graceDays: 30 });
   assert.equal(result[0].purgeable[0].uid, 'test1');
   assert.deepEqual(cohorts({ students: [], removed: {}, now: 0, graceDays: 30 }), []);
+});
+
+test('除外した確認用の生徒だけなら、台帳の重複や removed の有無にかかわらず学年を作らない', () => {
+  for (const students of [[{ id: PROBE_ID }], [{ id: PROBE_ID }, { id: PROBE_ID }], []]) {
+    for (const removed of [{}, { [PROBE_ID]: { removedAt: 0 } },
+      { [PROBE_ID]: { removedAt: 31 * DAY } }, { [PROBE_ID]: { removedAt: 31 * DAY, purging: true } }]) {
+      assert.deepEqual(cohorts({ students, removed, now: 31 * DAY, graceDays: 30, exclude: [PROBE_ID, PROBE_ID] }), []);
+    }
+  }
+});
+
+test('除外した ID はどの状態にも入れず、同じ年度のほかの生徒は残す', () => {
+  const students = ['s00-001', 's26-001', 's26-002'].map((id) => ({ id }));
+  const removed = { 's26-001': { removedAt: 0 }, 's26-002': { removedAt: 31 * DAY } };
+  const expected = cohorts({ students, removed, now: 31 * DAY, graceDays: 30 });
+  const result = cohorts({ students: [...students, { id: PROBE_ID }, { id: 's26-003' }, { id: 's26-004' }],
+    removed: { ...removed, [PROBE_ID]: { removedAt: 0 }, 's26-004': { removedAt: 31 * DAY },
+      's26-005': { removedAt: 0 } }, now: 31 * DAY, graceDays: 30,
+    exclude: [PROBE_ID, 's26-003', 's26-004', 's26-005'] });
+  assert.deepEqual(result, expected);
+});
+
+test('exclude の省略や配列以外の入力は空として扱う', () => {
+  const args = { students: [{ id: PROBE_ID }], removed: {}, now: 31 * DAY, graceDays: 30 };
+  const expected = cohorts({ ...args, exclude: [] });
+  assert.equal(expected[0].active[0].id, PROBE_ID);
+  assert.deepEqual(cohorts(args), expected);
+  for (const exclude of [undefined, null, PROBE_ID, 1, true, {}, new Set([PROBE_ID])]) {
+    assert.deepEqual(cohorts({ ...args, exclude }), expected);
+  }
 });
 
 test('残り日数は切り上げ、最短の復元期限を使う', () => {

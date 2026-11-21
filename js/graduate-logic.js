@@ -8,14 +8,16 @@ export function cohortOf(studentId) {
     && studentId.length === 7 ? studentId.slice(1, 3) : null;
 }
 
-export function cohorts({ students, removed, now, graceDays }) {
+export function cohorts({ students, removed, now, graceDays, exclude = [] }) {
   const groups = new Map();
+  const excluded = new Set(Array.isArray(exclude) ? exclude : []);
   const all = new Map(students.map((s) => [s.id, s]));
   // 台帳を消した直後に通信が止まった場合も、最後の removed を片付けられるようにする。
   for (const [id, value] of Object.entries(removed)) {
     if (!all.has(id) && isRemoved(value)) all.set(id, { id, uid: value.uid ?? null });
   }
   for (const student of all.values()) {
+    if (excluded.has(student.id)) continue;
     const yy = cohortOf(student.id);
     if (yy === null) continue;
     if (!groups.has(yy)) groups.set(yy, { yy, year: 2000 + Number(yy), total: 0,
