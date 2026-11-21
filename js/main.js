@@ -5,6 +5,12 @@ import { FIREBASE } from './firebase-config.js';
 import { createAuth } from './auth.js';
 import { createNet } from './net.js';
 import { createRepo } from './repo.js';
+import { CONFIG } from './config.js';
+import { createOfflineStore } from './offline-store.js';
+import { createOfflineNet } from './offline-net.js';
+import { createOfflineRefresh } from './offline-refresh.js';
+import { createSessionMemo } from './session-memo.js';
+import { shouldRegister, workerUrl } from './sw-register.js';
 import { GAS } from './gas-config.js';
 import { gasEndpoint } from './gas-endpoint.js';
 import { createGas } from './gas.js';
@@ -106,7 +112,7 @@ function createBackend(storage) {
 }
 
 function showDemoBanner(demo) {
-  bannerRoot.replaceChildren(el('div', { class: 'demo-banner' },
+  bannerRoot.append(el('div', { class: 'demo-banner' },
     el('span', { text: '練習モード（データはこのパソコンの中だけ）' }),
     el('button', {
       type: 'button', class: 'btn', text: '練習モードのデータを消す',
@@ -148,12 +154,46 @@ function start() {
   if (backend.demo) showDemoBanner(backend.demo);
 
   const { auth } = backend;
-  const repo = createRepo(backend.net);
+  let session = null; // resolveSession の結果。まだ決めていなければ null
+  let sessionEpoch = 0;
+  let sessionChecking = null;
+  let signingOut = false;
+  let lastSessionCheck = 0;
   let cacheStorage;
   // 練習用ファイルは読み直すと消えるため、取り置きもメモリだけにする
   if (!backend.demo) {
     try { cacheStorage = window.caches; } catch { /* 使えないときはメモリで続ける */ }
   }
+  const store = createOfflineStore({ caches: cacheStorage });
+  const memo = createSessionMemo({ storage });
+  const scope = () => session?.role === 'student' ? session.uid : null;
+  const offlineNet = createOfflineNet({ net: backend.net, store, scope, generation: () => sessionEpoch });
+  const liveRepo = createRepo({
+    get: (...args) => backend.net.get(...args),
+    getPublic: (...args) => backend.net.getPublic(...args),
+    set: (...args) => offlineNet.set(...args),
+    update: (...args) => offlineNet.update(...args),
+    remove: (...args) => offlineNet.remove(...args),
+    serverTimestamp: () => backend.net.serverTimestamp(),
+  });
+  const repo = createRepo(offlineNet);
+  const timers = { setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window) };
+  const refresh = createOfflineRefresh({ repo, ...timers, delayMs: CONFIG.offline.rereadMs });
+  const offline = { touch: refresh.touch, get down() { return offlineNet.stale || session?.offline === true; } };
+  let offlineBanner = null;
+  function showOfflineBanner() {
+    if (offline.down) {
+      if (!offlineBanner) {
+        offlineBanner = el('div', { class: 'offline-banner', role: 'status',
+          text: '電波がありません。前に読みこんだ内容を出しています。メモと振り返りは、この iPad に残り、つながったら送ります。' });
+        bannerRoot.append(offlineBanner);
+      }
+    } else {
+      offlineBanner?.remove();
+      offlineBanner = null;
+    }
+  }
+  offlineNet.onChange(showOfflineBanner);
   const cache = createFileCache({ caches: cacheStorage });
   const files = createFiles({ gas: backend.gas, cache });
   // GAS の順番待ちを共用するため、AI の作成中は同じ先生のファイル読込が 30 秒ほど待つことがある。
@@ -162,15 +202,23 @@ function start() {
   const inkDrafts = createInkDrafts({ storage });
   const recordQueue = createRecordQueue();
   const thumbs = createThumbStore({ repo, cache });
-  const timers = { setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window) };
   async function signOutAll() {
+    // 片付けを待つ前に scope を外し、古い通信で取り置きが戻るのを防ぐ。
+    sessionEpoch += 1;
+    refresh.clear();
+    signingOut = true;
+    sessionChecking = null;
+    renderId += 1;
+    session = null;
+    showOfflineBanner();
+    try { await store.clear(); } catch { /* 取り置きの片付けに失敗してもログアウトする */ }
+    try { memo.clear(); } catch { /* ログインの控えを消せなくてもログアウトする */ }
     try { thumbs.clear(); } catch { /* 小さい画像の片付けに失敗してもログアウトする */ }
     try { await files.clearCache(); } catch { /* 片付けに失敗してもログアウトする */ }
     try { drafts.clear(); } catch { /* 下書きの片付けに失敗してもログアウトする */ }
     try { inkDrafts.clear(); } catch { /* 下書きの片付けに失敗してもログアウトする */ }
-    await auth.signOut();
+    try { await auth.signOut(); } finally { signingOut = false; }
   }
-  let session = null; // resolveSession の結果。まだ決めていなければ null
   let cleanup = null;
   let renderId = 0;
   let appReloading = false;
@@ -263,8 +311,28 @@ function start() {
   async function ensureSession() {
     const uid = auth.user ? auth.user.uid : null;
     const known = session && session.role !== 'offline' ? (session.uid ?? null) : undefined;
-    if (session && known === uid) return session;
-    return resolveSession({ auth, repo });
+    if (session && known === uid && (!session.offline || now() - lastSessionCheck < CONFIG.offline.recheckMs)) return session;
+    return checkSession();
+  }
+
+  function checkSession() {
+    if (signingOut) return Promise.resolve({ role: 'none' });
+    if (sessionChecking) return sessionChecking;
+    const epoch = sessionEpoch;
+    // 再確認中にログアウトしても、控えをあとから復活させない。
+    const currentMemo = {
+      get: () => epoch === sessionEpoch ? memo.get() : null,
+      put: (value) => { if (epoch === sessionEpoch) memo.put(value); },
+      clear: () => { if (epoch === sessionEpoch) memo.clear(); },
+    };
+    sessionChecking = resolveSession({ auth, repo: liveRepo, memo: currentMemo }).then((value) => {
+      if (epoch !== sessionEpoch) return session || { role: 'none' };
+      session = value;
+      lastSessionCheck = now();
+      showOfflineBanner();
+      return session;
+    }).finally(() => { if (epoch === sessionEpoch) sessionChecking = null; });
+    return sessionChecking;
   }
 
   async function render() {
@@ -287,6 +355,7 @@ function start() {
       const s = await ensureSession();
       if (stale()) return;
       session = s;
+      showOfflineBanner();
 
       // 確かめられなかった: ログイン画面に戻さず、やり直せるようにする
       if (session.role === 'offline') {
@@ -321,7 +390,7 @@ function start() {
         return;
       }
       const ctx = {
-        auth, repo, files, ai, drafts, inkDrafts, recordQueue, thumbs, timers, signOutAll, session, navigate, now, random, demo: Boolean(backend.demo), params: route.params,
+        auth, repo, liveRepo, offline, files, ai, drafts, inkDrafts, recordQueue, thumbs, timers, signOutAll, session, navigate, now, random, demo: Boolean(backend.demo), params: route.params,
         net: backend.net, makeProbeStudent: backend.makeProbeStudent,
         // 離れてよいかをたずねる関数を置く（null で外す）。古くなった画面からの呼び出しは無視する
         setLeaveGuard: (fn) => { if (!stale()) leave.set(fn); },
@@ -358,7 +427,19 @@ function start() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') checkVersion();
   });
+  window.addEventListener('online', async () => {
+    if (appReloading || signingOut) return;
+    const previous = session;
+    const epoch = sessionEpoch;
+    const next = await checkSession();
+    if (epoch !== sessionEpoch || appReloading) return;
+    if (previous?.role === 'student' && next.role === 'student' && previous.uid === next.uid) return;
+    render();
+  });
   render();
+  if (shouldRegister({ hostname: location.hostname, search: location.search, hasWorker: 'serviceWorker' in navigator })) {
+    try { navigator.serviceWorker.register(workerUrl(VERSION)).catch(() => {}); } catch { /* 登録できなくても続ける */ }
+  }
 }
 
 start();

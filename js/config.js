@@ -16,6 +16,8 @@ export const CONFIG = {
   tokenRefreshMarginMs: 300000,
   // 1 回の通信を待つ時間
   requestTimeoutMs: 10000,
+  // オフライン用の先読み件数と、ログインの再確認・保存後の読み直しまでの待ち時間
+  offline: { warmLessons: 5, recheckMs: 30000, rereadMs: 3000 },
   // 出席番号の上限（1〜99）
   maxNumber: 99,
   // 授業名・単元名・先生の資料名の文字数

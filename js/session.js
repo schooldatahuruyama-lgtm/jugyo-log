@@ -84,24 +84,33 @@ export async function signIn({ input, password, auth, repo, domain, isCurrent = 
 // 保存してあるログインから、今だれなのかを決める。
 // { role: 'none' } / { role: 'teacher', uid } / { role: 'student', uid, studentId } / { role: 'offline' }
 // 確かめられない（通信の失敗など）ときは offline にし、ログアウトしない（電波が戻れば、そのまま使える）
-export async function resolveSession({ auth, repo }) {
+export async function resolveSession({ auth, repo, memo = null }) {
+  const offline = () => {
+    const saved = memo?.get();
+    if (saved && auth.user && auth.user.uid === saved.uid) return { role: 'student', ...saved, offline: true };
+    return { role: 'offline' };
+  };
   let user;
   try {
     user = await auth.restore();
   } catch {
-    return { role: 'offline' }; // restore は、ログインの無効が確定したときは null を返す。投げるのは一時的な失敗
+    return offline(); // restore は、ログインの無効が確定したときは null を返す。投げるのは一時的な失敗
   }
-  if (!user) return { role: 'none' };
+  if (!user) { memo?.clear(); return { role: 'none' }; }
   const uid = user.uid;
   try {
-    if (await repo.isTeacher(uid)) return { role: 'teacher', uid };
+    if (await repo.isTeacher(uid)) { memo?.clear(); return { role: 'teacher', uid }; }
     const studentId = await repo.getMyStudentId(uid);
-    if (studentId !== null && isStudentId(studentId)) return { role: 'student', uid, studentId };
+    if (studentId !== null && isStudentId(studentId)) {
+      memo?.put({ uid, studentId });
+      return { role: 'student', uid, studentId };
+    }
   } catch (e) {
     // 規則に断られた（denied）ときは、だれでもないアカウントとして扱う。それ以外は確かめられなかっただけ
-    if (!(e instanceof NetError && e.code === 'denied')) return { role: 'offline' };
+    if (!(e instanceof NetError && e.code === 'denied')) return offline();
   }
   // 先生でも生徒でもない（出し直したあとの古いアカウントなど）
   auth.signOut();
+  memo?.clear();
   return { role: 'none' };
 }

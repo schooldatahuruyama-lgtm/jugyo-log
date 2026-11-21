@@ -147,7 +147,8 @@ test('PDF の再送: ページと on を送り、PDF 消失なら捨て、失敗
       s.add('l1', { field: page.field, on: page.on, ink: page.ink });
       s.makeThumb = () => assert.fail('PDF の小さい画像は作らない');
       assert.deepEqual(await resendInkDrafts(s), { sent: outcome === 'saved' ? 1 : 0,
-        kept: outcome === 'failed' ? 1 : 0, dropped: outcome === 'gone' ? 1 : 0 });
+        kept: outcome === 'failed' ? 1 : 0, dropped: outcome === 'gone' ? 1 : 0,
+        sentLessons: outcome === 'saved' ? [{ classId: 'c1', lessonId: 'l1' }] : [] });
       assert.equal(s.pending.size, outcome === 'failed' ? 1 : 0);
       if (outcome === 'saved') {
         const set = page.calls.find(([name]) => name === 'set');
@@ -549,6 +550,24 @@ function resendSetup() {
   return { ...s, pending, add, inkDrafts, queue: createRecordQueue() };
 }
 
+test('手書き再送: 同じ授業の複数欄は sentLessons に 1 件、別クラスは別件で返す', async () => {
+  const s = resendSetup();
+  const pending = new Map();
+  const key = (classId, lessonId, field) => `${classId}/${lessonId}/${field}`;
+  for (const [classId, field] of [['c1', 'memo'], ['c1', 'learned'], ['c2', 'memo']]) {
+    pending.set(key(classId, 'l1', field), { classId, lessonId: 'l1', field, ink, editedAt: 20, key: 'test-key' });
+  }
+  s.inkDrafts = {
+    list: () => [...pending.values()],
+    get: (_, classId, lessonId, field) => pending.get(key(classId, lessonId, field)),
+    remove: (_, classId, lessonId, field) => pending.delete(key(classId, lessonId, field)),
+  };
+  s.repo.getRecord = async () => null;
+  assert.deepEqual(await resendInkDrafts(s), { sent: 3, kept: 0, dropped: 0,
+    sentLessons: [{ classId: 'c1', lessonId: 'l1' }, { classId: 'c2', lessonId: 'l1' }] });
+  assert.equal(pending.size, 0);
+});
+
 test('写真の再送: on を送り、画像を作らず、写真がなければ下書きを捨てる', async () => {
   for (const field of ['a1', 'Abc123Def456']) {
     for (const gone of [false, true]) {
@@ -557,7 +576,8 @@ test('写真の再送: on を送り、画像を作らず、写真がなければ
       s.repo = pic.repo;
       s.add('l1', { field, on: 'photo', ink: pic.ink });
       s.makeThumb = () => assert.fail('写真の小さい画像は作らない');
-      assert.deepEqual(await resendInkDrafts(s), { sent: gone ? 0 : 1, kept: 0, dropped: gone ? 1 : 0 });
+      assert.deepEqual(await resendInkDrafts(s), { sent: gone ? 0 : 1, kept: 0, dropped: gone ? 1 : 0,
+        sentLessons: gone ? [] : [{ classId: 'c1', lessonId: 'l1' }] });
       assert.equal(s.pending.size, 0);
       if (!gone) {
         const set = pic.calls.find((call) => call[0] === 'set');
@@ -577,7 +597,8 @@ test('写真の再送: 待機中・送信中に on だけ変わった下書き�
     s.add('l1', draft);
     if (when === 'queue') s.queue = { async run(_, task) { s.add('l1', { ...draft, on: 'replaced' }); await task(); } };
     else s.repo.setInk = async () => s.add('l1', { ...draft, on: 'replaced' });
-    assert.deepEqual(await resendInkDrafts(s), { sent: when === 'save' ? 1 : 0, kept: when === 'queue' ? 1 : 0, dropped: 0 });
+    assert.deepEqual(await resendInkDrafts(s), { sent: when === 'save' ? 1 : 0, kept: when === 'queue' ? 1 : 0, dropped: 0,
+      sentLessons: when === 'save' ? [{ classId: 'c1', lessonId: 'l1' }] : [] });
     assert.equal(s.pending.get('l1').on, 'replaced');
     if (when === 'queue') assert.equal(s.calls.length, 0);
   }
@@ -593,7 +614,7 @@ test('手書き再送: アップロード中に B が全消去したら、拒否
     await race.server.removeInk(s.classId, s.lessonId, s.studentId, s.field, 30);
     return upload(args);
   };
-  assert.deepEqual(await resendInkDrafts(s), { sent: 0, kept: 0, dropped: 1 });
+  assert.deepEqual(await resendInkDrafts(s), { sent: 0, kept: 0, dropped: 1, sentLessons: [] });
   assert.equal(s.pending.size, 0);
   const record = await race.server.getRecord(s.classId, s.lessonId, s.studentId);
   assert.deepEqual(record.ink, {});
@@ -610,7 +631,8 @@ test('手書き再送: 古いサーバーには送信、新しい・同じ時刻
     if (['denied', 'network'].includes(args[1])) throw new NetError(args[1]);
     assert.equal(args[5], undefined);
   };
-  assert.deepEqual(await resendInkDrafts(s), { sent: 2, kept: 2, dropped: 2 });
+  assert.deepEqual(await resendInkDrafts(s), { sent: 2, kept: 2, dropped: 2,
+    sentLessons: [{ classId: 'c1', lessonId: 'send' }, { classId: 'c1', lessonId: 'last' }] });
   assert.deepEqual([...s.pending.keys()], ['denied', 'network']);
   assert.deepEqual(s.calls.filter((c) => c[0] === 'upload').map((c) => c[1].lessonId), ['send', 'denied', 'network', 'last']);
 });
@@ -623,7 +645,7 @@ test('手書き再送: B が全部消す → A の古い下書きでも復活し
   await saveInkFlow({ ...s, ink: emptyInk(), editedAt: 30 });
   s.calls.length = 0;
   s.add('l1');
-  assert.deepEqual(await resendInkDrafts(s), { sent: 0, kept: 0, dropped: 1 });
+  assert.deepEqual(await resendInkDrafts(s), { sent: 0, kept: 0, dropped: 1, sentLessons: [] });
   const record = await repo.getRecord('c1', 'l1', 's26-001');
   assert.deepEqual(record.ink, {});
   assert.deepEqual(record.inkCleared, { memo: 30 });
@@ -631,7 +653,7 @@ test('手書き再送: B が全部消す → A の古い下書きでも復活し
   assert.equal(s.pending.size, 0);
   s.add('l1');
   s.repo = { getRecord: async () => { throw new NetError('network'); } };
-  assert.deepEqual(await resendInkDrafts(s), { sent: 0, kept: 1, dropped: 0 });
+  assert.deepEqual(await resendInkDrafts(s), { sent: 0, kept: 1, dropped: 0, sentLessons: [] });
   assert.equal(s.pending.size, 1);
 });
 
@@ -641,7 +663,7 @@ test('手書き再送: 送信中に時刻・キー・内容が変わった下書
     s.add('l1');
     s.repo.getRecord = async () => null;
     s.repo.setInk = async () => s.add('l1', change);
-    assert.deepEqual(await resendInkDrafts(s), { sent: 1, kept: 0, dropped: 0 });
+    assert.deepEqual(await resendInkDrafts(s), { sent: 1, kept: 0, dropped: 0, sentLessons: [{ classId: 'c1', lessonId: 'l1' }] });
     assert.equal(s.pending.size, 1);
     assert.deepEqual(s.pending.get('l1'), { classId: 'c1', lessonId: 'l1', field: 'memo', ink, editedAt: 20, key: 'ink-l1', ...change });
   }
@@ -654,7 +676,7 @@ test('手書き再送: learned・question は作り直した画像を送り、me
     s.repo.getRecord = async () => null;
     const made = [];
     s.makeThumb = (value) => { made.push(value); return s.thumb; };
-    assert.deepEqual(await resendInkDrafts(s), { sent: 1, kept: 0, dropped: 0 });
+    assert.deepEqual(await resendInkDrafts(s), { sent: 1, kept: 0, dropped: 0, sentLessons: [{ classId: 'c1', lessonId: 'l1' }] });
     assert.equal(s.calls.find((call) => call[0] === 'set')[6], field === 'memo' ? undefined : s.thumb);
     assert.deepEqual(made, field === 'memo' ? [] : [ink]);
     assert.equal(s.pending.size, 0);
@@ -668,7 +690,7 @@ test('手書き再送: 画像作成の例外・null は null を送り、線の�
       s.add('l1', { field });
       s.repo.getRecord = async () => null;
       s.makeThumb = () => { if (fails) throw new Error('画像を作れない'); return null; };
-      assert.deepEqual(await resendInkDrafts(s), { sent: 1, kept: 0, dropped: 0 });
+      assert.deepEqual(await resendInkDrafts(s), { sent: 1, kept: 0, dropped: 0, sentLessons: [{ classId: 'c1', lessonId: 'l1' }] });
       assert.equal(s.calls.find((call) => call[0] === 'set')[6], null);
       assert.equal(s.pending.size, 0);
     }
@@ -680,7 +702,7 @@ test('手書き再送: 画像作成を渡さない場合は、どの欄も画像
     const s = resendSetup();
     s.add('l1', { field });
     s.repo.getRecord = async () => null;
-    assert.deepEqual(await resendInkDrafts(s), { sent: 1, kept: 0, dropped: 0 });
+    assert.deepEqual(await resendInkDrafts(s), { sent: 1, kept: 0, dropped: 0, sentLessons: [{ classId: 'c1', lessonId: 'l1' }] });
     assert.equal(s.calls.find((call) => call[0] === 'set')[6], undefined);
   }
 });
@@ -702,7 +724,7 @@ test('手書き再送: 読み取りも授業ごとの順番待ちの中。待つ
       if (when === 'read') s.add('l1', { key: 'changed-key' });
       return { ink: { memo: { updatedAt: 100 } } };
     };
-    assert.deepEqual(await resendInkDrafts(s), { sent: 0, kept: 1, dropped: 0 });
+    assert.deepEqual(await resendInkDrafts(s), { sent: 0, kept: 1, dropped: 0, sentLessons: [] });
     assert.equal(s.pending.size, 1);
     assert.deepEqual(s.calls, []);
   }

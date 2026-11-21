@@ -5,7 +5,7 @@
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
-$paths = @("index.html", "check.html", "css", "js", "assets")
+$paths = @("index.html", "check.html", "sw.js", "css", "js", "assets")
 $head = (git rev-parse --short HEAD).Trim()
 $tmpIndex = Join-Path $env:TEMP ("jugyolog-pages-index-" + [guid]::NewGuid().ToString("N"))
 $tmpBlob = Join-Path $root (".pages-blob-" + [guid]::NewGuid().ToString("N"))
@@ -29,6 +29,12 @@ try {
   [IO.File]::WriteAllText($tmpBlob, "$head`n", $utf8)
   $versionText = (git hash-object -w --no-filters -- $tmpBlob).Trim()
   git update-index --add --cacheinfo "100644,$versionText,version.txt"
+  # Offline app manifest: publish it in the tree only, using UTF-8 without BOM
+  $appFiles = @($files | Where-Object { $_ -ne "check.html" -and $_ -ne "sw.js" } | ForEach-Object { $_.Replace('\', '/') })
+  $manifest = @{ version = $head; files = $appFiles } | ConvertTo-Json -Compress
+  [IO.File]::WriteAllText($tmpBlob, $manifest, $utf8)
+  $appManifest = (git hash-object -w --no-filters -- $tmpBlob).Trim()
+  git update-index --add --cacheinfo "100644,$appManifest,app-files.json"
   $tree = (git write-tree).Trim()
 } finally {
   if (Test-Path -LiteralPath $tmpBlob) { Remove-Item -LiteralPath $tmpBlob }

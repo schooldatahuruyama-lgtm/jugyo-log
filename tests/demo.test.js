@@ -26,6 +26,31 @@ function seqRandom() {
 
 const make = (storage) => createDemoBackend({ storage, now: () => 1000, random: seqRandom() });
 
+test('offline の印を毎回読み、通信だけを止め、外す・reset で戻せる', async () => {
+  const storage = fakeStorage(); const d = make(storage);
+  await d.auth.signIn('teacher@demo', '見本の入力');
+  await d.net.set('sample', 1);
+  const user = d.auth.user;
+  const calls = [() => d.net.get('sample'), () => d.net.getPublic('sample'), () => d.net.set('sample', 2),
+    () => d.net.update('', { sample: 3 }), () => d.net.remove('sample'),
+    () => d.auth.restore(), () => d.auth.getToken(), () => d.auth.forceRefresh(), () => d.gas.call('anything', {})];
+  storage.setItem('jugyolog:demo:offline', '1');
+  for (const call of calls) await rejectsCode(call(), 'network');
+  assert.deepEqual(d.auth.user, user);
+  storage.removeItem('jugyolog:demo:offline');
+  assert.equal(await d.net.get('sample'), 1);
+  assert.deepEqual(await d.auth.restore(), user);
+  assert.equal(await d.auth.getToken(), 'demo-token');
+  assert.equal(await d.auth.forceRefresh(), 'demo-token');
+  await d.net.update('', { sample: 2 }); assert.equal(await d.net.getPublic('sample'), 2);
+  await d.net.remove('sample'); assert.equal(await d.net.get('sample'), null);
+  await assert.rejects(d.gas.call('anything', {}), (e) => e.code !== 'network');
+  storage.setItem('jugyolog:demo:offline', '1'); await d.reset();
+  assert.equal(storage.getItem('jugyolog:demo:offline'), null);
+  assert.equal(await d.auth.restore(), null);
+  assert.equal(await d.net.get(`teacherList/${DEMO_TEACHER_UID}`), true);
+});
+
 async function rejectsCode(promise, code) {
   await assert.rejects(promise, (e) => {
     assert.ok(e instanceof NetError, `NetError のはず: ${e}`);

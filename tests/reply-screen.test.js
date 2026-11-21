@@ -7,6 +7,11 @@ import { createDrafts } from '../js/drafts.js';
 import { createInkDrafts } from '../js/ink-drafts.js';
 import { createRecordQueue } from '../js/record-queue.js';
 import { createLeaveGuard } from '../js/leave-guard.js';
+import { CONFIG } from '../js/config.js';
+import { NetError } from '../js/errors.js';
+import { createOfflineStore } from '../js/offline-store.js';
+import { createOfflineNet } from '../js/offline-net.js';
+import { createOfflineRefresh } from '../js/offline-refresh.js';
 import { mount as mountTeacher } from '../js/views/teacher-record.js';
 import { mount as mountReview } from '../js/views/teacher-review.js';
 import { mount as mountStudent } from '../js/views/student-lesson.js';
@@ -22,6 +27,118 @@ const replyInput = (h) => all(reply(h), (node) => node.tagName === 'textarea')[0
 const editReply = (h, text) => { replyInput(h).value = text; replyInput(h).fire('input'); };
 const saveReply = async (h) => { buttons(reply(h), '保存する')[0].click(); await settle(); };
 const confirm = (label) => buttons(byClass(document.body, 'confirm')[0], label)[0].click();
+
+test('生徒一覧: 文字・手書きの再送は liveRepo で新しい記録を確かめる', async (t) => {
+  const h = await setup(t); const calls = [];
+  h.ctx.offline = { down: true };
+  h.ctx.drafts.put(ids.studentId, ids.classId, ids.lessonId, { memo: '古い下書き' }, 10);
+  h.ctx.inkDrafts.put(ids.studentId, ids.classId, ids.lessonId, 'memo', { ink: { v: 1, h: 400, s: [] }, editedAt: 10, key: 'test-key' });
+  h.ctx.liveRepo = { ...h.repo, getRecord: async (...args) => {
+    calls.push(args); return { memo: 'サーバーの新しい記録', updatedAt: 20, inkCleared: { memo: 20 } };
+  } };
+  h.ctx.repo = { ...h.repo, getRecord: async () => { throw new Error('取り置きで再送を決めない'); } };
+  h.open('home'); await settle();
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every((args) => JSON.stringify(args) === JSON.stringify([ids.classId, ids.lessonId, ids.studentId])));
+  assert.equal(h.ctx.drafts.list(ids.studentId).length, 0);
+  assert.equal(h.ctx.inkDrafts.list(ids.studentId).length, 0);
+  assert.equal(await h.repo.getRecord(ids.classId, ids.lessonId, ids.studentId), null);
+});
+
+test('生徒一覧: down のとき先読みせず、オンラインでは新しい授業から 5 つ読む', async (t) => {
+  const h = await setup(t); const calls = [];
+  await h.repo.createLessons(Array.from({ length: 6 }, (_, i) => ({ classId: ids.classId, lessonId: `Warm${i}`,
+    date: `2026-11-${String(17 + i).padStart(2, '0')}`, title: `確認用 ${i}` })), h.ctx.now());
+  const expected = (await h.repo.listLessons(ids.classId)).slice(0, 5).map((lesson) => lesson.id);
+  h.ctx.repo = { ...h.repo,
+    getLesson: async (classId, lessonId) => { calls.push(['lesson', lessonId]); return h.repo.getLesson(classId, lessonId); },
+    getRecord: async (classId, lessonId, studentId) => { calls.push(['record', lessonId]); return h.repo.getRecord(classId, lessonId, studentId); },
+  };
+  h.ctx.offline = { down: true }; h.open('home'); await settle(); assert.deepEqual(calls, []);
+  h.ctx.offline.down = false; h.open('home'); await settle();
+  assert.deepEqual(calls, expected.flatMap((id) => [['lesson', id], ['record', id]]));
+});
+
+test('生徒一覧: 先読み中に離れたら、次の記録・授業を読まない', async (t) => {
+  const h = await setup(t); let release; const calls = [];
+  h.ctx.repo = { ...h.repo,
+    getLesson: () => new Promise((resolve) => { calls.push('lesson'); release = resolve; }),
+    getRecord: async () => { calls.push('record'); },
+  };
+  h.open('home'); await settle(); assert.deepEqual(calls, ['lesson']);
+  h.open('login'); release({}); await settle(); assert.deepEqual(calls, ['lesson']);
+});
+
+test('生徒授業: 取り置きの無い授業には案内を出し、再試行できる', async (t) => {
+  const h = await setup(t);
+  const previous = Object.getOwnPropertyDescriptor(navigator, 'onLine');
+  t.after(() => { if (previous) Object.defineProperty(navigator, 'onLine', previous); else delete navigator.onLine; });
+  for (const [down, online, missing] of [[true, true, true], [false, false, true], [false, true, false]]) {
+    Object.defineProperty(navigator, 'onLine', { value: online, configurable: true });
+    h.ctx.offline = { down };
+    h.ctx.repo = { ...h.repo, getLesson: async () => { throw new NetError('network'); } };
+    h.open('lesson'); await settle();
+    assert.match(h.root.textContent, missing ? /この授業は、まだこの iPad に入っていません。/ : /つながりません。電波を確かめて/);
+    assert.equal(byClass(h.root, 'student-lesson-columns')[0].hidden, true);
+    const retry = buttons(h.root, 'もう一度ためす')[0]; assert.ok(retry);
+    h.ctx.repo.getLesson = h.repo.getLesson; retry.click(); await settle();
+    assert.equal(byClass(h.root, 'student-lesson-columns')[0].hidden, false);
+  }
+});
+
+test('生徒授業: 保存後の読み直しを 3000ms にまとめ、結果で入力を変えず、離れても読む', async (t) => {
+  const h = await setup(t); const timers = new Map(); let serial = 0; let time = 0; let reads = 0;
+  h.ctx.timers = {
+    setTimeout(fn, ms) { timers.set(++serial, { fn, at: time + ms }); return serial; },
+    clearTimeout(id) { timers.delete(id); },
+  };
+  const advance = async (ms) => {
+    time += ms;
+    for (const [id, job] of [...timers]) if (job.at <= time) { timers.delete(id); job.fn(); }
+    await settle();
+  };
+  h.ctx.repo = { ...h.repo, getRecord: async () => { reads++; return { memo: '読み直した値' }; } };
+  const refresh = createOfflineRefresh({ repo: h.ctx.repo, ...h.ctx.timers, delayMs: CONFIG.offline.rereadMs });
+  h.ctx.offline = { touch: refresh.touch };
+  t.after(() => refresh.clear());
+  h.open('lesson'); await settle(); assert.equal(reads, 1);
+  const input = document.getElementById('student-record-memo');
+  input.value = '最初の入力'; input.fire('input'); await advance(CONFIG.save.delayMs);
+  assert.match(byClass(h.root, 'student-lesson-states')[0].textContent, /保存しました/);
+  input.value = '続きの入力'; input.fire('input'); await advance(CONFIG.save.delayMs);
+  await advance(CONFIG.offline.rereadMs - 1); assert.equal(reads, 1);
+  await advance(1); assert.equal(reads, 2);
+  assert.equal(input.value, '続きの入力');
+  await advance(CONFIG.offline.rereadMs); assert.equal(reads, 2);
+  input.value = '離れる前の入力'; input.fire('input'); await advance(CONFIG.save.delayMs);
+  h.open('login'); await advance(CONFIG.offline.rereadMs); assert.equal(reads, 3);
+});
+
+test('生徒画面: 一覧を先読みして電波を切り、授業の文字を下書きに残し、再接続で送る', async (t) => {
+  const h = await setup(t);
+  await h.repo.setMyTerm(ids.studentId, ids.classId, ids.lessonId, 't1', '確認用の用語');
+  await h.repo.setReply(ids.classId, ids.lessonId, ids.studentId, { text: '確認用の返事' }, h.ctx.now());
+  const store = createOfflineStore({});
+  const net = createOfflineNet({ net: h.backend.net, store, scope: () => 'test-student' });
+  h.ctx.repo = createRepo(net); h.ctx.liveRepo = h.repo;
+  h.ctx.offline = { get down() { return net.stale; } };
+  h.open('home'); await settle();
+  h.storage.setItem('jugyolog:demo:offline', '1');
+  h.open('lesson'); await settle();
+  assert.equal(byClass(h.root, 'student-lesson-columns')[0].hidden, false);
+  assert.equal(net.stale, true);
+  assert.match(byClass(h.root, 'term-row')[0].textContent, /確認用の用語/);
+  assert.match(reply(h).textContent, /確認用の返事/);
+  assert.doesNotMatch(h.root.textContent, /読みこめませんでした/);
+  const input = document.getElementById('student-record-memo');
+  input.value = '電波がない間の見本'; input.fire('input'); await h.advance();
+  assert.equal(h.ctx.drafts.get(ids.studentId, ids.classId, ids.lessonId).record.memo, '電波がない間の見本');
+  assert.match(byClass(h.root, 'student-lesson-states')[0].textContent, /保存できませんでした/);
+  h.storage.removeItem('jugyolog:demo:offline'); window.fire('online'); await settle();
+  assert.equal(h.ctx.drafts.get(ids.studentId, ids.classId, ids.lessonId), null);
+  assert.equal((await h.repo.getRecord(ids.classId, ids.lessonId, ids.studentId)).memo, '電波がない間の見本');
+  await h.advance(); assert.equal(net.stale, false);
+});
 
 async function setup(t) {
   const dom = installDom();
@@ -50,7 +167,7 @@ async function setup(t) {
   const leave = createLeaveGuard();
   const inkFiles = new Map();
   const root = document.createElement('main'); document.body.append(root);
-  const h = { root, repo, backend, guard: leave, route: null, destroy: null, signouts: 0 };
+  const h = { root, repo, backend, storage, guard: leave, route: null, destroy: null, signouts: 0 };
   const ctx = {
     repo, now, random: () => 0.25, session: { studentId: ids.studentId },
     recordQueue: createRecordQueue(), drafts: createDrafts({ storage }), inkDrafts: createInkDrafts({ storage }),
@@ -67,6 +184,7 @@ async function setup(t) {
       h.open(name, params); return 'moved';
     },
   };
+  h.ctx = ctx;
   h.open = (name, params = ids) => {
     h.destroy?.(); h.destroy = null; leave.clear(); root.replaceChildren();
     h.route = { name, params };
@@ -76,6 +194,167 @@ async function setup(t) {
   t.after(() => { h.destroy?.(); root.remove(); dom.restore(); });
   return h;
 }
+
+async function cachedLesson(t, { latest = { memo: 'サーバーの記録', updatedAt: 30 }, draftAt = 20, inputAt = 40, down = true } = {}) {
+  const h = await setup(t);
+  h.sent = []; h.checked = 0; h.touched = [];
+  h.latest = latest;
+  h.ctx.now = () => inputAt;
+  h.ctx.offline = { down, touch: (...args) => h.touched.push(args) };
+  h.ctx.repo = { ...h.repo,
+    getRecord: async () => ({ memo: '取り置きの記録', updatedAt: 10 }),
+    saveRecord: async (...args) => { h.sent.push(args); },
+  };
+  let running = false;
+  const run = h.ctx.recordQueue.run;
+  h.ctx.recordQueue.run = (key, task) => run(key, async () => {
+    running = true;
+    try { return await task(); } finally { running = false; }
+  });
+  h.ctx.liveRepo = { getRecord: async (...args) => {
+    assert.equal(running, true);
+    assert.deepEqual(args, [ids.classId, ids.lessonId, ids.studentId]);
+    h.checked++;
+    if (h.latest instanceof Error) throw h.latest;
+    return h.latest;
+  } };
+  if (draftAt !== null) h.ctx.drafts.put(ids.studentId, ids.classId, ids.lessonId, { memo: '下書きの記録' }, draftAt);
+  h.open('lesson'); await settle();
+  h.input = document.getElementById('student-record-memo');
+  return h;
+}
+
+test('取り置き 10・下書き 20・サーバー 30: 送らず下書きを消し、新しい記録と案内を出して idle にする', async (t) => {
+  const h = await cachedLesson(t);
+  assert.equal(h.input.value, '下書きの記録');
+  h.ctx.offline.down = false;
+  await h.advance();
+  assert.equal(h.checked, 1); assert.deepEqual(h.sent, []);
+  assert.deepEqual(h.touched, [[ids.classId, ids.lessonId, ids.studentId]]);
+  assert.equal(h.ctx.drafts.get(ids.studentId, ids.classId, ids.lessonId), null);
+  assert.equal(h.input.value, 'サーバーの記録');
+  assert.equal(byClass(h.root, 'student-lesson-states')[0].textContent, '');
+  assert.match(document.body.textContent, /ほかの端末で書いた新しい記録があったので、そちらを出しています。/);
+  h.ctx.repo.getRecord = async () => ({ memo: '時刻 25 の値', updatedAt: 25 });
+  document.fire('visibilitychange'); await settle();
+  assert.equal(h.input.value, 'サーバーの記録', 'updatedAt もサーバーの 30 に更新する');
+});
+
+test('サーバーの新しい記録を確かめたら、画面を離れたあとでも取り置きを読み直す', async (t) => {
+  const h = await cachedLesson(t); let release;
+  h.ctx.liveRepo.getRecord = () => new Promise((resolve) => { release = resolve; });
+  await h.advance();
+  h.open('login'); release({ memo: 'サーバーの記録', updatedAt: 30 }); await settle();
+  assert.deepEqual(h.sent, []);
+  assert.deepEqual(h.touched, [[ids.classId, ids.lessonId, ids.studentId]]);
+  assert.equal(h.root.textContent, '');
+  assert.doesNotMatch(document.body.textContent, /ほかの端末で書いた新しい記録があったので/);
+});
+
+for (const [label, latest] of [
+  ['サーバー 10', { updatedAt: 10 }], ['同時刻 20', { updatedAt: 20 }], ['記録なし', null],
+  ['時刻が文字', { updatedAt: '30' }], ['時刻なし', {}], ['時刻が NaN', { updatedAt: NaN }], ['時刻が無限大', { updatedAt: Infinity }],
+]) {
+  test(`取り置き 10・下書き 20・${label}: 下書きを送り、その後は確かめ直さない`, async (t) => {
+    const h = await cachedLesson(t, { latest });
+    await h.advance();
+    assert.equal(h.checked, 1); assert.equal(h.sent.length, 1);
+    assert.equal(h.sent[0][3].memo, '下書きの記録'); assert.equal(h.sent[0][4], 20);
+    assert.equal(h.ctx.drafts.get(ids.studentId, ids.classId, ids.lessonId), null);
+    assert.deepEqual(h.touched, [[ids.classId, ids.lessonId, ids.studentId]]);
+    h.input.value = '書き足した記録'; h.input.fire('input'); await h.advance();
+    assert.equal(h.checked, 1); assert.equal(h.sent.length, 2); assert.equal(h.sent[1][4], 40);
+  });
+}
+
+test('取り置き 10・今の入力 40・サーバー 30: 今の入力を送る', async (t) => {
+  const h = await cachedLesson(t, { draftAt: null });
+  h.input.value = '電波なしで今書いた記録'; h.input.fire('input'); await h.advance();
+  assert.equal(h.checked, 1); assert.equal(h.sent[0][3].memo, '電波なしで今書いた記録');
+  assert.equal(h.sent[0][4], 40);
+});
+
+test('取り置きの最初のサーバー確認に失敗したら送らず、下書きを残して再確認する', async (t) => {
+  const h = await cachedLesson(t, { latest: new NetError('network') });
+  await h.advance();
+  assert.equal(h.checked, 1); assert.equal(h.sent.length, 0);
+  assert.equal(h.ctx.drafts.get(ids.studentId, ids.classId, ids.lessonId).editedAt, 20);
+  assert.match(byClass(h.root, 'student-lesson-states')[0].textContent, /保存できませんでした/);
+  h.latest = { updatedAt: 10 }; window.fire('online'); await settle();
+  assert.equal(h.checked, 2); assert.equal(h.sent.length, 1);
+  assert.equal(h.ctx.drafts.get(ids.studentId, ids.classId, ids.lessonId), null);
+});
+
+test('下書き 20・サーバー 10 の確認後に保存失敗: 再送前に確認し直し、サーバー 30 を上書きしない', async (t) => {
+  const h = await cachedLesson(t, { latest: { updatedAt: 10 } }); let fail = true;
+  h.ctx.repo.saveRecord = async (...args) => { h.sent.push(args); if (fail) throw new NetError('network'); };
+  await h.advance();
+  assert.equal(h.checked, 1); assert.equal(h.sent.length, 1); assert.equal(h.sent[0][4], 20);
+  assert.equal(h.ctx.drafts.get(ids.studentId, ids.classId, ids.lessonId).editedAt, 20);
+  assert.deepEqual(h.touched, []);
+  assert.match(byClass(h.root, 'student-lesson-states')[0].textContent, /保存できませんでした/);
+  fail = false; h.latest = { memo: '別の端末の記録', updatedAt: 30 };
+  window.fire('online'); await settle();
+  assert.equal(h.checked, 2); assert.equal(h.sent.length, 1);
+  assert.equal(h.input.value, '別の端末の記録');
+  assert.equal(h.ctx.drafts.get(ids.studentId, ids.classId, ids.lessonId), null);
+  assert.deepEqual(h.touched, [[ids.classId, ids.lessonId, ids.studentId]]);
+  assert.equal(byClass(h.root, 'student-lesson-states')[0].textContent, '');
+});
+
+test('オンラインで読めた記録は、送信前のサーバー確認を追加しない', async (t) => {
+  const h = await cachedLesson(t, { down: false });
+  h.ctx.offline.down = true;
+  await h.advance(); assert.equal(h.checked, 0); assert.equal(h.sent.length, 1);
+});
+
+for (const inputAt of [25, 40]) {
+  test(`下書き 20 の確認中に入力 ${inputAt}・サーバー 30: 次の入力も確認し直す`, async (t) => {
+    const h = await cachedLesson(t, { inputAt }); let release;
+    const getRecord = h.ctx.liveRepo.getRecord;
+    h.ctx.liveRepo.getRecord = async (...args) => {
+      const latest = await getRecord(...args);
+      await new Promise((resolve) => { release = resolve; });
+      return latest;
+    };
+    await h.advance();
+    assert.equal(h.checked, 1); assert.deepEqual(h.sent, []);
+    h.input.value = '確認中に書き足した記録'; h.input.fire('input');
+    release(); await settle();
+    assert.equal(h.checked, 2); assert.deepEqual(h.sent, []);
+    assert.equal(h.input.value, '確認中に書き足した記録');
+    assert.equal(h.ctx.drafts.get(ids.studentId, ids.classId, ids.lessonId).editedAt, inputAt);
+    assert.doesNotMatch(document.body.textContent, /ほかの端末で書いた新しい記録があったので/);
+    release(); await settle();
+    assert.equal(h.checked, 2);
+    assert.equal(h.ctx.drafts.get(ids.studentId, ids.classId, ids.lessonId), null);
+    if (inputAt === 25) {
+      assert.deepEqual(h.sent, []);
+      assert.equal(h.input.value, 'サーバーの記録');
+      assert.equal(byClass(h.root, 'student-lesson-states')[0].textContent, '');
+      assert.match(document.body.textContent, /ほかの端末で書いた新しい記録があったので、そちらを出しています。/);
+    } else {
+      assert.equal(h.sent.length, 1); assert.equal(h.sent[0][4], 40);
+      assert.equal(h.sent[0][3].memo, '確認中に書き足した記録');
+      assert.equal(h.input.value, '確認中に書き足した記録');
+      assert.doesNotMatch(document.body.textContent, /ほかの端末で書いた新しい記録があったので/);
+    }
+  });
+}
+
+test('生徒一覧: 再送した文字・手書きの授業だけを、画面を離れても読み直す', async (t) => {
+  const h = await setup(t); const touched = []; let release;
+  h.ctx.offline = { down: true, touch: (...args) => touched.push(args) };
+  h.ctx.drafts.put(ids.studentId, ids.classId, ids.lessonId, { memo: '文字の下書き' }, 20);
+  h.ctx.inkDrafts.put(ids.studentId, ids.classId, 'InkLesson', 'memo', { ink: { v: 1, h: 400, s: [] }, editedAt: 20, key: 'test-key' });
+  h.ctx.liveRepo = { ...h.repo, getRecord: async () => null,
+    saveRecord: () => new Promise((resolve) => { release = resolve; }), removeInk: async () => {},
+  };
+  h.open('home'); await settle();
+  assert.equal(typeof release, 'function');
+  h.open('login'); release(); await settle();
+  assert.deepEqual(touched, [[ids.classId, ids.lessonId, ids.studentId], [ids.classId, 'InkLesson', ids.studentId]]);
+});
 
 test('練習モード: 未記入の生徒へ保存 → 一覧の返事ずみ → 生徒の箱とタイル → 取り消し', async (t) => {
   const h = await setup(t);

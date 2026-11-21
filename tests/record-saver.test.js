@@ -66,6 +66,27 @@ function setup(options = {}) {
   return { saver, timers, calls, times, drafts, states, get removed() { return removed; } };
 }
 
+test('サーバーの方が新しくて送らなかった場合は、下書きを消して saved を経ず idle に戻る', async () => {
+  const h = setup({ save: () => ({ superseded: true }) });
+  h.saver.edit(record('古い下書き'));
+  assert.equal(await h.saver.flush(), true);
+  assert.equal(h.removed, 1); assert.equal(h.saver.dirty, false);
+  assert.equal(h.saver.state, 'idle'); assert.deepEqual(h.states, ['dirty', 'saving', 'idle']);
+  await h.timers.advance(20000); assert.equal(h.calls.length, 1);
+});
+
+test('superseded の応答を待つ間に edit した場合は、新しい下書きの送信まで消さない', async () => {
+  const first = deferred(); const second = deferred(); let calls = 0;
+  const h = setup({ save: () => ++calls === 1 ? first.promise : second.promise });
+  h.saver.edit(record('古い下書き'));
+  const pending = h.saver.flush(); await settle();
+  h.saver.edit(record('新しい入力'));
+  first.resolve({ superseded: true }); await settle();
+  assert.equal(h.removed, 0); assert.equal(h.saver.dirty, true); assert.equal(calls, 2);
+  second.resolve(); assert.equal(await pending, true);
+  assert.equal(h.removed, 1); assert.equal(h.saver.state, 'saved');
+});
+
 test('edit: すぐ下書きを残し、2 秒後に保存。状態は dirty → saving → saved', async () => {
   const h = setup();
   assert.equal(h.saver.state, 'idle');

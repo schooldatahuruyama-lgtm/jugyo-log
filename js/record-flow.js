@@ -2,7 +2,7 @@
 import { pickInitial } from './record-logic.js';
 
 export async function resendDrafts({ repo, drafts, studentId, max, queue }) {
-  const result = { sent: 0, kept: 0, dropped: 0 };
+  const result = { sent: 0, kept: 0, dropped: 0, sentLessons: [] };
   for (const draft of drafts.list(studentId)) {
     const { classId, lessonId } = draft;
     try {
@@ -20,6 +20,7 @@ export async function resendDrafts({ repo, drafts, studentId, max, queue }) {
           const latest = drafts.get(studentId, classId, lessonId);
           if (latest && latest.editedAt === draft.editedAt) drafts.remove(studentId, classId, lessonId);
           result.sent += 1;
+          result.sentLessons.push({ classId, lessonId });
         } else {
           drafts.remove(studentId, classId, lessonId);
           result.dropped += 1;

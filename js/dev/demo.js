@@ -12,7 +12,8 @@ import { newId } from '../ids.js';
 const DB_KEY = 'jugyolog:demo:db';             // データベースの中身
 const ACCOUNTS_KEY = 'jugyolog:demo:accounts'; // 作った生徒のアカウント { email: { uid, pw } }（pw はパスワードそのものではない）
 const AUTH_KEY = 'jugyolog:demo:auth';         // 今のログイン { uid, email }
-const ALL_KEYS = [DB_KEY, ACCOUNTS_KEY, AUTH_KEY];
+const OFFLINE_KEY = 'jugyolog:demo:offline';
+const ALL_KEYS = [DB_KEY, ACCOUNTS_KEY, AUTH_KEY, OFFLINE_KEY];
 
 export const DEMO_TEACHER_UID = 'demo-teacher';
 
@@ -62,6 +63,9 @@ function pwMark(uid, password) {
 const seedDb = () => ({ teacherList: { [DEMO_TEACHER_UID]: true } });
 
 export function createDemoBackend({ storage, now = Date.now, random }) {
+  function checkOnline() {
+    if (storage.getItem(OFFLINE_KEY) === '1') throw new NetError('network');
+  }
   // データベース: 保存してある中身に、先生の登録を入れておく
   const saved = readJson(storage, DB_KEY);
   const initial = isObj(saved) ? saved : {};
@@ -73,6 +77,10 @@ export function createDemoBackend({ storage, now = Date.now, random }) {
     onChange: (root) => writeJson(storage, DB_KEY, root),
   });
   writeJson(storage, DB_KEY, net.dump());
+  for (const method of ['get', 'getPublic', 'set', 'update', 'remove']) {
+    const call = net[method].bind(net);
+    net[method] = async (...args) => { checkOnline(); return call(...args); };
+  }
 
   // 生徒のアカウント: { email: { uid, pw } }
   function readAccounts() {
@@ -136,10 +144,12 @@ export function createDemoBackend({ storage, now = Date.now, random }) {
     },
 
     async restore() {
+      checkOnline();
       return readUser();
     },
 
     async getToken() {
+      checkOnline();
       if (!readUser()) throw new NetError('auth', 'ログインしていません');
       return 'demo-token';
     },
@@ -165,5 +175,7 @@ export function createDemoBackend({ storage, now = Date.now, random }) {
   }
 
   const gas = createDemoGas({ net, getUser: () => auth.user, random });
+  const callGas = gas.call.bind(gas);
+  gas.call = async (...args) => { checkOnline(); return callGas(...args); };
   return { net, auth, gas, reset };
 }

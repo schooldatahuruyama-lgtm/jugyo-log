@@ -32,6 +32,14 @@ test('リポジトリの土台がそろっている', () => {
   assert.equal(pkg.devDependencies, undefined);
   const ignore = readFileSync(at('.gitignore'), 'utf8').split(/\r?\n/);
   assert.ok(ignore.includes('.superpowers/'), '.gitignore に .superpowers/ がありません');
+  assert.ok(ignore.includes('app-files.json'));
+  const pages = readFileSync(at('tools/pages-branch.ps1'), 'utf8');
+  assert.match(pages, /\$paths = @\([^\n]*"sw\.js"/);
+  assert.match(pages, /\$_ -ne "check\.html" -and \$_ -ne "sw\.js"/);
+  assert.match(pages, /version = \$head; files = \$appFiles/);
+  assert.match(pages, /WriteAllText\(\$tmpBlob, \$manifest, \$utf8\)/);
+  assert.match(pages, /100644,\$appManifest,app-files\.json/);
+  assert.match(pages, /100644,\$versionJs,js\/version\.js/);
 });
 
 // ---- ここから下は、データベースの出し入れ（js/repo.js）を、メモリ上の net を相手に確かめる ----

@@ -9,6 +9,7 @@ import { classLabel, groupByDate, groupByUnit, todoLessons } from '../student-li
 import { tileMark } from '../record-logic.js';
 import { pendingLessonCount, pendingLessons, resendDrafts } from '../record-flow.js';
 import { resendInkDrafts } from '../ink-flow.js';
+import { warmLessons } from '../offline-warm.js';
 import { inkThumb } from '../ink-thumb.js';
 import { lessonTile } from './parts/lesson-tile.js';
 
@@ -258,11 +259,15 @@ export function mount(root, ctx) {
     if (resendStarted || leaving) return;
     resendStarted = true;
     resending = Promise.allSettled([
-      resendDrafts({ repo: ctx.repo, drafts: ctx.drafts, studentId, max: CONFIG.recordTextMax, queue: ctx.recordQueue }),
-      resendInkDrafts({ repo: ctx.repo, files: ctx.files, inkDrafts: ctx.inkDrafts, studentId,
+      resendDrafts({ repo: ctx.liveRepo ?? ctx.repo, drafts: ctx.drafts, studentId, max: CONFIG.recordTextMax, queue: ctx.recordQueue }),
+      resendInkDrafts({ repo: ctx.liveRepo ?? ctx.repo, files: ctx.files, inkDrafts: ctx.inkDrafts, studentId,
         queue: ctx.recordQueue, makeThumb: inkThumb }),
     ]).then((results) => {
       const total = { sent: 0, kept: 0, dropped: 0 };
+      for (const result of results) {
+        if (result.status !== 'fulfilled') continue;
+        for (const { classId, lessonId } of result.value.sentLessons) ctx.offline?.touch?.(classId, lessonId, studentId);
+      }
       for (const result of results) {
         if (result.status === 'rejected') throw result.reason;
         for (const key of Object.keys(total)) total[key] += result.value[key];
@@ -355,6 +360,8 @@ export function mount(root, ctx) {
       renderLessons();
       renderPending();
       startResend();
+      if (!ctx.offline?.down) void warmLessons({ repo: ctx.repo, classId: current.id, studentId,
+        lessons, max: CONFIG.offline.warmLessons, isStopped: stale });
     } catch {
       if (stale()) return;
       listArea.replaceChildren(

@@ -57,7 +57,8 @@ test('resendDrafts: 新しい下書きだけを送って消す。古い・同時
     h.drafts.put(h.studentId, 'class1', id, record(id), at);
     if (id !== 'missing') h.servers.set(id, { ...record('サーバー'), updatedAt: 2000 });
   }
-  assert.deepEqual(await resendDrafts(h), { sent: 2, kept: 0, dropped: 2 });
+  assert.deepEqual(await resendDrafts(h), { sent: 2, kept: 0, dropped: 2,
+    sentLessons: [{ classId: 'class1', lessonId: 'new' }, { classId: 'class1', lessonId: 'missing' }] });
   assert.deepEqual(h.sent, [
     ['class1', 'new', h.studentId, record('new'), 3000],
     ['class1', 'missing', h.studentId, record('missing'), 1000],
@@ -74,7 +75,7 @@ test('resendDrafts: 読み取り中に下書きが新しくなったら、送ら
   const resending = resendDrafts(h);
   h.drafts.put(h.studentId, 'class1', 'lesson1', record('書き足した内容'), 4000);
   response.resolve(null);
-  assert.deepEqual(await resending, { sent: 0, kept: 1, dropped: 0 });
+  assert.deepEqual(await resending, { sent: 0, kept: 1, dropped: 0, sentLessons: [] });
   assert.deepEqual(h.sent, []);
   assert.deepEqual(h.drafts.get(h.studentId, 'class1', 'lesson1'), { record: record('書き足した内容'), editedAt: 4000 });
 });
@@ -89,7 +90,7 @@ test('resendDrafts: 送信中に下書きが新しくなったら、送信済み
   await saving.promise;
   h.drafts.put(h.studentId, 'class1', 'lesson1', record('書き足した内容'), 4000);
   response.resolve();
-  assert.deepEqual(await resending, { sent: 1, kept: 0, dropped: 0 });
+  assert.deepEqual(await resending, { sent: 1, kept: 0, dropped: 0, sentLessons: [{ classId: 'class1', lessonId: 'lesson1' }] });
   assert.deepEqual(h.sent, [['class1', 'lesson1', h.studentId, record('元の内容'), 3000]]);
   assert.deepEqual(h.drafts.get(h.studentId, 'class1', 'lesson1'), { record: record('書き足した内容'), editedAt: 4000 });
 });
@@ -140,7 +141,7 @@ test('resendDrafts: サーバーが元の下書きより新しくても、読み
   const resending = resendDrafts(h);
   h.drafts.put(h.studentId, 'class1', 'lesson1', record('書き足した内容'), 6000);
   response.resolve({ ...record('サーバー'), updatedAt: 5000 });
-  assert.deepEqual(await resending, { sent: 0, kept: 1, dropped: 0 });
+  assert.deepEqual(await resending, { sent: 0, kept: 1, dropped: 0, sentLessons: [] });
   assert.deepEqual(h.sent, []);
   assert.deepEqual(h.drafts.get(h.studentId, 'class1', 'lesson1'), { record: record('書き足した内容'), editedAt: 6000 });
 });
@@ -169,7 +170,7 @@ test('resendDrafts: 遅れている再送のあとに自動保存を送り、サ
   assert.equal(h.servers.has('lesson1'), false);
   response.resolve();
   const [result] = await Promise.all([resending, saving]);
-  assert.deepEqual(result, { sent: 1, kept: 0, dropped: 0 });
+  assert.deepEqual(result, { sent: 1, kept: 0, dropped: 0, sentLessons: [{ classId: 'class1', lessonId: 'lesson1' }] });
   assert.deepEqual(h.sent, [
     ['class1', 'lesson1', h.studentId, record('元の内容'), 3000],
     ['class1', 'lesson1', h.studentId, record('書き足した内容'), 11000],
@@ -194,7 +195,7 @@ test('resendDrafts: 列を待つ間に自動保存が成功して下書きが消
   assert.deepEqual(h.sent, []);
   response.resolve();
   const [result] = await Promise.all([resending, saving]);
-  assert.deepEqual(result, { sent: 0, kept: 1, dropped: 0 });
+  assert.deepEqual(result, { sent: 0, kept: 1, dropped: 0, sentLessons: [] });
   assert.deepEqual(h.sent, [['class1', 'lesson1', h.studentId, record('自動保存した内容'), 11000]]);
   assert.equal(h.drafts.get(h.studentId, 'class1', 'lesson1'), null);
 });
@@ -215,7 +216,7 @@ test('resendDrafts: 列を待つ間に変わった下書きは、サーバーの
     h.drafts.put(h.studentId, 'class1', 'lesson1', record('書き足した内容'), 6000);
     response.resolve();
     const [result] = await Promise.all([resending, saving]);
-    assert.deepEqual(result, { sent: 0, kept: 1, dropped: 0 });
+    assert.deepEqual(result, { sent: 0, kept: 1, dropped: 0, sentLessons: [] });
     assert.deepEqual(h.sent, []);
     assert.deepEqual(h.drafts.get(h.studentId, 'class1', 'lesson1'), { record: record('書き足した内容'), editedAt: 6000 });
   }
@@ -235,7 +236,7 @@ test('resendDrafts: 読み取り中に下書きが消えた・こわれたとき
       if (missing) h.storage.removeItem(key);
       else h.storage.setItem(key, '{');
       response.resolve(server);
-      assert.deepEqual(await resending, { sent: 0, kept: 1, dropped: 0 });
+      assert.deepEqual(await resending, { sent: 0, kept: 1, dropped: 0, sentLessons: [] });
       assert.deepEqual(h.sent, []);
       assert.deepEqual(removed, []);
       assert.equal(h.storage.getItem(key), missing ? null : '{');
@@ -251,7 +252,7 @@ test('resendDrafts: 下書きの内容だけが変わっても editedAt が同�
   const resending = resendDrafts(h);
   h.drafts.put(h.studentId, 'class1', 'lesson1', record('同じ時刻の内容'), 3000);
   response.resolve(null);
-  assert.deepEqual(await resending, { sent: 1, kept: 0, dropped: 0 });
+  assert.deepEqual(await resending, { sent: 1, kept: 0, dropped: 0, sentLessons: [{ classId: 'class1', lessonId: 'lesson1' }] });
   assert.deepEqual(h.sent, [['class1', 'lesson1', h.studentId, record('元の内容'), 3000]]);
   assert.equal(h.drafts.get(h.studentId, 'class1', 'lesson1'), null);
 });
@@ -264,7 +265,8 @@ test('resendDrafts: 読み取り・送信の失敗と denied は残し、後の�
   h.servers.set('readDenied', new NetError('denied'));
   h.failures.set('saveFail', new Error('送れません'));
   h.failures.set('saveDenied', new NetError('denied'));
-  assert.deepEqual(await resendDrafts(h), { sent: 2, kept: 4, dropped: 0 });
+  assert.deepEqual(await resendDrafts(h), { sent: 2, kept: 4, dropped: 0,
+    sentLessons: [{ classId: 'class1', lessonId: 'success' }, { classId: 'class1', lessonId: 'last' }] });
   assert.deepEqual(h.sent.map((args) => args[1]), ['success', 'last']);
   assert.deepEqual(h.drafts.list(h.studentId).map((draft) => draft.lessonId), ['readFail', 'readDenied', 'saveFail', 'saveDenied']);
   assert.deepEqual(h.reads.map((args) => args[1]), ids);
@@ -273,7 +275,7 @@ test('resendDrafts: 読み取り・送信の失敗と denied は残し、後の�
 test('resendDrafts: 空の一覧・使えない端末の保存先では通信しない', async () => {
   for (const drafts of [createDrafts({ storage: fakeStorage() }), createDrafts({ storage: null })]) {
     const h = { ...setup(), drafts };
-    assert.deepEqual(await resendDrafts(h), { sent: 0, kept: 0, dropped: 0 });
+    assert.deepEqual(await resendDrafts(h), { sent: 0, kept: 0, dropped: 0, sentLessons: [] });
     assert.deepEqual(h.reads, []);
     assert.deepEqual(h.sent, []);
   }
@@ -284,7 +286,7 @@ test('resendDrafts: 開き直しても残る下書きを送り、別の生徒の
   h.drafts.put(h.studentId, 'class1', 'lesson1', record('前に送れなかった内容'), 3000);
   h.drafts.put('student2', 'class1', 'lesson1', record('別の生徒'), 3000);
   h.drafts = createDrafts({ storage: h.storage });
-  assert.deepEqual(await resendDrafts(h), { sent: 1, kept: 0, dropped: 0 });
+  assert.deepEqual(await resendDrafts(h), { sent: 1, kept: 0, dropped: 0, sentLessons: [{ classId: 'class1', lessonId: 'lesson1' }] });
   assert.equal(h.sent[0][3].memo, '前に送れなかった内容');
   assert.equal(h.drafts.list('student2').length, 1);
 });
@@ -293,7 +295,7 @@ test('resendDrafts: max を使って記録を整え、理解度がなくても�
   const h = setup();
   h.max = 2;
   h.drafts.put(h.studentId, 'class1', 'lesson1', record('あいう'), 3000);
-  assert.deepEqual(await resendDrafts(h), { sent: 1, kept: 0, dropped: 0 });
+  assert.deepEqual(await resendDrafts(h), { sent: 1, kept: 0, dropped: 0, sentLessons: [{ classId: 'class1', lessonId: 'lesson1' }] });
   assert.deepEqual(h.sent[0][3], record('あい'));
 });
 

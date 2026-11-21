@@ -1,4 +1,5 @@
 node_modules/
+app-files.json
 *.local.json
 .superpowers/
 *.docx

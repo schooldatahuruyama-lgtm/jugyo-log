@@ -49,8 +49,9 @@ export function createRecordSaver({
         const sentEditedAt = editedAt;
         setState('saving');
         if (disposed) return false;
+        let result;
         try {
-          await save(sentRecord, sentEditedAt);
+          result = await save(sentRecord, sentEditedAt);
         } catch (error) {
           if (disposed) return false;
           if (immediate || (error instanceof NetError && error.code === 'denied') || retryIndex >= retryMs.length) {
@@ -68,7 +69,8 @@ export function createRecordSaver({
         if (sentRevision !== revision) continue;
         dirty = false;
         try { removeDraft(); } catch { /* 下書きを消せなくても、サーバーへの保存は成功している */ }
-        setState('saved');
+        // 新しいサーバーの記録を採用した場合は、保存成功の表示を出さない。
+        setState(result?.superseded ? 'idle' : 'saved');
       }
       return !dirty;
     } finally {
